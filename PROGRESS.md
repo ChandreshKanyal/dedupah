@@ -15,6 +15,8 @@
 3. Phase 2, the product layer. Suggested order: (a) persist pipeline outputs in Postgres (golden-record store, lineage, audit); (b) survivorship + golden record per cluster (per-field rules: most recent / most trusted source / most complete / most frequent; keep full lineage); (c) review queue persistence + steward actions (possible-match links already exist in `clusters/possible_matches.parquet`); (d) merge/UNMERGE via must-link / cannot-link constraints fed back into clustering; (e) rule management service: versioned decision configs, dry-run impact, audit trail; (f) FastAPI; (g) thin web UI. Confirm with the user before starting.
 4. Phase 3 documents (OCR / MRZ / face) and Phase 4 hardening (see roadmap).
 
+**Review queue size (section 19):** 428,852 record pairs at 692k records collapse to 253,120 ranked cluster pairs, but only ~10% are the same person. Cut-off `review_at` (decision config) is the workload/recall trade-off; still to decide with the business.
+
 **Where the numbers stand (synthetic; sections 10, 14-18):** naive baseline F1 0.585; full pipeline person-cluster pairwise F1 about 0.91 (precision 0.99, recall 0.84), auto-merge precision 99.7%, households (family-only) precision 0.98 / recall 0.54 at threshold 5; ideal-steward ceiling F1 0.97. On held-out seeds and noise levels F1 is 0.86-0.93; at 692,537 records F1 is 0.917 (section 18).
 
 **Known gaps and honest limits to carry forward**
@@ -121,7 +123,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 - [~] 2.2 Rule → SQL compiler; dry-run impact preview — compiler + dev-time impact report DONE (needs a truth-free impact preview: pairs affected + samples)
 - [ ] 2.3 Rule versioning + audit trail (also for blocking rules, thresholds, household weights)
 - [ ] 2.4 Survivorship rules + golden record + lineage (per-field rules; keep which source record supplied each value; canonical.parquet `attributes` JSON carries source-specific fields)
-- [ ] 2.5 Review queue + merge/unmerge model (steward decisions stored as must-link / cannot-link constraints fed back into clustering so they survive re-runs)
+- [~] 2.5 Review queue + merge/unmerge model. DONE: grouped, ranked queue per pair of people (`dedupe.review`, section 19). TODO: steward actions, persistence, merge/unmerge (steward decisions stored as must-link / cannot-link constraints fed back into clustering so they survive re-runs)
 - [ ] 2.6 API (FastAPI) over the above, Postgres persistence (compose already has Postgres)
 - [ ] 2.7 Thin web UI: source connection + mapping (use `dedupe.mapping.suggest`), rule editor with dry-run, review queue, golden record viewer
 
@@ -345,3 +347,11 @@ Limits: (1) 46% of true family pairs have no evidence at all in the data (e.g. a
 **Problems found and fixed during the big run:** the first attempt used >16 GB in the households stage and had to be killed (I first misdiagnosed it as scoring because I looked in the wrong folder). Causes: the named-relative join matched every record against every record sharing a phonetic name (common names repeat thousands of times), and the same-surname check joined records, not people. Fix in `households/evidence.py`: ignore relative names shared by >50 people (their weight would be under 1/50 anyway) and compare per-person surname sets. Households stage: >16 GB and unfinished -> 1 GB / 11 s standalone.
 
 **Honest caveats:** peak memory of the whole pipeline is still 17 GB at 692k records (shared in-memory DuckDB connection plus Python lists of pairs and edges); scoring alone peaks near 3 GB. Millions of records need a memory pass first. Recall at small data sizes is weak. Everything here is synthetic.
+
+## 19. Review queue at scale (SYNTHETIC, 692,537 records)
+
+**Problem found:** the pipeline reported 428,852 pairs for human review, far beyond what stewards can clear. Measured composition (record pairs; truth known because synthetic): 49,822 were already inside one cluster (nothing to decide); 386,034 crossed clusters and collapse to 253,120 distinct pairs of people, of which 24,723 (10%) are the same person, 8,486 (3%) are family, 219,911 (87%) are unrelated. Most junk sits at probability below 0.2 (243k unrelated vs 10k same-person record pairs). At scale more unrelated people share names/phones, so the 0.1 lower threshold that suited 8k records is too wide.
+
+**Built:** `src/dedupe/review/queue.py`, pipeline stage `review_queue` writing `review_queue.parquet`: one row per pair of people (record_pairs, top/mean probability, forced-by-rule flag, cluster sizes, priority), pairs already in one cluster dropped, sorted best first. Workload controls `review_min_probability` and `review_cap` in `PipelineConfig` (defaults keep everything). 0.6 s on 692k records. 83 tests.
+
+**Trade-off (per pair of people, real same-person matches kept):** review_at 0.1: 253k items, 10% real, 100% kept; 0.2: 88k, 22%, 78%; 0.4: 37k, 43%, 63%; 0.6: 20k, 59%, 48%. Note: matches dropped from the queue are not necessarily lost for the final result if other pairs of the same two people were auto-merged; not measured. Choosing the cut-off is a business decision. Still too large for manual review at default; options: higher cut-off, cap, better model features, steward bulk actions.

@@ -25,6 +25,7 @@ from .households.group import group_households  # noqa: F401  (re-exported for c
 from .households.run import build_households, truth_of_clusters
 from .households.run import evaluate as evaluate_households
 from .ingest import ingest
+from .review import build_queue
 from .scoring import score, train
 from .scoring.__main__ import load_tables
 from .standardise.run import run as standardise
@@ -40,6 +41,8 @@ class PipelineConfig:
     household_threshold: float = 5.0
     max_cluster_size: int = 15
     redact_aadhaar: bool = True
+    review_min_probability: float = 0.0  # drop queue items whose best pair scores below this (workload control)
+    review_cap: int | None = None  # keep only the top N queue items
     cluster_guard: bool = True  # contradiction checks in clustering (off only for ablation studies)
     batch_size: int = 50_000
     stages: list = field(default_factory=list)
@@ -124,6 +127,8 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         res = cluster(nodes, edges, ids, cannot, ClusterConfig(max_cluster_size=cfg.max_cluster_size), guard=cfg.cluster_guard)
         write_outputs(con, res, clusters_dir)
         summary["clustering"] = res.stats
+    with meter.stage("review_queue"):
+        summary["review_queue"] = build_queue(con, work / "review_queue.parquet", cfg.review_min_probability, cfg.review_cap)
     with meter.stage("households"):
         people, scores, hh, info, _ = build_households(con, p["std"], clusters_dir / "clusters.parquet", p["canonical"],
                                                        hh_dir, cfg.household_threshold)

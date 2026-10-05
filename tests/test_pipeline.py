@@ -44,7 +44,7 @@ def run_a(tmp_path_factory):
 def test_one_command_produces_every_artifact_and_a_sane_summary(run_a):
     d, _, s = run_a
     for f in ["canonical.parquet", "standardised.parquet", "candidates.parquet", "scored_pairs.parquet", "decisions.parquet",
-              "clusters/clusters.parquet", "clusters/possible_matches.parquet", "households/household_members.parquet",
+              "clusters/clusters.parquet", "clusters/possible_matches.parquet", "review_queue.parquet", "households/household_members.parquet",
               "households/relationships.parquet", "pipeline_summary.json"]:
         assert (d / "work" / f).exists(), f
     assert (d / "models" / "fs_model.json").exists()
@@ -119,3 +119,31 @@ def test_token_key_changes_tokens_so_data_cannot_be_linked_across_keys(monkeypat
     t1 = ids.aadhaar(a)[0]
     monkeypatch.setenv("DEDUPE_TOKEN_KEY", "key-two")
     assert t1 and ids.aadhaar(a)[0] != t1
+
+
+def test_review_queue_is_grouped_ranked_and_excludes_resolved_pairs(run_a):
+    d, _, s = run_a
+    w = d / "work"
+    f = w / "review_queue.parquet"
+    n = duckdb.sql(f"select count(*) from '{f}'").fetchone()[0]
+    assert n == s["review_queue"]["queue_items"] > 0
+    assert n <= s["decisions"]["review"]                              # grouped: never more items than record pairs
+    assert duckdb.sql(f"select count(*) from (select distinct cluster_l, cluster_r from '{f}')").fetchone()[0] == n  # one item per pair of people
+    assert duckdb.sql(f"select count(*) from '{f}' where cluster_l >= cluster_r").fetchone()[0] == 0
+    pr = [r[0] for r in duckdb.sql(f"select priority from '{f}'").fetchall()]   # file order is rank order
+    assert pr == sorted(pr, reverse=True)                              # best cases first
+
+
+def test_review_queue_workload_controls(run_a, tmp_path):
+    d, _, _ = run_a
+    from dedupe.review import build_queue
+    con = duckdb.connect()
+    w = d / "work"
+    con.execute(f"CREATE TABLE decisions AS SELECT * FROM read_parquet('{w / 'decisions.parquet'}')")
+    con.execute(f"""CREATE TABLE cluster_map AS SELECT i.rid, c.cluster_id FROM read_parquet('{w / 'clusters' / 'clusters.parquet'}') c
+                    JOIN read_parquet('{w / 'candidates.index.parquet'}') i USING (source_id, source_record_id)""")
+    full = build_queue(con, tmp_path / "a.parquet")["queue_items"]
+    high = build_queue(con, tmp_path / "b.parquet", min_probability=0.5)["queue_items"]
+    top = build_queue(con, tmp_path / "c.parquet", cap=3)["queue_items"]
+    assert full > high > 0 and top == 3
+    assert duckdb.sql(f"select min(top_probability) from '{tmp_path / 'b.parquet'}'").fetchone()[0] >= 0.5
