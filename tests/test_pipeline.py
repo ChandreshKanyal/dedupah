@@ -147,3 +147,26 @@ def test_review_queue_workload_controls(run_a, tmp_path):
     top = build_queue(con, tmp_path / "c.parquet", cap=3)["queue_items"]
     assert full > high > 0 and top == 3
     assert duckdb.sql(f"select min(top_probability) from '{tmp_path / 'b.parquet'}'").fetchone()[0] >= 0.5
+
+
+def test_person_ids_are_stable_when_the_pipeline_is_rerun_with_new_data(tmp_path):
+    syn, sources = _setup(tmp_path, seed=72, households=60)
+    work = tmp_path / "work"
+    s1 = run_pipeline(PipelineConfig(sources, work))
+    q = lambda: dict(duckdb.sql(f"select source_id || '|' || source_record_id, cluster_id from '{work / 'clusters' / 'clusters.parquet'}'").fetchall())  # noqa: E731
+    first = q()
+    assert s1["identity"]["created"] == s1["clustering"]["clusters"] and s1["identity"]["run"] == 1 and all(v.startswith("P") for v in first.values())
+    # 1) identical rerun in the same work folder: nothing changes
+    s2 = run_pipeline(PipelineConfig(sources, work))
+    assert q() == first and s2["identity"]["run"] == 2 and s2["identity"]["created"] == 0 and s2["identity"]["retired"] == 0
+    # 2) more data arrives (a second batch of customers appended to the leads file): old records keep their person IDs
+    leads = syn / "marketing_leads.csv"
+    extra, _ = _setup(tmp_path / "more", seed=73, households=15)
+    new_rows = list(csv.reader(open(extra / "marketing_leads.csv", encoding="utf-8", newline="")))[1:]
+    with open(leads, "a", encoding="utf-8", newline="") as f:
+        csv.writer(f).writerows([["X" + r[0]] + r[1:] for r in new_rows])   # unique record ids: these are genuinely new records
+    s3 = run_pipeline(PipelineConfig(sources, work))
+    third = q()
+    assert s3["identity"]["run"] == 3 and len(third) > len(first)
+    unchanged = sum(1 for k, v in first.items() if third.get(k) == v)
+    assert unchanged / len(first) > 0.97      # the vast majority of existing people keep their ID despite the new data

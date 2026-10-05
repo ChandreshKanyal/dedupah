@@ -12,7 +12,7 @@
 **Immediate next steps (in order)**
 1. Try Docker again (`docker info`; Docker Desktop must show "Engine running"; if stuck, `wsl --shutdown` then reopen, or reboot). If it works, `docker compose run --rm --build app` must pass the tests inside the container; fix the Dockerfile as needed. Portability is a hard requirement, so Phase 0 is not truly done until this passes.
 2. Memory for millions: peak is now 4.6 GB at 694k records (section 23). The remaining big holder is clustering in pure Python (dicts/lists per record, ~2 GB left after it). Linear extrapolation gives ~30 GB at 5M records, too much for one machine: move clustering to array-based union-find (NumPy) or DuckDB before a multi-million test.
-3. Phase 2 (product layer), revised after research (section 25): 2.5a stable person IDs, 2.5b judgment store, 2.5c judgments in clustering, 2.5d review service, 2.5e simulated-reviewer harness; then rules versioning/audit (2.3), Postgres persistence of outputs, S3 connector, FastAPI, thin web UI. Confirm with the user before starting.
+3. Phase 2 (product layer), revised after research (section 25): 2.5a stable person IDs (DONE), next 2.5b judgment store, 2.5c judgments in clustering, 2.5d review service, 2.5e simulated-reviewer harness; then rules versioning/audit (2.3), Postgres persistence of outputs, S3 connector, FastAPI, thin web UI. Confirm with the user before starting.
 4. Phase 3 documents (OCR / MRZ / face) and Phase 4 hardening (see roadmap).
 
 **Review queue (sections 19-20):** FIXED. At 694k records the queue went from 246,948 pairs of people (13% real) to 14,543 (87% real) via a Senzing-style minimum-evidence rule (`not_enough_evidence`) and dropping the name+city blocking rule; F1 before review rose 0.906 -> 0.922. Cost: ideal-steward ceiling F1 0.956 -> 0.941 (matches only findable by checking ~232k mostly undecidable name+city pairs).
@@ -124,7 +124,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 - [ ] 2.3 Rule versioning + audit trail (also for blocking rules, thresholds, household weights)
 - [x] 2.4 (done, section 24) Survivorship rules + golden record + lineage (per-field rules; keep which source record supplied each value; canonical.parquet `attributes` JSON carries source-specific fields)
 - [~] 2.5 Review workflow, revised after research (section 25). DONE: grouped, ranked queue per pair of people (`dedupe.review`).
-  - [ ] 2.5a Stable person IDs across runs (new clusters inherit the previous run's ID by record overlap; today `cl00000012` changes every run)
+  - [x] 2.5a (done, section 26) Stable person IDs across runs (new clusters inherit the previous run's ID by record overlap; today `cl00000012` changes every run)
   - [ ] 2.5b Append-only judgment store (SQLAlchemy: SQLite for dev/tests, Postgres in compose): same_person / different_person / unsure / split / field_override, keyed by (source_id, source_record_id), with who, when, why, rule/model version and an evidence snapshot
   - [ ] 2.5c Judgments applied inside clustering: must-link edges, cannot-links (steward beats automation; an ID conflict (two different PANs) needs a stronger confirmation), contradiction report
   - [ ] 2.5d Review service: queue, explain (why / why-not from the stored per-field contributions), approve / reject / unsure / split / undo, bulk actions, golden-field overrides; optional four-eyes approval
@@ -174,6 +174,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 | 2026-10-05 | Golden names come from the standardised clean name chosen by agreement, not the longest raw string; placeholder / year-only birth dates are never golden values | Longest-wins picked noisy forms ("Sri Mahes Krushnan", "Parekh, Kiran Bhhai"): first-name accuracy 60% -> 87% |
 | 2026-10-05 | Steward decisions are stored as an append-only judgment log keyed by source record keys, and replayed as must-link / cannot-link constraints on every run (not as edits to cluster tables) | Industry pattern: nomenklatura judgment graph, Informatica excludes unmerged records from re-merging, patent on re-clustering with only the steward link removed (section 25) |
 | 2026-10-05 | Persistent person IDs across runs become a prerequisite for the review workflow | Cluster IDs change every run; Senzing / Informatica keep stable entity IDs |
+| 2026-10-05 | Person IDs (`P` + 9 digits, column still called `cluster_id`) persist across runs through a registry folder `<work>/identity/` (records, persons, events parquet files): greedy largest-overlap inheritance, older ID wins a merge, larger part keeps the ID on a split, retired IDs never reused | Review decisions and downstream systems need IDs that keep meaning the same person (section 26) |
 | 2026-10-05 | Synthetic generator: email addresses unique per person | Bug: unrelated namesakes got identical mailboxes, which cannot happen; deliberate family sharing kept as a trap. All synthetic numbers shifted slightly |
 
 ## 7. Open questions
@@ -207,6 +208,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-05 (session 1, 2.5a)** — Stable person IDs (`dedupe.identity`, 8 tests + pipeline rerun test, 98 tests total); verified at 138k records. Section 26.
 - **2026-10-05 (session 1, research before 2.5)** — Researched how Reltio, Informatica, Senzing, nomenklatura/OpenSanctions, Tamr/Quantexa-style tooling, AWS Entity Resolution and the research literature handle steward review, unmerge and persistence; revised plan 2.5 into 2.5a-e. Section 25.
 - **2026-10-05 (session 1, Phase 2 start)** — Golden record + survivorship (`dedupe.survivorship`, pipeline stage `golden_record`, 6 tests), checked against synthetic truth and fixed twice (name source, placeholder dates). Section 24.
 - **2026-10-05 (session 1, step 3 of fixes)** — Memory: per-stage memory metering, DuckDB memory cap + spill, stage tables dropped; 17 GB -> 4.6 GB at 694k. Section 23.
@@ -466,3 +468,15 @@ Phone-only or email-only TF off changes nothing material (138k). **Decision: kee
 - Everything is tested by a simulated reviewer using synthetic ground truth (optionally with a mistake rate), reporting F1 against number of reviews, plus property tests (2.5e).
 
 **Honest limits of this research:** no access to vendor internals or real benchmarks; the 0.95 / 0.70 numbers are from one vendor workflow example, not a standard; effects on a real bank's reviewers (fatigue, error rates, turnaround) cannot be tested without them.
+
+## 26. Stable person IDs (Phase 2.5a)
+
+**Problem:** clustering labels (`cl00000012`) were renumbered every run, so no decision, report or downstream reference could point at the same person next week.
+
+**Design (`src/dedupe/identity/ids.py`):** after clustering, every group inherits the ID of the previous group it overlaps most by source records. Greedy, largest overlap first, ties broken by the older ID then the smallest record key (deterministic, independent of the arbitrary labels and input order). Unchanged, grown or shrunk group: same ID. Several old people merge into one group: the oldest ID survives, the others are RETIRED with `successor` pointing at the survivor. One person splits: the largest part keeps the ID, the other parts get new IDs (event `split_from`). New records only: new ID. All records of an ID vanished: retired. IDs (`P` + 9 digits) are strictly increasing and never reused. Registry = three parquet files in `<work>/identity/` (`records`, `persons` with status/created_run/last_run/retired_run/successor, `events` with run, event type, related ID, record count), written atomically. **Keep that folder between runs**; deleting it makes the next run assign fresh IDs. The column in `clusters.parquet`, golden records, review queue and households is still called `cluster_id` but now holds the stable person ID. `write_outputs(..., registry_dir)` does the remap; without a registry (stand-alone use) the old per-run labels remain.
+
+**Tests:** first run deterministic and independent of labels/order; identical rerun changes nothing and logs no events; new records join existing IDs, new groups get new IDs; merge keeps the older ID and retires the other with a pointer; split keeps the ID on the larger part; retired IDs never reused, vanished records retire; equal-overlap ties deterministic; full pipeline rerun in the same work folder gives identical IDs, and appending new records keeps >97% of existing IDs.
+
+**At scale (138,984 records, 60,285 people):** identical rerun: all IDs kept. Rerun with different decision rules (so groups merge): 99.34% of records keep their person ID; 887 people retired with pointers (887 `merged_from` events), 6 `moved_in`. Bookkeeping adds little time (clustering stage unchanged to within noise).
+
+**Caveats:** greedy overlap can pick a surprising survivor when a merge involves two similarly sized groups (the older ID wins ties; documented, deterministic); if records are removed from a source and later return they join whichever person they match, not necessarily the retired ID; the registry is files, not yet the Postgres store (2.5b); steward judgments will also need to reference these IDs only through record keys (decided in section 25).

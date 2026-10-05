@@ -139,7 +139,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     with meter.stage("clustering"):
         nodes, edges, cannot, ids = load_inputs(con, p["std"], p["cand"], p["decisions"], dcfg)
         res = cluster(nodes, edges, ids, cannot, ClusterConfig(max_cluster_size=cfg.max_cluster_size), guard=cfg.cluster_guard)
-        write_outputs(con, res, clusters_dir)
+        summary["identity"] = write_outputs(con, res, clusters_dir, work / "identity")
         summary["clustering"] = res.stats
         del nodes, edges, cannot, ids
         _drop(con, "cluster_flags")

@@ -12,6 +12,7 @@ import pyarrow as pa
 from dedupe.decision.config import DecisionConfig
 from dedupe.evaluation.loaders import load_truth, record_key, write_predictions
 from dedupe.evaluation.metrics import evaluate, render
+from dedupe.identity import assign_person_ids
 
 from .graph import ClusterConfig, cluster
 
@@ -33,7 +34,9 @@ def load_inputs(con, std: Path, cand: Path, decisions: Path, decision_cfg: Decis
     return nodes, edges, cannot, ids
 
 
-def write_outputs(con, res, out_dir: Path) -> None:
+def write_outputs(con, res, out_dir: Path, registry_dir: Path | None = None) -> dict | None:
+    """Writes clusters etc. With `registry_dir`, group labels are replaced by stable person IDs (see dedupe.identity) and the
+    id summary is returned; without it the per-run labels are kept (stand-alone / test use)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     rids = list(res.labels)
     con.register("cluster_map_src", pa.table({"rid": pa.array(rids, pa.int64()),
@@ -42,6 +45,7 @@ def write_outputs(con, res, out_dir: Path) -> None:
     con.register("cluster_flags_src", pa.table({"cluster_id": pa.array([f"cl{lab:08d}" for lab in res.flags], pa.string()),
                                                 "flags": pa.array([",".join(f) for f in res.flags.values()], pa.string())}))
     con.execute("CREATE OR REPLACE TABLE cluster_flags AS SELECT * FROM cluster_flags_src")
+    ident = assign_person_ids(con, registry_dir) if registry_dir else None
     con.execute(f"""COPY (SELECT r.rid, r.source_id, r.source_record_id, m.cluster_id FROM records r JOIN cluster_map m USING (rid) ORDER BY rid)
                     TO '{out_dir / 'clusters.parquet'}' (FORMAT PARQUET)""")
     con.execute(f"""COPY (SELECT m.cluster_id, count(*) AS size, count(DISTINCT r.source_id) AS sources, f.flags
@@ -53,6 +57,7 @@ def write_outputs(con, res, out_dir: Path) -> None:
                     TO '{out_dir / 'possible_matches.parquet'}' (FORMAT PARQUET)""")
     (out_dir / "removed_edges.json").write_text(json.dumps(
         [{"l_rid": a, "r_rid": b, "probability": p, "reason": why} for a, b, p, why in res.removed_edges], indent=1), encoding="utf-8")
+    return ident
 
 
 def predictions(con, res) -> dict:
