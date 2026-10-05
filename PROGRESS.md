@@ -78,7 +78,7 @@ Dedupe/
 - [x] 1.1 Synthetic Indian customer generator with ground-truth duplicates — see section 9. Run in `.venv`: `python -m dedupe.synthetic --households 1200 --seed 42 --out data/synthetic`
 - [x] 1.2 Evaluation harness (pairwise precision/recall/F1, false merges split same-family vs cross-family, per-hard-case breakdown) — `src/dedupe/evaluation/`; run `python -m dedupe.evaluation baseline|score --data data/synthetic [--pred file.csv]`. Prediction file format: CSV `source,source_record_id,cluster_id`.
 - [x] 1.3 Connector plugin interface + schema-mapping layer (see 7a and section 11). Connectors: CSV/TSV, XLSX, Parquet, generic SQL (SQLAlchemy), Google Sheets. Run: `python -m dedupe.ingest --config configs/synthetic_sources.json`
-- [ ] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN)
+- [x] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN) — see section 12. Run: `python -m dedupe.standardise`; report: `python -m dedupe.standardise.quality`
 - [ ] 1.5 Blocking
 - [ ] 1.6 Scoring with Splink (unsupervised EM start)
 - [ ] 1.7 Clustering (guard against chaining)
@@ -144,6 +144,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.4 done: standardisation + quality report; 41 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.3 done: connectors + mapping + ingest; 24 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.2 done: evaluation harness + baseline (F1 0.585). 14 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.1 done: synthetic generator, 10 tests passing in `.venv`.
@@ -188,3 +189,13 @@ Key lesson: a naive shared-mobile rule merges family members. The real engine mu
 - Verified: 24 tests pass; ingest of the 5 synthetic sources yields 8,178 records whose keys equal the evaluation truth keys. Throughput check: 137k records ingested in ~12s on this machine (XLSX reading is likely the slowest part, unprofiled).
 - **Not verified against real systems:** Postgres/MySQL (tested only via SQLite through the same SQLAlchemy path; drivers are optional extras `.[postgres]`, `.[mysql]`), Google Sheets (tested with a mocked fetch; no live credentials), cloud warehouses.
 - Not yet done: loan co-applicants are carried only as `related_name`/attributes, not as separate records; address parsing and cleaning belong to 1.4.
+
+## 12. Standardisation (Phase 1.4)
+
+Code `src/dedupe/standardise/`: `names.py` (honorifics, `Last, First` order, OCR digit repair, initials, phonetic skeleton: Mohd/Muhammad/Md -> md, Sharma/Sarma -> srm), `identifiers.py` (phone, email + matching key, PAN with positional OCR repair, Aadhaar Verhoeff check + keyed-HMAC token, passport, DL, voter ID), `dates.py` (day-first, month-first detection, year-only, placeholder 01-Jan flag), `addresses.py` + `geo.py` (PIN, city aliases/renames, state, house number, normalised text), `verhoeff.py`, `run.py` (canonical.parquet -> standardised.parquet, ~10k records/s single core), `quality.py` (raw vs cleaned agreement using ground truth).
+
+Principles enforced: invalid identifiers become NULL (never matched on); raw Aadhaar never leaves this stage (only HMAC token + last4; set `DEDUPE_TOKEN_KEY` in production, a dev key with a warning is used otherwise); output holds match features only, raw values stay in canonical.parquet for survivorship/lineage.
+
+Measured on synthetic data (same-person record pairs agreeing on a field, raw -> cleaned): mobile 25% -> 98%, surname 62% -> 94%, whole name 25% -> 64%, DOB 42% -> 89%, city 57% -> 89%, PAN 94% -> 100%, Aadhaar 80% -> 100% (PAN/Aadhaar measured only on values that pass validation). Cross-person collisions rise for mobile (330 -> 1,248) because formats now line up and families share numbers: this is the family-sharing hazard, handled in scoring/rules, not here.
+
+Caveats: (1) the pincode "agreement" fell (95% -> 92%) only because the cleaned column also includes PINs extracted from free-text addresses, a larger and noisier population. (2) The synthetic generator and the cleaners share my assumptions about Indian naming/addresses, so these numbers are optimistic for real data. (3) Names remain Latin-script only; no transliteration from Devanagari etc. yet. (4) City aliases not in the real-world list (e.g. 'Mohali' vs 'Chandigarh', 'Pink City') stay unresolved on purpose; PIN prefix should cover them in scoring.
