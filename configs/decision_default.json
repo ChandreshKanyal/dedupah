@@ -242,6 +242,77 @@
       }
     },
     {
+      "id": "review_possible_namesake",
+      "type": "force_review",
+      "reason": "Only a loosely similar name and a birth date agree (no identifier, contact or home address): at scale this is often two different people with similar names born on the same day, so a person should confirm instead of auto-merging",
+      "when": {
+        "all": [
+          {
+            "score": "probability",
+            "op": ">=",
+            "value": 0.9
+          },
+          {
+            "comparison": "name",
+            "is": "fuzzy full-name match (JW>=0.90)"
+          },
+          {
+            "comparison": "dob",
+            "in": [
+              "exact date",
+              "exact date, but a 1-Jan default",
+              "day and month swapped"
+            ]
+          },
+          {
+            "not": {
+              "comparison": "phone",
+              "in": [
+                "same primary number",
+                "number matches an alternate number"
+              ]
+            }
+          },
+          {
+            "not": {
+              "comparison": "email",
+              "is": "same email"
+            }
+          },
+          {
+            "not": {
+              "comparison": "address",
+              "in": [
+                "same PIN + similar text",
+                "same PIN + house number + similar text"
+              ]
+            }
+          },
+          {
+            "not": {
+              "comparison": "pan",
+              "is": "same PAN"
+            }
+          },
+          {
+            "not": {
+              "comparison": "aadhaar",
+              "in": [
+                "same Aadhaar token",
+                "same last-4 (no full number on one side)"
+              ]
+            }
+          },
+          {
+            "not": {
+              "comparison": "gov_id",
+              "is": "same passport / licence / voter ID"
+            }
+          }
+        ]
+      }
+    },
+    {
       "id": "not_enough_evidence",
       "type": "not_enough_evidence",
       "reason": "Too little independent evidence to merge or even ask a person: a similar name plus a location (or a shared contact with a different name) is common between different people. Needs an identifier, or a name plus a date of birth, contact or home address, or an exact birth date plus a contact or address.",

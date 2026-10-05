@@ -162,6 +162,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 | 2026-10-05 | Ruff lint config: E,F,I,B; E501/E741 ignored; line length 160 | Long SQL/f-strings are deliberate |
 | 2026-10-05 | Minimum-evidence rule type `not_enough_evidence` (soft reject, not a cannot-link), default rule in `configs/decision_default.json` | Senzing-style principles: name + location alone is not enough to merge or review; cut the review queue 94% at 694k records (section 20) |
 | 2026-10-05 | `name_city` blocking rule moved to `OPTIONAL_RULES` (off by default) | 47% of candidates, superlinear growth, almost no surviving decisions; F1 rose slightly without it |
+| 2026-10-05 | Force-review rule `review_possible_namesake` (fuzzy name + DOB only, score >= 0.9, no ID/contact/home corroboration) | Most efficient of the measured options against namesake false merges: 15 checks per prevented error vs 40+ for a higher auto threshold (section 21) |
 | 2026-10-05 | Synthetic generator: email addresses unique per person | Bug: unrelated namesakes got identical mailboxes, which cannot happen; deliberate family sharing kept as a trap. All synthetic numbers shifted slightly |
 
 ## 7. Open questions
@@ -195,6 +196,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-05 (session 1, step 1 of fixes)** — Namesake auto-merges: diagnosed at 694k, compared 6 options, added `review_possible_namesake` rule. Section 21.
 - **2026-10-05 (session 1, later)** — Review queue fix: researched industry handling (Splink thresholds/prior, Senzing principles + generic values, Informatica filtered match rules, active learning); diagnosed queue composition; added `not_enough_evidence` rule type, made name_city blocking optional, fixed synthetic email uniqueness; grouped/ranked review queue (`dedupe.review`). Section 20.
 - **2026-10-05 (session 1, final)** — Big run found a household-evidence blow-up (>16 GB, name joins and per-record surname check); fixed (popularity cap + per-person surnames), 692k records now run in 7.4 min; benchmark regenerated; section 18 written.
 - **2026-10-05 (end of session 1)** — Phase 1.10 mostly done: pipeline runner, privacy/reproducibility tests, benchmark harness (+ held-out results and ablation in `docs/BENCHMARK.md`), chunked scoring, lint clean, README; 81 tests passing in `.venv`. Big (~690k records) run in flight; benchmark must be regenerated; Docker still unverified; Phase 2 not started. See the RESUME HERE block at the top.
@@ -373,3 +375,13 @@ Limits: (1) 46% of true family pairs have no evidence at all in the data (e.g. a
 **Cost / caveats:** ideal-steward ceiling F1 0.956 -> 0.941: about 20k real matches are no longer offered for review; they were hidden among ~214k unrelated pairs with only a name and a city in common, which a reviewer could not tell apart either. Their decisions are kept (`decided_by = not_enough_evidence`) so they can be revisited when new data arrives. Father's name would rescue only ~190 such pairs here (only loans/KYC carry it). Remaining open: auto-merge false positives at scale are mostly fuzzy name + exact DOB with nothing else (namesakes sharing a birthday) — candidate for a stricter auto-merge principle; active learning from steward decisions is Phase 2. Synthetic data only.
 
 **Benchmark after the fix (`docs/BENCHMARK.md`, regenerated; held-out seeds 101-103, ~8k records):** F1 0.855-0.940, mean 0.910 / 0.911 / 0.879 at noise 0.5 / 1 / 2 (noise 2 is slightly lower than before: 0.897 -> 0.879); precision 0.995-1.000; review pairs now 97-99% real (was 66-87%) and queues are about half the size. Small data improved most: 300 households F1 0.783 -> 0.905. Ablation: decision rules now trade a little recall for far fewer false merges (38 -> 13). New signal: without term-frequency adjustment F1 is higher (0.929 vs 0.907) with a much smaller queue (329 vs 1,004) and only slightly more false merges (20 vs 13); TF adjustment should be re-examined next.
+
+## 21. Namesake auto-merges (SYNTHETIC, 694,330 records)
+
+**Diagnosis:** 3,396 of 718,628 auto-merged record pairs were wrong (0.47%), all decided by score (identifier rules: 0 wrong). Two families of errors: (1) namesakes: a name plus an exact/swapped DOB and nothing else (~1,350 wrong; worst sub-pattern 'fuzzy full-name match (JW>=0.90)' + exact DOB: 7-10% wrong, because a JW >= 0.90 on full names accepts different surnames such as Sharma/Varma); (2) same name + shared phone with no DOB: family members (~550 wrong). Auto-merges backed by 2+ independent evidence types are almost never wrong (187 of 243k).
+
+**Options measured (record pairs moved to review / wrong merges prevented / checks per prevented error):** A fuzzy name + DOB only: 12,223 / 792 / 15. B any non-identical name + DOB only: 53,297 / 1,204 / 44. D any name + DOB only: 204,004 / 1,651 / 124. E name + phone, no DOB: 114,262 / 1,224 / 93. Raising auto_merge_at 0.9 -> 0.97: 48,849 / 1,235 / 40; -> 0.99: 152,035 / 2,514 / 60. Chose A as a force_review rule (business-editable in `configs/decision_default.json`).
+
+**Result (same data):** review queue 14,543 -> 17,769 pairs of people (87.6% real); auto-merge precision 99.53% -> 99.63%; person-cluster precision 0.9950 -> 0.9962, recall before review 0.858 -> 0.850 (those matches now wait for a reviewer), F1 before review 0.9215 -> 0.9172; ideal-steward ceiling F1 0.9407 -> 0.9413. At 138k: queue 2,883 -> 3,525.
+
+**Not fixed (documented):** same-name family members sharing a phone with no DOB (fix needs evidence a reviewer also lacks; candidate: household-aware check in Phase 2), and namesakes with identical names + DOB (0.3% wrong, not worth 48k reviews). The rule's 0.9 score condition duplicates `auto_merge_at`; keep them in sync.

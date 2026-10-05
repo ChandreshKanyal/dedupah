@@ -110,3 +110,14 @@ def test_config_validation():
     with pytest.raises(ValidationError):
         DecisionConfig(rules=[{**ok, "id": "Bad Id!"}])
     assert len(DEFAULT.rules) >= 8
+
+
+def test_possible_namesake_goes_to_review_unless_corroborated(tmp_path):
+    a = {"full_name": "Rahul Sharma", "dob": "12/05/1985"}
+    b = {"full_name": "Rahul Varma", "dob": "12/05/1985"}                     # similar name + same birthday only
+    c = {**b, "email": "rahul@example.com"}
+    d = {**a, "email": "rahul@example.com"}                                   # same pair plus a shared email
+    got = _decide([(a, b, 0.95), (d, c, 0.95), (a, b, 0.5)], DEFAULT, tmp_path)
+    assert got[0] == ("review", "review_possible_namesake")
+    assert got[1] == ("auto_merge", "score")
+    assert got[2] == ("review", "score")   # below the auto threshold the rule does not fire; normal zones apply
