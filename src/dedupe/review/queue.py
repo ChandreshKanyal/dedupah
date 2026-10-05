@@ -2,12 +2,14 @@
 
 Record pairs in the 'review' zone are collapsed per cluster pair (one decision settles all of them), pairs that clustering
 already placed in the same person are dropped (nothing left to decide), and the rest is ranked so the most likely real
-matches come first. Needs tables `decisions` and `cluster_map` (rid, cluster_id) in `con`; if a table `judged_pairs` (l_rid, r_rid)
+matches come first (probability, a bump for rule-forced items, and a damped bonus for larger people: SIZE_WEIGHT). Needs tables `decisions` and `cluster_map` (rid, cluster_id) in `con`; if a table `judged_pairs` (l_rid, r_rid)
 exists, record pairs a steward already decided on (or marked unsure) are left out.
 """
 from pathlib import Path
 
 import duckdb
+
+SIZE_WEIGHT = 0.2   # damped value of merging bigger people (measured in dedupe.review.simulate: near-best on pairwise F1 AND customers recovered)
 
 
 def build_queue(con: duckdb.DuckDBPyConnection, out: Path, min_probability: float = 0.0, cap: int | None = None) -> dict:
@@ -25,7 +27,7 @@ def build_queue(con: duckdb.DuckDBPyConnection, out: Path, min_probability: floa
              g AS (SELECT cluster_l, cluster_r, count(*) AS record_pairs, max(probability) AS top_probability,
                           avg(probability) AS mean_probability, bool_or(decided_by <> 'score') AS forced FROM p GROUP BY 1, 2)
         SELECT g.*, sl.size AS size_l, sr.size AS size_r,
-               top_probability + CASE WHEN forced THEN 0.05 ELSE 0 END + 0.02 * ln(1 + record_pairs) AS priority
+               top_probability + CASE WHEN forced THEN 0.05 ELSE 0 END + 0.02 * ln(1 + record_pairs) + {SIZE_WEIGHT} * ln(sl.size * sr.size) AS priority
         FROM g JOIN _csize sl ON sl.cluster_id = g.cluster_l JOIN _csize sr ON sr.cluster_id = g.cluster_r
         WHERE top_probability >= {min_probability}""")
     limit = f"LIMIT {int(cap)}" if cap else ""
