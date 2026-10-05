@@ -38,6 +38,11 @@ DEFAULT_RULES = [
     Rule("name_pin3", _combo("name_first_phon || '|' || name_last_phon || '|' || substr(address_pin, 1, 3)",
                              "name_first_phon", "name_last_phon", "address_pin"), "first+last sound + PIN prefix"),
     Rule("dob_pin", _combo("dob || '|' || address_pin", "dob", "address_pin"), "full DOB + PIN"),
+    Rule("name_city_age",
+         "SELECT rid, name_first_phon || '|' || name_last_phon || '|' || city || '|' || b AS key FROM ("
+         "SELECT rid, name_first_phon, name_last_phon, city, unnest(range((birth_year_min - 2) // 5, (birth_year_max + 2) // 5 + 1)) AS b "
+         "FROM records WHERE name_first_phon IS NOT NULL AND name_last_phon IS NOT NULL AND city IS NOT NULL AND birth_year_min IS NOT NULL)",
+         "first+last sound + city + overlapping birth-year range (5-year buckets): links age-only records (leads) to documents"),
 ]
 
 # Off by default. name_city produced ~47% of all candidate pairs at 138k records and grows faster than the data, yet almost

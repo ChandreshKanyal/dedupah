@@ -61,14 +61,19 @@ NAME = Comparison(
     blocked_by=("surname_dob", "first_dob", "names_birthyear", "surname_initial_birthyear", "name_pin3", "name_city"),
 )
 
+_ONE_SIDE_NO_YEAR = "(l_dob_year IS NULL OR r_dob_year IS NULL)"
+
 DOB = Comparison(
-    "dob", "l_dob_year IS NULL OR r_dob_year IS NULL",
+    "dob", "(l_dob_year IS NULL AND l_birth_year_min IS NULL) OR (r_dob_year IS NULL AND r_birth_year_min IS NULL)",
     (
         Level(5, "exact date", "l_dob = r_dob AND NOT l_dob_placeholder", "l_dob"),
         Level(4, "exact date, but a 1-Jan default", "l_dob = r_dob"),
         Level(3, "day and month swapped", "l_dob_year = r_dob_year AND l_dob_day = r_dob_month AND l_dob_month = r_dob_day"),
         Level(2, "same year (partial or differing day/month)", "l_dob_year = r_dob_year"),
         Level(1, "same day and month, different year", "l_dob_day = r_dob_day AND l_dob_month = r_dob_month"),
+        # one side has no birth year, only an age (band): the two birth-year ranges may or may not overlap (two years of slack)
+        Level(6, "age-based: compatible", f"{_ONE_SIDE_NO_YEAR} AND l_birth_year_min - 2 <= r_birth_year_max AND r_birth_year_min - 2 <= l_birth_year_max"),
+        Level(7, "age-based: incompatible", _ONE_SIDE_NO_YEAR),
     ),
     tf_table_sql="SELECT dob AS key, count(*)::DOUBLE / (SELECT count(dob) FROM records) AS tf FROM records WHERE dob IS NOT NULL GROUP BY 1",
     blocked_by=("surname_dob", "first_dob", "names_birthyear", "surname_initial_birthyear", "dob_pin"),
@@ -140,7 +145,7 @@ STRONG_ID = ("pan", "aadhaar", "gov_id")  # used to seed EM: agreement ~ same pe
 
 RECORD_COLUMNS = [
     "name_clean", "name_first", "name_last", "name_first_is_initial", "name_first_phon", "name_last_phon", "name_tokens_phon",
-    "dob", "dob_year", "dob_month", "dob_day", "dob_placeholder", "mobile", "mobile_alt", "email_key", "pan",
+    "dob", "dob_year", "dob_month", "dob_day", "dob_placeholder", "birth_year_min", "birth_year_max", "mobile", "mobile_alt", "email_key", "pan",
     "aadhaar_token", "aadhaar_last4", "passport_no", "dl_no", "voter_id", "address_pin", "address_house",
     "address_norm", "city", "gender",
 ]

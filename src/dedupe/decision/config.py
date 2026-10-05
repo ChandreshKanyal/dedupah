@@ -20,6 +20,7 @@ class Rule(BaseModel):
     when: dict
     reason: str = ""
     enabled: bool = True
+    priority_offset: float = 0.0   # force_review only: added to the pair's probability when the review queue is ranked (negative = look at later)
 
     @field_validator("id")
     @classmethod

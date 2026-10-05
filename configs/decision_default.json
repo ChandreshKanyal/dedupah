@@ -313,9 +313,73 @@
       }
     },
     {
+      "id": "review_age_only_evidence",
+      "type": "force_review",
+      "reason": "The only birth information is an age (band) and the rest is name + city: about one in seven such pairs are different people, so a person should confirm instead of auto-merging",
+      "when": {
+        "all": [
+          {
+            "score": "probability",
+            "op": ">=",
+            "value": 0.9
+          },
+          {
+            "comparison": "dob",
+            "is": "age-based: compatible"
+          },
+          {
+            "not": {
+              "comparison": "phone",
+              "in": [
+                "same primary number",
+                "number matches an alternate number"
+              ]
+            }
+          },
+          {
+            "not": {
+              "comparison": "email",
+              "is": "same email"
+            }
+          },
+          {
+            "not": {
+              "comparison": "address",
+              "in": [
+                "same PIN + similar text",
+                "same PIN + house number + similar text"
+              ]
+            }
+          },
+          {
+            "not": {
+              "comparison": "pan",
+              "is": "same PAN"
+            }
+          },
+          {
+            "not": {
+              "comparison": "aadhaar",
+              "in": [
+                "same Aadhaar token",
+                "same last-4 (no full number on one side)"
+              ]
+            }
+          },
+          {
+            "not": {
+              "comparison": "gov_id",
+              "is": "same passport / licence / voter ID"
+            }
+          }
+        ]
+      },
+      "priority_offset": -0.3
+    },
+    {
       "id": "not_enough_evidence",
       "type": "not_enough_evidence",
-      "reason": "Too little independent evidence to merge or even ask a person: a similar name plus a location (or a shared contact with a different name) is common between different people. Needs an identifier, or a name plus a date of birth, contact or home address, or an exact birth date plus a contact or address.",
+      "reason": "Too little independent evidence to merge or even ask a person: a similar name plus a location (or a shared contact with a different name) is common between different people. Needs an identifier, or a name plus a date of birth, contact or home address, or an exact birth date plus a contact or address. An age (band) compatible with the other record's birth year plus the same city also counts (leads), but only when the score is at least 0.8: below that, such pairs are almost never the same person.",
       "when": {
         "not": {
           "any": [
@@ -419,6 +483,39 @@
                       ]
                     }
                   ]
+                }
+              ]
+            },
+            {
+              "all": [
+                {
+                  "comparison": "name",
+                  "in": [
+                    "identical cleaned name",
+                    "same name sounds (any order)",
+                    "first+last sound equal",
+                    "initial + same surname",
+                    "one side first-name only, first names agree",
+                    "fuzzy full-name match (JW>=0.90)"
+                  ]
+                },
+                {
+                  "comparison": "dob",
+                  "is": "age-based: compatible"
+                },
+                {
+                  "comparison": "address",
+                  "in": [
+                    "same city, PIN missing on one side",
+                    "same PIN",
+                    "same PIN + similar text",
+                    "same PIN + house number + similar text"
+                  ]
+                },
+                {
+                  "score": "probability",
+                  "op": ">=",
+                  "value": 0.8
                 }
               ]
             }

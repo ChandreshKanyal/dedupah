@@ -9,25 +9,26 @@ from pathlib import Path
 
 import duckdb
 
-SIZE_WEIGHT = 0.2   # damped value of merging bigger people (measured in dedupe.review.simulate: near-best on pairwise F1 AND customers recovered)
+SIZE_WEIGHT = 0.05  # damped value of merging bigger people; 0.2 was best at 35k records but worse than 0 at 139k (dedupe.review.simulate), 0.05 is neutral-to-better at both
 
 
 def build_queue(con: duckdb.DuckDBPyConnection, out: Path, min_probability: float = 0.0, cap: int | None = None) -> dict:
     """Writes `out` (parquet) and returns counts. Columns: cluster_l, cluster_r, record_pairs, top_probability, mean_probability,
     forced (a business rule sent it to review), size_l, size_r, priority. Sorted by priority, highest first.
     `min_probability` drops weak cases; `cap` keeps only the top N (both optional workload controls)."""
+    has_offset = "rank_offset" in [r[0] for r in con.execute("DESCRIBE decisions").fetchall()]
     judged = con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'judged_pairs'").fetchone()[0] > 0
     skip = "AND NOT EXISTS (SELECT 1 FROM judged_pairs j WHERE j.l_rid = least(d.l_rid, d.r_rid) AND j.r_rid = greatest(d.l_rid, d.r_rid))" if judged else ""
     con.execute("""CREATE OR REPLACE TEMP TABLE _csize AS SELECT cluster_id, count(*) AS size FROM cluster_map GROUP BY 1""")
     con.execute(f"""CREATE OR REPLACE TEMP TABLE _queue AS
         WITH p AS (SELECT least(a.cluster_id, b.cluster_id) AS cluster_l, greatest(a.cluster_id, b.cluster_id) AS cluster_r,
-                          d.probability, d.decided_by
+                          d.probability, d.decided_by, {'d.rank_offset' if has_offset else '0.0'} AS rank_offset
                    FROM decisions d JOIN cluster_map a ON a.rid = d.l_rid JOIN cluster_map b ON b.rid = d.r_rid
                    WHERE d.decision = 'review' AND a.cluster_id <> b.cluster_id {skip}),
-             g AS (SELECT cluster_l, cluster_r, count(*) AS record_pairs, max(probability) AS top_probability,
+             g AS (SELECT cluster_l, cluster_r, count(*) AS record_pairs, max(probability) AS top_probability, max(probability + rank_offset) AS ranked_probability,
                           avg(probability) AS mean_probability, bool_or(decided_by <> 'score') AS forced FROM p GROUP BY 1, 2)
         SELECT g.*, sl.size AS size_l, sr.size AS size_r,
-               top_probability + CASE WHEN forced THEN 0.05 ELSE 0 END + 0.02 * ln(1 + record_pairs) + {SIZE_WEIGHT} * ln(sl.size * sr.size) AS priority
+               ranked_probability + CASE WHEN forced THEN 0.05 ELSE 0 END + 0.02 * ln(1 + record_pairs) + {SIZE_WEIGHT} * ln(sl.size * sr.size) AS priority
         FROM g JOIN _csize sl ON sl.cluster_id = g.cluster_l JOIN _csize sr ON sr.cluster_id = g.cluster_r
         WHERE top_probability >= {min_probability}""")
     limit = f"LIMIT {int(cap)}" if cap else ""

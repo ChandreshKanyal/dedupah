@@ -20,6 +20,12 @@ from .model import Model
 ALPHA = 0.5
 TF_FLOOR = 1e-6
 TF_CLIP = 16.0
+# Age-based DOB levels only occur for records without a birth date (leads), which never carry a PAN/Aadhaar seed, so they cannot be
+# learned from the seeded pairs. Their weight is log(m/u): u is measured on random pairs (among pairs where age is the only birth
+# information, i.e. compatible vs incompatible), m is an ASSUMPTION about how reliable a stated age is (it is right about 93% of the
+# time for the same person, with two years of slack).
+AGE_M = {6: 0.93, 7: 0.07}
+U_FLOOR = 1e-4
 L2 = 0.2  # tuned on size experiments (2.0 over-shrank evidence: F1 .56 -> .74 on small data, .79 -> .88 at 1,200 households)
 LN2 = float(np.log(2))
 
@@ -123,6 +129,9 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
     for name, bits in STRONG_BITS.items():
         for l, b in bits.items():
             weights[name][l] = b * LN2
+    age_total = sum(u_rand["dob"][lvl] for lvl in AGE_M)
+    for lvl, m in AGE_M.items():
+        weights["dob"][lvl] = float(np.log(m / max(u_rand["dob"][lvl] / age_total, U_FLOOR)))
     # the intercept is the prior for pairs with no identifier evidence; identifier-based pairs are scored as
     # intercept + identifier weight + other evidence (the identifier is evidence beyond the seeds' own prior)
     model = Model(weights=weights, bias=float(bias), u_random=u_rand,

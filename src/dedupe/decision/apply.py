@@ -34,8 +34,10 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
     who = f"CASE {' '.join(by)} ELSE 'score' END" if by else "'score'"
     fired = "list_filter([" + ", ".join(f"CASE WHEN f_{rid} THEN '{rid}' END" for rid in fire) + "], x -> x IS NOT NULL)" if fire else "[]::VARCHAR[]"
     reasons = " ".join(f"WHEN decided_by = '{r.id}' THEN {_q(r.reason or r.id)}" for r in rules)
+    offsets = " ".join(f"WHEN decided_by = '{r.id}' THEN {float(r.priority_offset)}" for r in rules if r.type == "force_review" and r.priority_offset)
+    offset_sql = f"CASE {offsets} ELSE 0.0 END" if offsets else "0.0"
     con.execute(f"""CREATE OR REPLACE TABLE decisions AS
-        SELECT l_rid, r_rid, probability, decision, decided_by,
+        SELECT l_rid, r_rid, probability, decision, decided_by, ({offset_sql})::FLOAT AS rank_offset,
                CASE {reasons} WHEN decision = 'auto_merge' THEN {_q(ZONE_REASON['auto_merge'])}
                     WHEN decision = 'review' THEN {_q(ZONE_REASON['review'])} ELSE {_q(ZONE_REASON['reject'])} END AS reason, fired
         FROM (SELECT *, {dec} AS decision, {who} AS decided_by, {fired} AS fired FROM flagged)""")

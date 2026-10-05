@@ -69,7 +69,7 @@ def run_one(households: int, seed: int, noise: float = 1.0, variant: str = "full
             restore = train.TF_CLIP
             train.TF_CLIP = 1.0  # a TF adjustment can no longer change a weight
         try:
-            s = run_pipeline(PipelineConfig(sources, root / "work", dec_cfg, syn, **kwargs))
+            s = run_pipeline(PipelineConfig(sources, root / "work", decision_config=dec_cfg, truth=syn, **kwargs))
         finally:
             if restore is not None:
                 importlib.import_module("dedupe.scoring.train").TF_CLIP = restore

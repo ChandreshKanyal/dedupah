@@ -226,12 +226,15 @@ def main() -> None:
     ap.add_argument("--sources", type=Path, required=True)
     ap.add_argument("--work", type=Path, default=Path("data/staging"))
     ap.add_argument("--decision-config", type=Path, default=Path("configs/decision_default.json"))
+    ap.add_argument("--survivorship-config", type=Path, default=Path("configs/survivorship_default.json"))
+    ap.add_argument("--judgments-url", default=None, help="steward decision store (SQLAlchemy URL); omit to ignore steward decisions")
     ap.add_argument("--truth", type=Path, default=None, help="ground-truth folder (dev/synthetic only)")
     ap.add_argument("--cap", type=int, default=50)
     ap.add_argument("--household-threshold", type=float, default=5.0)
     ap.add_argument("--keep-raw-aadhaar", action="store_true", help="do NOT erase raw Aadhaar from the canonical file")
     a = ap.parse_args()
-    s = run_pipeline(PipelineConfig(a.sources, a.work, a.decision_config, a.truth, a.cap, a.household_threshold,
+    s = run_pipeline(PipelineConfig(a.sources, a.work, decision_config=a.decision_config, survivorship_config=a.survivorship_config,
+                                    judgments_url=a.judgments_url, truth=a.truth, blocking_cap=a.cap, household_threshold=a.household_threshold,
                                     redact_aadhaar=not a.keep_raw_aadhaar))
     print(_fmt(s))
 

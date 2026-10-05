@@ -25,6 +25,7 @@ SCHEMA = pa.schema([
     ("name_first_phon", S), ("name_last_phon", S), ("name_tokens_phon", S),
     ("father_name_clean", S), ("related_name_clean", S), ("father_name_phon", S), ("related_name_phon", S),
     ("dob", S), ("dob_year", I), ("dob_month", I), ("dob_day", I), ("dob_precision", S), ("dob_placeholder", B),
+    ("birth_year_min", I), ("birth_year_max", I),
     ("gender", S), ("mobile", S), ("mobile_alt", S),
     ("email", S), ("email_key", S), ("email_domain", S),
     ("pan", S), ("pan_repaired", B), ("pan_surname_match", B),
@@ -35,13 +36,14 @@ SCHEMA = pa.schema([
 _GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O"}
 _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt",
                "city", "state", "pincode", "pan", "aadhaar", "aadhaar_last4", "passport_no", "dl_no", "voter_id",
-               "related_name", "party_role", "relation_to_proposer", "source_id", "source_record_id"]
+               "related_name", "party_role", "relation_to_proposer", "age", "record_date", "source_id", "source_record_id"]
 
 
 def standardise_row(r: dict) -> dict:
     name = parse_name(r["full_name"])
     father, related = parse_name(r["father_name"]), parse_name(r["related_name"])
     d = dates.parse_dob(r["dob"])
+    by_min, by_max = dates.birth_year_range(d[1], r.get("age"), r.get("record_date"))
     em, em_key, em_dom = ids.email(r["email"])
     pan, pan_fixed = ids.pan(r["pan"])
     tok, last4 = ids.aadhaar(r["aadhaar"])
@@ -60,6 +62,7 @@ def standardise_row(r: dict) -> dict:
         "father_name_clean": father.clean, "related_name_clean": related.clean,
         "father_name_phon": father.tokens_phon, "related_name_phon": related.tokens_phon,
         "dob": d[0], "dob_year": d[1], "dob_month": d[2], "dob_day": d[3], "dob_precision": d[4], "dob_placeholder": d[5] if d[4] else None,
+        "birth_year_min": by_min, "birth_year_max": by_max,
         "gender": _GENDER.get((r["gender"] or "").strip().lower()),
         "mobile": ids.phone(r["mobile"]), "mobile_alt": ids.phone(r["mobile_alt"]),
         "email": em, "email_key": em_key, "email_domain": em_dom,

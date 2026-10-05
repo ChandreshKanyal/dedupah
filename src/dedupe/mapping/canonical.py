@@ -23,6 +23,8 @@ CANONICAL_FIELDS: dict[str, str] = {
     "related_name": "Another person named on the record (nominee, co-applicant): evidence for family links",
     "party_role": "Role on the record (proposer, insured, nominee...)",
     "relation_to_proposer": "Relationship stated to the primary party",
+    "age": "Age or age band as given when there is no date of birth ('35', '50-59', '60+')",
+    "record_date": "Date the record was created or last updated (used to turn an age into a birth year)",
 }
 
 FIXED_COLUMNS = ["source_id", "source_record_id"]
