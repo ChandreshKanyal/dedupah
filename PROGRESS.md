@@ -80,7 +80,7 @@ Dedupe/
 - [x] 1.3 Connector plugin interface + schema-mapping layer (see 7a and section 11). Connectors: CSV/TSV, XLSX, Parquet, generic SQL (SQLAlchemy), Google Sheets. Run: `python -m dedupe.ingest --config configs/synthetic_sources.json`
 - [x] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN) — see section 12. Run: `python -m dedupe.standardise`; report: `python -m dedupe.standardise.quality`
 - [x] 1.5 (done, see section 13) Candidate generation (blocking): UNION of several rules (strong-ID equality; phonetic surname + DOB; first-name + DOB; DOB + PIN prefix + initial...). **Frequency cap**: values shared by too many records (family phones, common names) are not used as keys. Measure pairs completeness (true pairs kept), reduction ratio and pairs generated, per rule.
-- [ ] 1.6 Pair scoring: Fellegi-Sunter via Splink on DuckDB. Comparison levels per field (exact / phonetic / fuzzy / initials / swapped-DOB / missing). **Term-frequency adjustment** so rare agreeing values weigh more and common/shared ones less. Unsupervised EM, seeded by strong-ID pairs. Keep per-field contributions for explainability/audit.
+- [x] 1.6 (done, see section 14; deviated from plain Splink/Fellegi-Sunter, reasons there) Pair scoring: Fellegi-Sunter via Splink on DuckDB. Comparison levels per field (exact / phonetic / fuzzy / initials / swapped-DOB / missing). **Term-frequency adjustment** so rare agreeing values weigh more and common/shared ones less. Unsupervised EM, seeded by strong-ID pairs. Keep per-field contributions for explainability/audit.
 - [ ] 1.7 Decisions + hard constraints: score -> auto-merge / review / reject zones; **never-merge vetoes** (two different valid PANs or Aadhaar tokens, conflicting gender, large DOB gap, twin guard). This is the seed of the Phase 2 rules engine.
 - [ ] 1.8 Clustering: only auto-merge edges form clusters; connected components + **conflict check that splits clusters** + size alerts (no black-hole entities); review pairs stay unmerged. Add cluster-level metrics (purity, B-cubed).
 - [ ] 1.9 Household/relationship layer: families are NOT merges. A separate graph of 'related' links between resolved people (shared address, phone, nominee/co-applicant, father name, surname) -> household groups. Evaluate against household truth.
@@ -147,6 +147,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.6 done: scoring (identifier-seeded logistic + TF), best pair F1 0.90 on 8k records; 53 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.5 done: blocking with frequency cap; 45 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.4 done: standardisation + quality report; 41 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.3 done: connectors + mapping + ingest; 24 tests passing in `.venv`.
@@ -215,3 +216,21 @@ Candidates are not matches: ~3,200 of the 13,210 are false (family-shared phones
 Misses (5.5% unreachable): mostly KYC-document-only and lead-only records that carry no phone/email/ID in common with anything else (leads have no DOB/ID; KYC docs have no phone/email). Documented limitation; fixing needs richer evidence (e.g. face/biometric, Phase 3) or review-queue suggestions.
 
 Caveat: the frequency cap (default 50) is unit-tested but this synthetic data contains no truly generic values (shared agent phones, '9999999999'), so its real-world setting is unproven. Tune it on pilot data.
+
+## 14. Pair scoring (Phase 1.6)
+
+Code `src/dedupe/scoring/`: `comparisons.py` (9 comparisons as ordered level ladders in SQL: name 8 levels, DOB 6, phone 3, email 2, PAN 2, Aadhaar 4, other gov IDs 2, address 6, gender 2; missing values are 'not comparable' = zero evidence), `levels.py` (DuckDB -> level/TF matrices), `train.py`, `predict.py`, `evaluate.py`, `model.py`. Run: `python -m dedupe.scoring --data data/synthetic` -> `data/staging/scored_pairs.parquet` (probability, match_weight, per-field levels `lv_*` and contributions in bits `w_*`) + `data/models/fs_model.json` (weights per level in bits, readable).
+
+**Design deviation (and why).** I first built classic Splink-style Fellegi-Sunter (u from random pairs, m by EM). Findings on this data: (a) EM drifted: family pairs with shared address/phone got high posteriors, so m was contaminated (e.g. believed 24% of true matches had a different phone); (b) with u from random pairs, shared address/phone counted as +10 bits each, giving ~500 false merges (503 within families) at p>=0.9; (c) when m/u are taken from identifier-seeded pairs instead, naive-Bayes per-field ratios still double-count correlated fields. Final design: identifiers (PAN, Aadhaar token, passport/licence/voter) get fixed, documented weights (+13.2 bits same, -6.6/-4 different); all other comparisons get **L2-regularised logistic-regression coefficients fitted to identifier-seeded candidate pairs** (same ID = same person, conflicting IDs = different people), using only non-identifier levels so there is no leakage. Term-frequency adjustment (rare agreeing value counts more, common less; x16 clip) is applied on top. No hand labels are used. Hybrid rules + ML, CPU only, explainable per field.
+
+Results (SYNTHETIC; 8,178 records, 13,260 candidates, 11,787 true pairs of which 10,060 are candidates):
+| threshold | precision | recall (of all true pairs) | F1 | false merges |
+|---|---|---|---|---|
+| 0.5 | 0.979 | 0.805 | 0.883 | 201 |
+| 0.9 | 0.9988 | 0.568 | 0.724 | 8 |
+best F1 0.899 (precision 0.962, recall 0.844) at p>=0.23. Naive baseline was F1 0.585 / precision 0.79. Calibration is monotone: p 0.1-0.5 -> 49.5% real matches; 0.5-0.9 -> 93.5%; >0.9 -> 99.9%. => natural zones: auto-merge >= ~0.9, review ~0.1-0.9, reject below (to be formalised in 1.7). Recall ceiling from blocking is 85.4%.
+At 137,471 records (20k households): precision 0.997 at p>=0.9 (387 false merges / 136k), best F1 0.860, scoring 543k pairs in 16 s; mid-band probabilities slightly over-confident (0.5-0.9 -> 71% real).
+
+Remaining errors: false merges at 0.9 are twins, junior/senior and shared-mobile family members (strongest misleading field: DOB/name placeholders). Missed true pairs (in candidates): weakest fields are name (maiden/married, initials, OCR) and address (previous addresses, one-sided city). Many involve ID-less leads where only name+phone+city exist: genuinely ambiguous, belong in review.
+
+Caveats: weights learned from identifier-bearing pairs; behaviour on ID-less pairs is extrapolated. Training data and test data are the same synthetic population (no hand labels, but no held-out set either). The strong-ID bits are principled constants, not fitted. Real-data behaviour unproven.

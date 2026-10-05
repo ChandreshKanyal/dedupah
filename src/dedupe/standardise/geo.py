@@ -23,7 +23,8 @@ CITY_ALIASES = {
     "baroda": "vadodara", "vizag": "visakhapatnam", "benares": "varanasi", "banaras": "varanasi",
     "mangalore": "mangaluru", "allahabad": "prayagraj", "new delhi": "delhi", "hyd": "hyderabad",
     "secunderabad": "hyderabad", "trichy": "tiruchirappalli", "calicut": "kozhikode", "bhubaneshwar": "bhubaneswar",
-    "bengalooru": "bengaluru",
+    "bengalooru": "bengaluru", "mumbai city": "mumbai", "greater mumbai": "mumbai", "delhi ncr": "delhi",
+    "gautam buddh nagar": "noida",
 }
 
 STATE_ALIASES = {

@@ -15,6 +15,7 @@ dependencies = [
     "pydantic-settings>=2",
     "openpyxl>=3.1",
     "sqlalchemy>=2",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
