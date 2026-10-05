@@ -8,15 +8,18 @@ version = "0.1.0"
 description = "Customer data deduplication and golden-record platform"
 requires-python = ">=3.10"
 dependencies = [
-    "duckdb>=1.0",
+    "duckdb>=1.4",
     "polars>=1.0",
     "pyarrow>=15",
     "pydantic>=2",
     "pydantic-settings>=2",
     "openpyxl>=3.1",
+    "sqlalchemy>=2",
 ]
 
 [project.optional-dependencies]
+postgres = ["psycopg2-binary>=2.9"]
+mysql = ["pymysql>=1.1"]
 dev = ["pytest>=8", "ruff>=0.5"]
 
 [tool.setuptools.packages.find]

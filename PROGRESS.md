@@ -77,7 +77,7 @@ Dedupe/
 ### Phase 1 — Core engine
 - [x] 1.1 Synthetic Indian customer generator with ground-truth duplicates — see section 9. Run in `.venv`: `python -m dedupe.synthetic --households 1200 --seed 42 --out data/synthetic`
 - [x] 1.2 Evaluation harness (pairwise precision/recall/F1, false merges split same-family vs cross-family, per-hard-case breakdown) — `src/dedupe/evaluation/`; run `python -m dedupe.evaluation baseline|score --data data/synthetic [--pred file.csv]`. Prediction file format: CSV `source,source_record_id,cluster_id`.
-- [ ] 1.3 Connector plugin interface + schema-mapping layer (see 7a); first connectors: CSV/XLSX/Parquet, Postgres/MySQL (SQLAlchemy), Google Sheets
+- [x] 1.3 Connector plugin interface + schema-mapping layer (see 7a and section 11). Connectors: CSV/TSV, XLSX, Parquet, generic SQL (SQLAlchemy), Google Sheets. Run: `python -m dedupe.ingest --config configs/synthetic_sources.json`
 - [ ] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN)
 - [ ] 1.5 Blocking
 - [ ] 1.6 Scoring with Splink (unsupervised EM start)
@@ -144,6 +144,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.3 done: connectors + mapping + ingest; 24 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.2 done: evaluation harness + baseline (F1 0.585). 14 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.1 done: synthetic generator, 10 tests passing in `.venv`.
 - **2026-10-05** — Phase 0.2–0.4 done (repo, skeleton, Dockerfile, compose). 0.5 blocked by Docker engine failure on the host (engine pipe missing, `wsl` command hangs). Waiting on user to restart Docker Desktop / reboot. No commits yet. Fallback: dev proceeds in `.venv` (`.venv/Scripts/python -m pytest`).
@@ -178,3 +179,12 @@ Note: 9 people appear only as loan co-applicants and have no record of their own
 | 2026-10-05 | Baseline: exact PAN or exact mobile (union-find) | 0.790 | 0.465 | 0.585 | 1,459 (all within the same family) | Shared family mobiles cause false merges; misses records without PAN/mobile, typo'd identifiers and OCR'd docs |
 
 Key lesson: a naive shared-mobile rule merges family members. The real engine must treat shared contact details as weak evidence.
+
+## 11. Connectors and mapping (Phase 1.3)
+
+- `src/dedupe/connectors/`: `base.py` (interface `test_connection / columns / read_batches` + registry + env-var secrets), `files.py` (csv/tsv, xlsx, parquet), `sql.py` (any SQLAlchemy URL; table or SELECT-only query; URL from env var), `sheets.py` (Google Sheets via CSV export). All emit Arrow tables of strings.
+- `src/dedupe/mapping/`: `canonical.py` (the canonical schema: 24 fields + `source_id`, `source_record_id`, `attributes` JSON), `config.py` (mapping JSON -> DuckDB SQL; expressions: column, coalesce, concat, conditional column, const), `suggest.py` (auto-suggest mapping from column names + sample values).
+- `src/dedupe/ingest.py`: validates all sources/mappings first, then streams batches -> one Parquet (`data/staging/canonical.parquet`). Config for the synthetic sources: `configs/synthetic_sources.json`.
+- Verified: 24 tests pass; ingest of the 5 synthetic sources yields 8,178 records whose keys equal the evaluation truth keys. Throughput check: 137k records ingested in ~12s on this machine (XLSX reading is likely the slowest part, unprofiled).
+- **Not verified against real systems:** Postgres/MySQL (tested only via SQLite through the same SQLAlchemy path; drivers are optional extras `.[postgres]`, `.[mysql]`), Google Sheets (tested with a mocked fetch; no live credentials), cloud warehouses.
+- Not yet done: loan co-applicants are carried only as `related_name`/attributes, not as separate records; address parsing and cleaning belong to 1.4.

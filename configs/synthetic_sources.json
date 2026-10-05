@@ -1,0 +1,66 @@
+{
+  "sources": [
+    {
+      "source_id": "bank_crm",
+      "connector": {"type": "csv", "path": "data/synthetic/bank_crm.csv"},
+      "record_id": "cust_id",
+      "fields": {
+        "full_name": "full_name", "dob": "dob", "gender": "gender", "marital_status": "marital_status",
+        "mobile": "mobile", "mobile_alt": "alt_mobile", "email": "email",
+        "address": {"concat": ["addr_line1", "addr_line2", "locality"], "sep": ", "},
+        "city": "city", "state": "state", "pincode": "pincode",
+        "pan": "pan", "aadhaar_last4": "aadhaar_last4", "occupation": "occupation",
+        "annual_income": "annual_income", "related_name": "nominee_name"
+      },
+      "attributes": ["account_type", "branch_code", "segment", "kyc_status", "account_open_date", "credit_card", "relationship_manager"]
+    },
+    {
+      "source_id": "insurance",
+      "connector": {"type": "xlsx", "path": "data/synthetic/insurance_policies.xlsx", "sheet": "policies"},
+      "record_id": "row_id",
+      "fields": {
+        "full_name": "party_name", "dob": "dob", "gender": "gender", "mobile": "mobile", "email": "email",
+        "address": "address", "pan": "pan", "related_name": "nominee_name",
+        "party_role": "party_role", "relation_to_proposer": "relation_to_proposer"
+      },
+      "attributes": ["policy_no", "policy_type", "product_name", "sum_assured", "annual_premium", "premium_mode",
+                     "policy_status", "start_date", "agent_code", "channel", "occupation_class", "smoker",
+                     "pre_existing_conditions", "vehicle_reg_no"]
+    },
+    {
+      "source_id": "loans",
+      "connector": {"type": "csv", "path": "data/synthetic/loans.csv"},
+      "record_id": "loan_id",
+      "fields": {
+        "full_name": "applicant_name", "dob": "applicant_dob", "gender": "applicant_gender", "father_name": "father_name",
+        "mobile": "mobile", "email": "email", "address": "current_address", "address_alt": "permanent_address",
+        "pan": "pan", "aadhaar": "aadhaar_no", "related_name": "co_applicant_name"
+      },
+      "attributes": ["employment_type", "employer", "monthly_income", "loan_type", "loan_amount", "tenure_months",
+                     "interest_rate", "cibil_score", "loan_status", "disbursed_date", "co_applicant_pan",
+                     "co_applicant_mobile", "branch"]
+    },
+    {
+      "source_id": "leads",
+      "connector": {"type": "csv", "path": "data/synthetic/marketing_leads.csv"},
+      "record_id": "lead_id",
+      "fields": {"full_name": "name", "mobile": "phone", "email": "email", "city": "city", "gender": "gender"},
+      "attributes": ["age", "income_band", "interested_in", "campaign", "lead_source", "consent_marketing", "created_at", "agent_notes"]
+    },
+    {
+      "source_id": "kyc_documents",
+      "connector": {"type": "csv", "path": "data/synthetic/kyc_documents.csv"},
+      "record_id": "doc_id",
+      "fields": {
+        "full_name": "name_on_doc", "dob": "dob_on_doc", "gender": "gender_on_doc", "father_name": "father_name_on_doc",
+        "address": "address_on_doc",
+        "pan": {"column": "doc_number", "when": {"doc_type": "PAN"}},
+        "aadhaar": {"column": "doc_number", "when": {"doc_type": "AADHAAR"}},
+        "passport_no": {"column": "doc_number", "when": {"doc_type": "PASSPORT"}},
+        "dl_no": {"column": "doc_number", "when": {"doc_type": "DRIVING_LICENCE"}},
+        "voter_id": {"column": "doc_number", "when": {"doc_type": "VOTER_ID"}}
+      },
+      "attributes": ["doc_type", "ocr_confidence", "extraction_method", "image_file"]
+    }
+  ]
+}
