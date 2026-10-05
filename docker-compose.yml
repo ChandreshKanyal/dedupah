@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dedupe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dedupe}
+      POSTGRES_DB: ${POSTGRES_DB:-dedupe}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dedupe}"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DEDUPE_DATABASE_URL: postgresql://${POSTGRES_USER:-dedupe}:${POSTGRES_PASSWORD:-dedupe}@postgres:5432/${POSTGRES_DB:-dedupe}
+      DEDUPE_DATA_DIR: /data
+    volumes:
+      - ./data:/data
+      - ./src:/app/src
+      - ./tests:/app/tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
