@@ -12,7 +12,7 @@
 **Immediate next steps (in order)**
 1. Try Docker again (`docker info`; Docker Desktop must show "Engine running"; if stuck, `wsl --shutdown` then reopen, or reboot). If it works, `docker compose run --rm --build app` must pass the tests inside the container; fix the Dockerfile as needed. Portability is a hard requirement, so Phase 0 is not truly done until this passes.
 2. Memory for millions: peak is now 4.6 GB at 694k records (section 23). The remaining big holder is clustering in pure Python (dicts/lists per record, ~2 GB left after it). Linear extrapolation gives ~30 GB at 5M records, too much for one machine: move clustering to array-based union-find (NumPy) or DuckDB before a multi-million test.
-3. Phase 2 (product layer), revised after research (section 25): 2.5a stable person IDs (DONE), next 2.5b judgment store, 2.5c judgments in clustering, 2.5d review service, 2.5e simulated-reviewer harness; then rules versioning/audit (2.3), Postgres persistence of outputs, S3 connector, FastAPI, thin web UI. Confirm with the user before starting.
+3. Phase 2 (product layer), revised after research (section 25): 2.5a stable person IDs (DONE), 2.5b judgment store (DONE), next 2.5c judgments in clustering, 2.5d review service, 2.5e simulated-reviewer harness; then rules versioning/audit (2.3), Postgres persistence of outputs, S3 connector, FastAPI, thin web UI. Confirm with the user before starting.
 4. Phase 3 documents (OCR / MRZ / face) and Phase 4 hardening (see roadmap).
 
 **Review queue (sections 19-20):** FIXED. At 694k records the queue went from 246,948 pairs of people (13% real) to 14,543 (87% real) via a Senzing-style minimum-evidence rule (`not_enough_evidence`) and dropping the name+city blocking rule; F1 before review rose 0.906 -> 0.922. Cost: ideal-steward ceiling F1 0.956 -> 0.941 (matches only findable by checking ~232k mostly undecidable name+city pairs).
@@ -125,7 +125,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 - [x] 2.4 (done, section 24) Survivorship rules + golden record + lineage (per-field rules; keep which source record supplied each value; canonical.parquet `attributes` JSON carries source-specific fields)
 - [~] 2.5 Review workflow, revised after research (section 25). DONE: grouped, ranked queue per pair of people (`dedupe.review`).
   - [x] 2.5a (done, section 26) Stable person IDs across runs (new clusters inherit the previous run's ID by record overlap; today `cl00000012` changes every run)
-  - [ ] 2.5b Append-only judgment store (SQLAlchemy: SQLite for dev/tests, Postgres in compose): same_person / different_person / unsure / split / field_override, keyed by (source_id, source_record_id), with who, when, why, rule/model version and an evidence snapshot
+  - [x] 2.5b (done, section 27) Append-only judgment store (SQLAlchemy: SQLite for dev/tests, Postgres in compose): same_person / different_person / unsure / split / field_override, keyed by (source_id, source_record_id), with who, when, why, rule/model version and an evidence snapshot
   - [ ] 2.5c Judgments applied inside clustering: must-link edges, cannot-links (steward beats automation; an ID conflict (two different PANs) needs a stronger confirmation), contradiction report
   - [ ] 2.5d Review service: queue, explain (why / why-not from the stored per-field contributions), approve / reject / unsure / split / undo, bulk actions, golden-field overrides; optional four-eyes approval
   - [ ] 2.5e Simulated-reviewer test harness: review-budget curves (F1 vs reviews) for ranking strategies, property tests (idempotent, adding a cannot-link never merges, IDs stable, unmerge never re-merges)
@@ -175,6 +175,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 | 2026-10-05 | Steward decisions are stored as an append-only judgment log keyed by source record keys, and replayed as must-link / cannot-link constraints on every run (not as edits to cluster tables) | Industry pattern: nomenklatura judgment graph, Informatica excludes unmerged records from re-merging, patent on re-clustering with only the steward link removed (section 25) |
 | 2026-10-05 | Persistent person IDs across runs become a prerequisite for the review workflow | Cluster IDs change every run; Senzing / Informatica keep stable entity IDs |
 | 2026-10-05 | Person IDs (`P` + 9 digits, column still called `cluster_id`) persist across runs through a registry folder `<work>/identity/` (records, persons, events parquet files): greedy largest-overlap inheritance, older ID wins a merge, larger part keeps the ID on a split, retired IDs never reused | Review decisions and downstream systems need IDs that keep meaning the same person (section 26) |
+| 2026-10-05 | Judgment log (`dedupe.store.JudgmentStore`): append-only (DB triggers refuse UPDATE/DELETE), SHA-256 hash chain for tamper evidence, undo / supersede / approve / decline as new rows, optional four-eyes per decision; SQLite for dev and tests, PostgreSQL via `DEDUPE_DATABASE_URL` | Audit-grade steward decisions that survive re-runs (section 27) |
 | 2026-10-05 | Synthetic generator: email addresses unique per person | Bug: unrelated namesakes got identical mailboxes, which cannot happen; deliberate family sharing kept as a trap. All synthetic numbers shifted slightly |
 
 ## 7. Open questions
@@ -208,6 +209,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-05 (session 1, 2.5b)** — Judgment store (`dedupe.store`, 11 tests, 109 total): same/different/unsure/split/field-override + revoke/approve/decline, hash chain, append-only triggers. Section 27.
 - **2026-10-05 (session 1, 2.5a)** — Stable person IDs (`dedupe.identity`, 8 tests + pipeline rerun test, 98 tests total); verified at 138k records. Section 26.
 - **2026-10-05 (session 1, research before 2.5)** — Researched how Reltio, Informatica, Senzing, nomenklatura/OpenSanctions, Tamr/Quantexa-style tooling, AWS Entity Resolution and the research literature handle steward review, unmerge and persistence; revised plan 2.5 into 2.5a-e. Section 25.
 - **2026-10-05 (session 1, Phase 2 start)** — Golden record + survivorship (`dedupe.survivorship`, pipeline stage `golden_record`, 6 tests), checked against synthetic truth and fixed twice (name source, placeholder dates). Section 24.
@@ -480,3 +482,17 @@ Phone-only or email-only TF off changes nothing material (138k). **Decision: kee
 **At scale (138,984 records, 60,285 people):** identical rerun: all IDs kept. Rerun with different decision rules (so groups merge): 99.34% of records keep their person ID; 887 people retired with pointers (887 `merged_from` events), 6 `moved_in`. Bookkeeping adds little time (clustering stage unchanged to within noise).
 
 **Caveats:** greedy overlap can pick a surprising survivor when a merge involves two similarly sized groups (the older ID wins ties; documented, deterministic); if records are removed from a source and later return they join whichever person they match, not necessarily the retired ID; the registry is files, not yet the Postgres store (2.5b); steward judgments will also need to reference these IDs only through record keys (decided in section 25).
+
+## 27. Judgment store (Phase 2.5b)
+
+**What it is:** a persistent, append-only log of steward decisions (`src/dedupe/store/judgments.py`, class `JudgmentStore`). Kinds: `same_person` (must-link), `different_person` (cannot-link), `unsure` (snooze, no clustering effect), `split` (parts of a wrongly merged person that must stay apart), `field_override` (steward-fixed golden value, anchored on records of the person), and the meta rows `revoke` (undo), `approve`, `decline`.
+
+**Rules built in:** (1) append-only: no API to edit or delete, and database triggers (SQLite and PostgreSQL) refuse UPDATE/DELETE; (2) keyed by `(source_id, source_record_id)`, never by person ID or group label, so decisions survive re-runs, new data and rule changes; pair order does not matter and repeating a decision is idempotent; (3) a new same/different decision on a pair automatically revokes the opposite earlier one (a changed mind) while the old row stays in the history; `unsure` can never overwrite a decision; (4) four eyes: `requires_approval` decisions have no effect until a DIFFERENT person approves (the proposer cannot), declines need a reason and are permanent; (5) every row stores actor, UTC time, reason and an evidence snapshot (what the steward saw: probability, per-field contributions, versions) and a hash chained to the previous row; `verify()` recomputes the chain and reports the first tampered row; (6) validation: no identical-record pairs, split parts must be disjoint, overrides only for known golden fields (`null` clears a field) and need a reason and an anchor record.
+
+**API:** `same_person / different_person / unsure / split / override_field / revoke / approve / decline`, `active(kinds)`, `pending_approval()`, `pair_state(a, b)`, `history()` (audit view with current status of each row), `verify()`. `JudgmentStore.open(url)` takes a SQLAlchemy URL, default `DEDUPE_DATABASE_URL` or `sqlite:///data/judgments.db`.
+
+**Tests (11):** order independence and idempotence, supersede keeps history, revoke and unsure, four-eyes (self-approval refused, approval activates, no double approval, decline), split/override canonical form and validation, input validation, evidence kept verbatim, DB refuses UPDATE/DELETE, hash-chain tamper detection (after an administrator drops the trigger and edits a row), persistence across reopen.
+
+**Speed (SQLite, this machine):** 2.4 ms per decision written; replaying 5,000 decisions 0.1 s; verifying the chain 0.09 s.
+
+**Not verified / open:** the PostgreSQL path (triggers, `LOCK TABLE` serialisation of writers) is written but untested because Docker/Postgres is not available here; SQLite is single-writer so concurrency was not stress-tested; the log is not yet read by the pipeline (that is 2.5c); a person-level `merge` button in a UI will be expressed as a same-person judgment on a representative record pair, and an UNMERGE as a `split`; no users/roles system yet (the `actor` is trusted text until the API adds authentication in Phase 2.6).
