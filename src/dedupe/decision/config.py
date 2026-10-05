@@ -32,6 +32,8 @@ class Rule(BaseModel):
     @model_validator(mode="after")
     def _compiles(self):
         compile_condition(self.when)  # fail at load time, not at run time
+        if self.priority_offset and self.type != "force_review":
+            raise ValueError(f"rule {self.id!r}: priority_offset only applies to force_review rules (it orders the review queue)")
         return self
 
 

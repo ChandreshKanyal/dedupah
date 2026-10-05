@@ -39,6 +39,16 @@ _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_al
                "related_name", "party_role", "relation_to_proposer", "age", "record_date", "source_id", "source_record_id"]
 
 
+# data-quality report: of the values a source supplied, which survived validation?
+_VALIDATION = {
+    **{f: (lambda raw, row, out=out: row[out] is not None) for f, out in (
+        ("mobile", "mobile"), ("email", "email"), ("pan", "pan"), ("dob", "dob"), ("aadhaar", "aadhaar_token"), ("pincode", "address_pin"))},
+    "age": lambda raw, row: dates.parse_age(raw["age"]) is not None,
+    # an unreadable record date silently turns an age into a birth year counted from today: surface it
+    "record_date": lambda raw, row: dates.parse_record_date(raw["record_date"]) is not None,
+}
+
+
 def standardise_row(r: dict) -> dict:
     name = parse_name(r["full_name"])
     father, related = parse_name(r["father_name"]), parse_name(r["related_name"])
@@ -83,7 +93,8 @@ def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
     raw_present = defaultdict(Counter)
     with pq.ParquetWriter(out_path, SCHEMA) as w:
         for batch in pf.iter_batches(batch_size=batch_size):
-            cols = {c: batch.column(c).to_pylist() for c in _RAW_FIELDS}
+            # a canonical file without some fields (older files, other producers) is treated as having them all empty
+            cols = {c: batch.column(c).to_pylist() if c in batch.schema.names else [None] * batch.num_rows for c in _RAW_FIELDS}
             rows = []
             for i in range(batch.num_rows):
                 raw = {c: cols[c][i] for c in _RAW_FIELDS}
@@ -91,11 +102,10 @@ def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
                 rows.append(row)
                 src = row["source_id"]
                 seen[src] += 1
-                for raw_f, out_f in (("mobile", "mobile"), ("email", "email"), ("pan", "pan"), ("dob", "dob"),
-                                     ("aadhaar", "aadhaar_token"), ("pincode", "address_pin")):
-                    if raw[raw_f] and raw[raw_f].strip():
+                for raw_f, valid in _VALIDATION.items():
+                    if raw[raw_f] and str(raw[raw_f]).strip():
                         raw_present[src][raw_f] += 1
-                        if row[out_f] is not None:
+                        if valid(raw, row):
                             filled[src][raw_f] += 1
             w.write_table(pa.Table.from_pylist(rows, schema=SCHEMA))
     # data-quality report: of the values a source supplied, what share survived validation?

@@ -211,8 +211,8 @@
         "all": [
           {
             "field": "dob_year",
-            "op": "both_gte",
-            "value": 2008
+            "op": "both_born_within_last",
+            "value": 18
           },
           {
             "comparison": "dob",
@@ -315,13 +315,33 @@
     {
       "id": "review_age_only_evidence",
       "type": "force_review",
-      "reason": "The only birth information is an age (band) and the rest is name + city: about one in seven such pairs are different people, so a person should confirm instead of auto-merging",
+      "reason": "The only birth information is an age (band) and the rest is a name and the same city/PIN: about one in seven such pairs are different people, so a person should confirm instead of auto-merging",
       "when": {
         "all": [
           {
             "score": "probability",
             "op": ">=",
             "value": 0.9
+          },
+          {
+            "comparison": "name",
+            "in": [
+              "identical cleaned name",
+              "same name sounds (any order)",
+              "first+last sound equal",
+              "initial + same surname",
+              "one side first-name only, first names agree",
+              "fuzzy full-name match (JW>=0.90)"
+            ]
+          },
+          {
+            "comparison": "address",
+            "in": [
+              "same city, PIN missing on one side",
+              "same PIN",
+              "same PIN + similar text",
+              "same PIN + house number + similar text"
+            ]
           },
           {
             "comparison": "dob",

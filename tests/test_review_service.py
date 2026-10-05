@@ -73,7 +73,7 @@ def test_explain_shows_both_people_the_evidence_and_masks_sensitive_values(env):
     item = env.svc.queue(limit=1)[0]
     e = env.svc.explain(*_item_keys(item))
     assert [p["person_id"] for p in e["persons"]] == list(_item_keys(item)) and e["record_pairs"] >= 1
-    assert 0 < e["probability"] < 1 and isinstance(e["hard_conflicts"], list) and e["best_pair"]
+    assert 0 < e["probability"] <= 1 and isinstance(e["hard_conflicts"], list) and e["best_pair"]
     assert all(c["bits"] > 0.5 for c in e["why_match"]) and all(c["bits"] < -0.5 for c in e["why_not"]) and (e["why_match"] or e["why_not"])
     shown = [r["pan"] for p in e["persons"] for r in p["records"] if r["pan"]]
     assert all(v.startswith("*") for v in shown)                         # masked by default

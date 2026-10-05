@@ -25,9 +25,13 @@ def generate(std_path: Path, out_path: Path, rules: list[Rule] | None = None, ca
         con.execute(f"CREATE OR REPLACE TEMP TABLE k AS SELECT DISTINCT rid, key FROM ({rule.sql})")
         con.execute("CREATE OR REPLACE TEMP TABLE blocks AS SELECT key, count(*) n FROM k GROUP BY key HAVING count(*) > 1")
         capped = con.execute(f"SELECT count(*), coalesce(sum(n), 0) FROM blocks WHERE n > {cap}").fetchone()
+        one_side = ""
+        if rule.one_side:
+            con.execute(f"CREATE OR REPLACE TEMP TABLE probe AS SELECT rid FROM records WHERE {rule.one_side}")
+            one_side = "AND (a.rid IN (SELECT rid FROM probe) OR b.rid IN (SELECT rid FROM probe))"
         con.execute(f"""INSERT INTO rule_pairs
             SELECT '{rule.name}', a.rid, b.rid FROM k a JOIN k b ON a.key = b.key AND a.rid < b.rid
-            WHERE a.key IN (SELECT key FROM blocks WHERE n <= {cap})
+            WHERE a.key IN (SELECT key FROM blocks WHERE n <= {cap}) {one_side}
             GROUP BY 1, 2, 3""")
         stats[rule.name] = {"blocks": con.execute("SELECT count(*) FROM blocks").fetchone()[0],
                             "capped_blocks": capped[0], "records_in_capped_blocks": int(capped[1])}

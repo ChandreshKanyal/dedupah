@@ -8,6 +8,8 @@ class Rule:
     name: str
     sql: str  # SELECT rid, key FROM records ... ; NULL keys are ignored
     description: str = ""
+    # optional SQL condition on `records`: a pair is kept only when at least one of its two records satisfies it
+    one_side: str = ""
 
 
 def _simple(col: str) -> str:
@@ -42,7 +44,10 @@ DEFAULT_RULES = [
          "SELECT rid, name_first_phon || '|' || name_last_phon || '|' || city || '|' || b AS key FROM ("
          "SELECT rid, name_first_phon, name_last_phon, city, unnest(range((birth_year_min - 2) // 5, (birth_year_max + 2) // 5 + 1)) AS b "
          "FROM records WHERE name_first_phon IS NOT NULL AND name_last_phon IS NOT NULL AND city IS NOT NULL AND birth_year_min IS NOT NULL)",
-         "first+last sound + city + overlapping birth-year range (5-year buckets): links age-only records (leads) to documents"),
+         "first+last sound + city + overlapping birth-year range (5-year buckets): links age-only records (leads) to documents",
+         # records that both have a birth year are already paired by the DOB rules; without this the rule would add
+         # same-name same-city namesakes born a few years apart, a number that grows with the population
+         one_side="dob_year IS NULL"),
 ]
 
 # Off by default. name_city produced ~47% of all candidate pairs at 138k records and grows faster than the data, yet almost

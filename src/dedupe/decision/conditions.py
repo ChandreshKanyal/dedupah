@@ -8,10 +8,13 @@ Nodes:
     {"field": "dob_year", "op": "abs_diff_gt", "value": 10}  numeric difference (both sides present)
     {"field": "gender", "op": "differs" | "same"}        both sides present and different / equal
     {"field": "dob_year", "op": "both_gte" | "both_lte", "value": 2008}  both sides at least / at most the value
+    {"field": "dob_year", "op": "both_born_within_last", "value": 18}  both born in the last N years (relative to today, so it
+                                                                        does not go stale)
     {"score": "probability", "op": ">=", "value": 0.97}   (also match_weight; ops: > >= < <= =)
 Fields are the standardised record columns (l_<field> vs r_<field>); comparisons are the scoring comparisons.
 """
 from dedupe.scoring.comparisons import COMPARISONS, RECORD_COLUMNS
+from dedupe.standardise.dates import reference_date
 
 _BY_NAME = {c.name: c for c in COMPARISONS}
 _SCORES = {"probability", "match_weight"}
@@ -79,7 +82,12 @@ def compile_condition(node: dict) -> str:
             return f"({both} AND l_{f} >= {_num(node['value'])} AND r_{f} >= {_num(node['value'])})"
         if op == "both_lte":
             return f"({both} AND l_{f} <= {_num(node['value'])} AND r_{f} <= {_num(node['value'])})"
-        raise ConditionError(f"unknown field op {op!r} (differs, same, abs_diff_gt, both_gte, both_lte)")
+        if op == "both_born_within_last":
+            if f != "dob_year":
+                raise ConditionError("both_born_within_last applies to dob_year only")
+            since = reference_date().year - int(_num(node["value"]))
+            return f"({both} AND l_{f} >= {since} AND r_{f} >= {since})"
+        raise ConditionError(f"unknown field op {op!r} (differs, same, abs_diff_gt, both_gte, both_lte, both_born_within_last)")
     if "score" in node:
         if node["score"] not in _SCORES:
             raise ConditionError(f"unknown score {node['score']!r}; valid: {sorted(_SCORES)}")

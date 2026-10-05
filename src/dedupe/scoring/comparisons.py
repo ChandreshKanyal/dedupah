@@ -18,7 +18,6 @@ class Comparison:
     null_sql: str  # when true the comparison is not applicable (-1)
     levels: tuple  # ordered high -> low; implicit final level 0 = "otherwise"
     tf_table_sql: str | None = None  # SELECT key, tf FROM records ...
-    blocked_by: tuple = ()  # blocking rules that already use this field (EM must not train on those pairs)
     else_label: str = "different"
 
     @property
@@ -58,7 +57,6 @@ NAME = Comparison(
                     UNION ALL
                     SELECT 'F|' || name_first_phon || '|' || name_last_phon, count(*)::DOUBLE / (SELECT count(name_last_phon) FROM records)
                     FROM records WHERE name_last_phon IS NOT NULL GROUP BY 1""",
-    blocked_by=("surname_dob", "first_dob", "names_birthyear", "surname_initial_birthyear", "name_pin3", "name_city"),
 )
 
 _ONE_SIDE_NO_YEAR = "(l_dob_year IS NULL OR r_dob_year IS NULL)"
@@ -76,7 +74,6 @@ DOB = Comparison(
         Level(7, "age-based: incompatible", _ONE_SIDE_NO_YEAR),
     ),
     tf_table_sql="SELECT dob AS key, count(*)::DOUBLE / (SELECT count(dob) FROM records) AS tf FROM records WHERE dob IS NOT NULL GROUP BY 1",
-    blocked_by=("surname_dob", "first_dob", "names_birthyear", "surname_initial_birthyear", "dob_pin"),
 )
 
 PHONE = Comparison(
@@ -89,18 +86,15 @@ PHONE = Comparison(
     ),
     tf_table_sql="""SELECT v AS key, count(*)::DOUBLE / (SELECT count(*) FROM records WHERE mobile IS NOT NULL OR mobile_alt IS NOT NULL) AS tf
                     FROM (SELECT unnest([mobile, mobile_alt]) AS v FROM records) WHERE v IS NOT NULL GROUP BY 1""",
-    blocked_by=("phone",),
 )
 
 EMAIL = Comparison(
     "email", _either_missing("email_key"),
     (Level(1, "same email", "l_email_key = r_email_key", "l_email_key"),),
     tf_table_sql="SELECT email_key AS key, count(*)::DOUBLE / (SELECT count(email_key) FROM records) AS tf FROM records WHERE email_key IS NOT NULL GROUP BY 1",
-    blocked_by=("email",),
 )
 
-PAN = Comparison("pan", _either_missing("pan"), (Level(1, "same PAN", "l_pan = r_pan"),), blocked_by=("pan",),
-                 else_label="different PANs")
+PAN = Comparison("pan", _either_missing("pan"), (Level(1, "same PAN", "l_pan = r_pan"),), else_label="different PANs")
 
 AADHAAR = Comparison(
     "aadhaar",
@@ -110,7 +104,7 @@ AADHAAR = Comparison(
         Level(2, "same last-4 (no full number on one side)",
               "NOT (l_aadhaar_token IS NOT NULL AND r_aadhaar_token IS NOT NULL) AND l_aadhaar_last4 = r_aadhaar_last4"),
     ),
-    blocked_by=("aadhaar",), else_label="different Aadhaar",
+    else_label="different Aadhaar",
 )
 
 GOV_ID = Comparison(
@@ -119,7 +113,7 @@ GOV_ID = Comparison(
     " OR (l_voter_id IS NOT NULL AND r_voter_id IS NOT NULL))",
     (Level(1, "same passport / licence / voter ID",
            "l_passport_no = r_passport_no OR l_dl_no = r_dl_no OR l_voter_id = r_voter_id"),),
-    blocked_by=("passport", "driving_licence", "voter_id"), else_label="different document numbers",
+    else_label="different document numbers",
 )
 
 ADDRESS = Comparison(
@@ -134,7 +128,6 @@ ADDRESS = Comparison(
         Level(1, "same city or PIN area, different PINs",
               "l_city = r_city OR substr(l_address_pin, 1, 3) = substr(r_address_pin, 1, 3)"),
     ),
-    blocked_by=("name_pin3", "name_city", "dob_pin"),
 )
 
 GENDER = Comparison("gender", _either_missing("gender"), (Level(1, "same gender", "l_gender = r_gender"),),

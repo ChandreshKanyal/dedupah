@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 from . import corrupt as c
 from . import reference as ref
-from .households import Person
+from .households import Person, age_on
 from .identifiers import vehicle_reg
 
 CAP = str.capitalize
@@ -236,7 +236,8 @@ class Sources:
                 continue
             for _ in range(1 + (rng.random() < 0.25) + (rng.random() < 0.08)):  # the same person submits several forms
                 rid = self._id("LD", 7)
-                age_val = p.age + rng.choice([0, 0, 0, 1, -1])
+                created = self.ref_date - timedelta(days=rng.randint(1, 900))
+                age_val = age_on(p.dob, created) + rng.choice([0, 0, 0, 1, -1])   # the age the person stated when the lead was taken
                 a = self._addr(p)
                 rows.append({
                     "lead_id": rid,
@@ -251,7 +252,7 @@ class Sources:
                     "campaign": rng.choice(ref.CAMPAIGNS),
                     "lead_source": rng.choice(ref.LEAD_SOURCES),
                     "consent_marketing": rng.choice(["Y", "Y", "N", None]),
-                    "created_at": c.render_date(rng, self.ref_date - timedelta(days=rng.randint(1, 900)), "dmy_slash"),
+                    "created_at": c.render_date(rng, created, "dmy_slash"),
                     "agent_notes": self._blank(rng.choice(["Call back evening", "Wants quote", "Not reachable", "DND", "Existing customer?"]), 0.7),
                 })
                 self._link("leads", rid, p)
