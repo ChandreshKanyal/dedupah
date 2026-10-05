@@ -19,6 +19,7 @@ WEIGHTS = {
 }
 GENERIC_LIMIT = 8     # a phone/email used by more than this many people is generic (agent, call centre): ignored
 PIN_BLOCK_LIMIT = 300  # skip address joins for PINs with more records than this
+NAME_POP_LIMIT = 50    # a relative name shared by more people than this is too common to link on (its weight would be < w/50 anyway)
 
 
 def build(con: duckdb.DuckDBPyConnection, std: str, clusters: str, canonical: str) -> int:
@@ -48,6 +49,8 @@ def build(con: duckdb.DuckDBPyConnection, std: str, clusters: str, canonical: st
             n AS (SELECT v, count(DISTINCT cluster_id) n FROM v2 GROUP BY v)
             SELECT a.cluster_id, b.cluster_id, '{ev}', {w[ev]} FROM v2 a JOIN v2 b ON a.v = b.v AND a.cluster_id < b.cluster_id
             JOIN n ON n.v = a.v WHERE n.n <= {GENERIC_LIMIT}""")
+    con.execute("""CREATE OR REPLACE TEMP TABLE name_pop AS
+        SELECT name_tokens_phon AS nm, count(DISTINCT cluster_id) AS n FROM rc WHERE name_tokens_phon LIKE '% %' GROUP BY 1""")
     con.execute("""CREATE OR REPLACE TEMP TABLE cluster_city AS
         SELECT cluster_id, coalesce(list(DISTINCT city) FILTER (WHERE city IS NOT NULL), []::VARCHAR[]) AS cities FROM rc GROUP BY 1""")
     # A named relative must not contradict the person's known cities (compared across ALL of a person's records).
@@ -59,18 +62,20 @@ def build(con: duckdb.DuckDBPyConnection, std: str, clusters: str, canonical: st
               SELECT DISTINCT a.cluster_id AS ca, b.cluster_id AS cb, a.{col} AS nm,
                      (a.dob_year IS NULL OR b.dob_year IS NULL) AS dob_unknown
               FROM rc a JOIN rc b ON a.{col} = b.name_tokens_phon AND a.cluster_id <> b.cluster_id
+              JOIN name_pop np ON np.nm = a.{col}
               JOIN cluster_city x ON x.cluster_id = a.cluster_id JOIN cluster_city y ON y.cluster_id = b.cluster_id
-              WHERE a.{col} LIKE '% %' AND {same_place} AND {extra}),
+              WHERE np.n <= {NAME_POP_LIMIT} AND a.{col} LIKE '% %' AND {same_place} AND {extra}),
             scored AS (SELECT *, count(*) OVER (PARTITION BY ca, nm) AS k FROM cand)
             SELECT least(ca, cb), greatest(ca, cb), '{ev}', {w[ev]} / k * CASE WHEN dob_unknown AND '{ev}' = 'father_named' THEN 0.5 ELSE 1.0 END FROM scored""")
     union = "\nUNION ALL\n".join(f"({p})" for p in parts)
     con.execute(f"CREATE OR REPLACE TEMP TABLE ev_raw AS SELECT * FROM ({union}) t(ca, cb, ev, w)")
+    con.execute("CREATE OR REPLACE TEMP TABLE cluster_surname AS SELECT DISTINCT cluster_id, name_last_phon AS sur FROM rc WHERE name_last_phon IS NOT NULL")
     con.execute(f"""CREATE OR REPLACE TABLE evidence AS
         SELECT ca, cb, ev, max(w) AS w FROM ev_raw WHERE ca <> cb GROUP BY ca, cb, ev
         UNION ALL
         SELECT p.ca, p.cb, 'same_surname', {w['same_surname']} FROM (SELECT DISTINCT ca, cb FROM ev_raw WHERE ca <> cb) p
-        WHERE EXISTS (SELECT 1 FROM rc a JOIN rc b ON a.name_last_phon = b.name_last_phon
-                      WHERE a.cluster_id = p.ca AND b.cluster_id = p.cb AND a.name_last_phon IS NOT NULL)""")
+        WHERE EXISTS (SELECT 1 FROM cluster_surname a JOIN cluster_surname b ON a.sur = b.sur
+                      WHERE a.cluster_id = p.ca AND b.cluster_id = p.cb)""")
     return con.execute("SELECT count(*) FROM evidence").fetchone()[0]
 
 
