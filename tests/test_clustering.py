@@ -1,6 +1,5 @@
 import json
 import os
-from pathlib import Path
 
 import duckdb
 import pytest
@@ -10,12 +9,14 @@ from dedupe.clustering import ClusterConfig, cluster
 from dedupe.clustering.run import load_inputs, write_outputs
 from dedupe.decision import DecisionConfig, decide
 from dedupe.ingest import ingest
-from dedupe.scoring.__main__ import load_tables
 from dedupe.scoring import score, train
+from dedupe.scoring.__main__ import load_tables
 from dedupe.standardise.run import run as standardise_run
 from dedupe.synthetic import generate as gen_data
 
-PAN = lambda v: {"pan": v}
+
+def PAN(v):  # noqa: N802
+    return {"pan": v}
 
 
 def groups(res):

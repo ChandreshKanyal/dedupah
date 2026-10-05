@@ -13,7 +13,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from .households import PopulationBuilder, Person
+from .households import Person, PopulationBuilder
 from .sources import Sources
 
 REF_DATE = date(2026, 10, 1)

@@ -5,8 +5,8 @@ import duckdb
 
 from dedupe.scoring.comparisons import pairs_view_sql
 
-from .config import PRECEDENCE, DecisionConfig
 from .conditions import compile_condition
+from .config import PRECEDENCE, DecisionConfig
 
 ZONE_REASON = {"auto_merge": "score at or above the auto-merge threshold", "review": "score between the review and auto-merge thresholds",
                "reject": "score below the review threshold"}

@@ -1,8 +1,9 @@
+from pathlib import Path
+
 import duckdb
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pathlib import Path
 
 from .comparisons import COMPARISONS
 from .levels import level_matrix, tf_matrix

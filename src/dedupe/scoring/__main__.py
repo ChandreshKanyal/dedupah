@@ -8,7 +8,6 @@ from pathlib import Path
 import duckdb
 
 from .evaluate import evaluate, render
-from .model import Model
 from .predict import score
 from .train import train
 

@@ -1,7 +1,7 @@
 """Field comparisons for pair scoring. Each comparison is an ordered ladder of levels (first matching level wins).
 Level -1 means "not comparable" (a value is missing on either side): it contributes nothing, never evidence against.
 Conditions are SQL over a pairs table with l_<col> / r_<col> columns."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

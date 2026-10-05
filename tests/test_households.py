@@ -15,7 +15,8 @@ from dedupe.households import group_households
 from dedupe.ingest import ingest
 from dedupe.scoring import score, train
 from dedupe.scoring.__main__ import load_tables
-from dedupe.standardise.run import SCHEMA, run as standardise_run, standardise_row
+from dedupe.standardise.run import SCHEMA, standardise_row
+from dedupe.standardise.run import run as standardise_run
 from dedupe.synthetic import generate as gen_data
 
 RAW = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt", "city",

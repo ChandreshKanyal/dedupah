@@ -4,12 +4,12 @@ import os
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from dedupe.blocking import DEFAULT_RULES, Rule, generate
 from dedupe.blocking.report import blocking_report
 from dedupe.ingest import ingest
-from dedupe.standardise.run import SCHEMA, run as standardise_run
+from dedupe.standardise.run import SCHEMA
+from dedupe.standardise.run import run as standardise_run
 from dedupe.synthetic import generate as gen_data
 
 

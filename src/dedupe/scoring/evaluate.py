@@ -23,7 +23,7 @@ def evaluate(con: duckdb.DuckDBPyConnection, scored: Path, data_dir: Path, repor
         SELECT s.*, ta.person_id AS pa, tb.person_id AS pb, (ta.person_id = tb.person_id) AS is_true,
                (ta.household_id = tb.household_id) AS same_hh
         FROM read_parquet('{scored}') s JOIN truth ta ON ta.rid = s.l_rid JOIN truth tb ON tb.rid = s.r_rid""")
-    prob, is_true = [np.array(x) for x in zip(*con.execute("SELECT probability, is_true FROM sp").fetchall())]
+    prob, is_true = [np.array(x) for x in zip(*con.execute("SELECT probability, is_true FROM sp").fetchall(), strict=True)]
     in_cand = int(is_true.sum())
     out = {"true_pairs_total": true_total, "true_pairs_in_candidates": in_cand, "candidate_pairs": len(prob), "table": []}
 
@@ -45,7 +45,7 @@ def evaluate(con: duckdb.DuckDBPyConnection, scored: Path, data_dir: Path, repor
     edges = [0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0000001]
     out["calibration"] = [{"range": f"{lo:g}-{min(hi, 1):g}", "pairs": int(((prob >= lo) & (prob < hi)).sum()),
                            "actual_match_rate": float(is_true[(prob >= lo) & (prob < hi)].mean()) if ((prob >= lo) & (prob < hi)).any() else None}
-                          for lo, hi in zip(edges, edges[1:])]
+                          for lo, hi in zip(edges, edges[1:], strict=False)]
     # error anatomy at the report threshold
     fp_rows = con.execute(f"SELECT same_hh, pa, pb FROM sp WHERE NOT is_true AND probability >= {report_threshold}").fetchall()
     trap_map = {pid: set(t or []) - {""} for pid, t in con.execute("SELECT person_id, traps FROM traps").fetchall()}

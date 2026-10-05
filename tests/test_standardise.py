@@ -1,17 +1,17 @@
 import json
 import os
 import random
-import re
 
 import duckdb
 import pytest
 
 from dedupe.ingest import ingest
-from dedupe.standardise import dates, identifiers as ids
-from dedupe.standardise.run import run as standardise_run
+from dedupe.standardise import dates
+from dedupe.standardise import identifiers as ids
 from dedupe.standardise.addresses import parse_address
 from dedupe.standardise.names import parse_name, phonetic
 from dedupe.standardise.quality import field_report
+from dedupe.standardise.run import run as standardise_run
 from dedupe.synthetic import generate
 from dedupe.synthetic.identifiers import aadhaar as make_aadhaar
 

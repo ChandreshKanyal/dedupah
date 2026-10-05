@@ -56,7 +56,8 @@ def test_sql_connector_via_sqlite_and_secret_from_env(data, tmp_path, monkeypatc
     con = sqlite3.connect(db)
     con.execute("CREATE TABLE loans (loan_id TEXT, applicant_name TEXT, pan TEXT)")
     con.executemany("INSERT INTO loans VALUES (?,?,?)", [(r["loan_id"], r["applicant_name"], r["pan"]) for r in rows])
-    con.commit(); con.close()
+    con.commit()
+    con.close()
     monkeypatch.setenv("TEST_DB_URL", f"sqlite:///{db}")
     c = create({"type": "sql", "url_env": "TEST_DB_URL", "table": "loans"})
     c.test_connection()
@@ -122,7 +123,9 @@ def test_suggest_finds_the_right_columns(data):
 
 
 def test_ingest_end_to_end_matches_truth_keys(data, tmp_path):
-    import os, duckdb
+    import os
+
+    import duckdb
     cfg = json.loads(open("configs/synthetic_sources.json", encoding="utf-8").read())
     for s in cfg["sources"]:
         s["connector"]["path"] = str(data / os.path.basename(s["connector"]["path"]))

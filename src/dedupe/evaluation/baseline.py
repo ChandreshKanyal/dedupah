@@ -30,7 +30,7 @@ def _xlsx_rows(path: Path):
     it = ws.values
     header = next(it)
     for row in it:
-        yield {h: ("" if v is None else str(v)) for h, v in zip(header, row)}
+        yield {h: ("" if v is None else str(v)) for h, v in zip(header, row, strict=False)}
 
 
 def iter_records(data_dir: Path):

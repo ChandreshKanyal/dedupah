@@ -147,7 +147,6 @@ class PopulationBuilder:
         hid = f"H{self._hid:05d}"
         city = rng.choice(ref.CITIES)
         community = _pick_community(rng, city)
-        traps: dict[str, list[str]] = {}
         pool = self.heads_by_city.get(city["city"], [])
 
         # --- head ---

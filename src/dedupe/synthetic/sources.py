@@ -5,8 +5,8 @@ from datetime import date, timedelta
 
 from . import corrupt as c
 from . import reference as ref
-from .identifiers import vehicle_reg
 from .households import Person
+from .identifiers import vehicle_reg
 
 CAP = str.capitalize
 
@@ -105,7 +105,7 @@ class Sources:
     def insurance(self) -> list[dict]:
         rng, rows = self.rng, []
         styles = {"full": .45, "fl": .2, "initials": .05, "lastfirst": .05, "fi_last": .03, "honorific": .22}
-        for hid, members in self.hh_order:
+        for _hid, members in self.hh_order:
             head = members[0]
             adults = [m for m in members if m.is_adult]
             if rng.random() > 0.58 or not adults:
@@ -127,7 +127,7 @@ class Sources:
                     "channel": rng.choice(["Agent", "Online", "Bancassurance", "Broker", "Direct"]),
                 }
 
-                def party(p: Person, role: str, relation: str, sparse=False) -> dict:
+                def party(p: Person, role: str, relation: str, sparse=False, common=common) -> dict:
                     rid = self._id("INS", 9)
                     d = dict(common)
                     adult_addr = c.address_oneline(rng, self._addr(p), self.noise)
@@ -181,7 +181,7 @@ class Sources:
     def loans(self) -> list[dict]:
         rng, rows = self.rng, []
         styles = {"full": .5, "fl": .25, "initials": .05, "lastfirst": .1, "fi_last": .03, "honorific": .07}
-        for hid, members in self.hh_order:
+        for _hid, members in self.hh_order:
             head = members[0]
             if not head.is_adult or rng.random() > 0.27:
                 continue

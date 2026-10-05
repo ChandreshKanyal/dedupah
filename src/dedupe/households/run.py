@@ -69,6 +69,23 @@ def evaluate(household_of: dict, truth_hh: dict, edges: list, edge_evidence: dic
     return out
 
 
+def build_households(con, std, clusters, canonical, out_dir: Path, threshold: float = 5.0, max_size: int = 10):
+    """Evidence -> households -> parquet outputs. Returns (people, scores, household_of, info, evidence_rows)."""
+    n_ev = ev.build(con, str(std), str(clusters), str(canonical))
+    scores = ev.pair_scores(con)
+    edges = [(x, y, s) for x, y, s, _ in scores]
+    people = [r[0] for r in con.execute("SELECT DISTINCT cluster_id FROM rc").fetchall()]
+    hh, info = group_households(people, edges, threshold, max_size)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    con.register("hm", pa.table({"cluster_id": list(hh), "household_id": [f"hh_{hh[c]}" for c in hh]}))
+    con.execute(f"COPY (SELECT m.cluster_id, m.household_id, count(*) OVER (PARTITION BY m.household_id) AS household_size FROM hm m ORDER BY 2, 1) "
+                f"TO '{out_dir / 'household_members.parquet'}' (FORMAT PARQUET)")
+    con.register("rel", pa.table({"person_a": [e[0] for e in scores], "person_b": [e[1] for e in scores],
+                                  "score": [e[2] for e in scores], "evidence": [e[3] for e in scores]}))
+    con.execute(f"COPY rel TO '{out_dir / 'relationships.parquet'}' (FORMAT PARQUET)")
+    return people, scores, hh, info, n_ev
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--std", type=Path, default=Path("data/staging/standardised.parquet"))
@@ -81,20 +98,9 @@ def main() -> None:
     a = ap.parse_args()
 
     con = duckdb.connect()
-    n_ev = ev.build(con, str(a.std), str(a.clusters), str(a.canonical))
-    scores = ev.pair_scores(con)
+    people, scores, hh, info, n_ev = build_households(con, a.std, a.clusters, a.canonical, a.out, a.threshold, a.max_size)
     edges = [(x, y, s) for x, y, s, _ in scores]
     edge_ev = {(x, y): e for x, y, _, e in scores}
-    people = [r[0] for r in con.execute("SELECT DISTINCT cluster_id FROM rc").fetchall()]
-    hh, info = group_households(people, edges, a.threshold, a.max_size)
-
-    a.out.mkdir(parents=True, exist_ok=True)
-    con.register("hm", pa.table({"cluster_id": list(hh), "household_id": [f"hh_{hh[c]}" for c in hh]}))
-    con.execute(f"COPY (SELECT m.cluster_id, m.household_id, count(*) OVER (PARTITION BY m.household_id) AS household_size FROM hm m ORDER BY 2, 1) "
-                f"TO '{a.out / 'household_members.parquet'}' (FORMAT PARQUET)")
-    con.register("rel", pa.table({"person_a": [e[0] for e in scores], "person_b": [e[1] for e in scores],
-                                  "score": [e[2] for e in scores], "evidence": [e[3] for e in scores]}))
-    con.execute(f"COPY rel TO '{a.out / 'relationships.parquet'}' (FORMAT PARQUET)")
 
     truth_hh, truth_person = truth_of_clusters(con, a.data)
     report = {"evidence_rows": n_ev, "related_pairs": len(scores), "grouping": info | {"flags": None},

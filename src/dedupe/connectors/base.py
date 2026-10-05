@@ -35,9 +35,9 @@ def secret(config_value: str | None, env_name: str | None, what: str) -> str | N
 
 def to_string_table(columns: list[str], rows: list[list]) -> pa.Table:
     """All connectors emit string columns: typing and cleaning is the standardise stage's job."""
-    cols = list(zip(*rows)) if rows else [()] * len(columns)
+    cols = list(zip(*rows, strict=True)) if rows else [()] * len(columns)
     return pa.table({name: pa.array([None if v is None else str(v) for v in col], type=pa.string())
-                     for name, col in zip(columns, cols)})
+                     for name, col in zip(columns, cols, strict=True)})
 
 
 class Connector(ABC):

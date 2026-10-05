@@ -24,7 +24,7 @@ FIELDS = [
 
 
 def _pairs_query(expr_col: str) -> str:
-    return f"""
+    return """
     SELECT
       (SELECT coalesce(sum(n*(n-1)/2), 0) FROM (SELECT person_id, v, count(*) n FROM t WHERE v IS NOT NULL GROUP BY 1, 2)),
       (SELECT coalesce(sum(k*(k-1)/2), 0) FROM (SELECT person_id, count(*) k FROM t WHERE v IS NOT NULL GROUP BY 1)),
@@ -53,9 +53,11 @@ def field_report(canonical: Path, standardised: Path, data_dir: Path) -> list[di
 
 
 def render(rows: list[dict]) -> str:
+    def a(x):
+        return "  n/a " if x is None else f"{x:6.1%}"
+
     lines = ["field            same-person agreement (raw -> cleaned)   cross-person collisions (raw -> cleaned)"]
     for r in rows:
-        a = lambda x: "  n/a " if x is None else f"{x:6.1%}"
         lines.append(f"{r['field']:<16} {a(r['raw_agree'])} -> {a(r['std_agree'])}"
                      f"{'':<18} {r['raw_collisions']:>8,} -> {r['std_collisions']:>8,}")
     return "\n".join(lines)

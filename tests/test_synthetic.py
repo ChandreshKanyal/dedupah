@@ -1,10 +1,10 @@
 import csv
+import random
 
 import pytest
 
 from dedupe.synthetic import generate
 from dedupe.synthetic.identifiers import aadhaar, verhoeff_valid
-import random
 
 
 @pytest.fixture(scope="module")
@@ -79,5 +79,5 @@ def test_row_order_does_not_leak_households(dataset):
     out, _ = dataset
     truth = {t["source_record_id"]: t["household_id"] for t in read(out / "ground_truth/record_truth.csv")}
     ids = [r["cust_id"] for r in read(out / "bank_crm.csv")]
-    same = sum(truth[a] == truth[b] for a, b in zip(ids, ids[1:]))
+    same = sum(truth[a] == truth[b] for a, b in zip(ids, ids[1:], strict=False))
     assert same / (len(ids) - 1) < 0.1

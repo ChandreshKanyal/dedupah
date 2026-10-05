@@ -58,6 +58,8 @@ def _token_key() -> bytes:
     k = os.environ.get("DEDUPE_TOKEN_KEY")
     if k:
         return k.encode()
+    if os.environ.get("DEDUPE_ENV", "").lower() == "production":
+        raise RuntimeError("DEDUPE_TOKEN_KEY must be set when DEDUPE_ENV=production (refusing to use the development key)")
     if not _warned:
         warnings.warn("DEDUPE_TOKEN_KEY not set: using an insecure development key for Aadhaar tokens", stacklevel=2)
         _warned = True

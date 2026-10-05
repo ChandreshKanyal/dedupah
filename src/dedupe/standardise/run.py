@@ -13,7 +13,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from . import dates, identifiers as ids
+from . import dates
+from . import identifiers as ids
 from .addresses import parse_address
 from .names import parse_name
 

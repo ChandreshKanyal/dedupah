@@ -12,9 +12,10 @@ from dedupe.ingest import ingest
 from dedupe.scoring import COMPARISONS, Model, score, train
 from dedupe.scoring.__main__ import load_tables
 from dedupe.scoring.evaluate import evaluate
-from dedupe.scoring.levels import level_matrix, materialize, prepare_tf_tables, tf_matrix
+from dedupe.scoring.levels import level_matrix, materialize
 from dedupe.scoring.train import adjusted_weights, fit_logistic
-from dedupe.standardise.run import SCHEMA, run as standardise_run, standardise_row
+from dedupe.standardise.run import SCHEMA, standardise_row
+from dedupe.standardise.run import run as standardise_run
 from dedupe.synthetic import generate as gen_data
 
 RAW = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt", "city",
@@ -39,7 +40,9 @@ def _levels(pairs):
 
 
 def test_name_levels():
-    n = lambda a, b: _levels([({"full_name": a}, {"full_name": b})])[0, IDX["name"]]
+    def n(a, b):
+        return _levels([({"full_name": a}, {"full_name": b})])[0, IDX["name"]]
+
     assert n("Rajesh Kumar Sharma", "RAJESH KUMAR SHARMA") == 7
     assert n("Rajesh Sharma", "Sharma, Rajesh") == 7
     assert n("Mohd Ali Khan", "Muhammad Ali Khan") == 6 or n("Mohd Ali Khan", "Muhammad Ali Khan") == 7

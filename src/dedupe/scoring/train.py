@@ -14,7 +14,7 @@ import duckdb
 import numpy as np
 
 from .comparisons import COMPARISONS, STRONG_ID
-from .levels import level_matrix, materialize, prepare_tf_tables, tf_matrix
+from .levels import level_counts, level_matrix, materialize, prepare_tf_tables
 from .model import Model
 
 ALPHA = 0.5
@@ -32,19 +32,21 @@ STRONG_BITS = {
 }
 
 
-def estimate_u_random(con: duckdb.DuckDBPyConnection, n_pairs: int, seed: float = 0.42) -> dict:
+def estimate_u_random(con: duckdb.DuckDBPyConnection, n_pairs: int, seed: float = 0.42, chunk: int = 250_000) -> dict:
+    """Level frequencies among random record pairs, accumulated chunk by chunk (flat memory)."""
     n = con.execute("SELECT count(*) FROM records").fetchone()[0]
     con.execute(f"SELECT setseed({seed})")
-    con.execute(f"""CREATE OR REPLACE TABLE rand_pairs AS
-        SELECT DISTINCT least(a, b) AS l_rid, greatest(a, b) AS r_rid FROM
-          (SELECT floor(random() * {n})::BIGINT AS a, floor(random() * {n})::BIGINT AS b FROM range({n_pairs}))
-        WHERE a <> b""")
-    materialize(con, "rand_pairs", "rand_levels", with_tf=False)
-    L = level_matrix(con, "rand_levels")
+    totals = {c.name: np.zeros(c.n_levels + 1) for c in COMPARISONS}
+    for _ in range(max(1, -(-n_pairs // chunk))):
+        con.execute(f"""CREATE OR REPLACE TABLE rand_pairs AS
+            SELECT DISTINCT least(a, b) AS l_rid, greatest(a, b) AS r_rid FROM
+              (SELECT floor(random() * {n})::BIGINT AS a, floor(random() * {n})::BIGINT AS b FROM range({chunk}))
+            WHERE a <> b""")
+        for name, cnt in level_counts(con, "rand_pairs").items():
+            totals[name] += cnt
     u = {}
-    for j, c in enumerate(COMPARISONS):
-        col = L[:, j]
-        counts = np.array([(col == l).sum() for l in range(c.n_levels)], dtype=float)
+    for c in COMPARISONS:
+        counts = totals[c.name][: c.n_levels]  # drop the 'not comparable' slot
         u[c.name] = ((counts + ALPHA) / (counts.sum() + ALPHA * c.n_levels)).tolist()
     return u
 
@@ -106,7 +108,7 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
     prepare_tf_tables(con)
     u_rand = estimate_u_random(con, random_pairs)
     materialize(con, "candidates", "cand_levels", with_tf=True)
-    L, TF = level_matrix(con, "cand_levels"), tf_matrix(con, "cand_levels")
+    L = level_matrix(con, "cand_levels")
 
     pos, neg = seed_masks(L)
     seeded = pos | neg
@@ -116,7 +118,7 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
     coef, bias = fit_logistic(X, y)
 
     weights = {c.name: [0.0] * c.n_levels for c in COMPARISONS}
-    for (j, l), w in zip(labels, coef):
+    for (j, l), w in zip(labels, coef, strict=True):
         weights[COMPARISONS[j].name][l] = float(w)
     for name, bits in STRONG_BITS.items():
         for l, b in bits.items():
