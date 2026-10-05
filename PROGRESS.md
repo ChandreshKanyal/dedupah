@@ -75,7 +75,7 @@ Dedupe/
 - [ ] 0.6 README with "run on a new machine in N commands"
 
 ### Phase 1 — Core engine
-- [ ] 1.1 Synthetic Indian customer generator with ground-truth duplicates (PAN, Aadhaar-like, phones, names, addresses; corruptions incl. initials, transliteration, swaps, missing fields, family-shared-attribute trap)
+- [x] 1.1 Synthetic Indian customer generator with ground-truth duplicates — see section 9. Run in `.venv`: `python -m dedupe.synthetic --households 1200 --seed 42 --out data/synthetic`
 - [ ] 1.2 Evaluation harness (pairwise precision/recall/F1 + cluster metrics)
 - [ ] 1.3 Connector plugin interface + schema-mapping layer (see 7a); first connectors: CSV/XLSX/Parquet, Postgres/MySQL (SQLAlchemy), Google Sheets
 - [ ] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN)
@@ -144,5 +144,26 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.1 done: synthetic generator, 10 tests passing in `.venv`.
 - **2026-10-05** — Phase 0.2–0.4 done (repo, skeleton, Dockerfile, compose). 0.5 blocked by Docker engine failure on the host (engine pipe missing, `wsl` command hangs). Waiting on user to restart Docker Desktop / reboot. No commits yet. Fallback: dev proceeds in `.venv` (`.venv/Scripts/python -m pytest`).
 - **2026-10-05** — User answered open questions: no real data (synthetic only); platform must ingest from any source. Added connector design (7a), updated roadmap 1.3 and decisions log.
+
+## 9. Synthetic dataset (Phase 1.1)
+
+Code: `src/dedupe/synthetic/` (reference.py names/cities/catalogues, identifiers.py PAN/Aadhaar(Verhoeff)/mobile/etc., corrupt.py noise, households.py families + traps, sources.py the 5 systems, generate.py CLI). Tests: `tests/test_synthetic.py`. Output in `data/synthetic/` (gitignored, regenerate with the command above; deterministic per seed).
+
+Default run (1200 households, seed 42): 3,802 people, ~8,200 records across 5 sources.
+
+| Source | Format | Notes |
+|---|---|---|
+| bank_crm | CSV | accounts, segment, KYC status, nominee; ~7% customers onboarded twice (in-source duplicates) |
+| insurance_policies | XLSX | one row per party per policy (Proposer / Insured / Nominee); nominee rows very sparse; motor, health floater (family), term, ULIP etc. |
+| loans | CSV | applicant + co-applicant, father name, current vs permanent address, raw Aadhaar on ~38% rows |
+| marketing_leads | CSV | sparse, first-name-only, age bands, repeat form submissions |
+| kyc_documents | CSV | OCR-style extractions of PAN/Aadhaar/passport/DL/voter ID with OCR errors and confidence |
+
+Ground truth in `data/synthetic/ground_truth/`: `persons_truth.csv` (true person, household/family, relation, hard-case `traps`) and `record_truth.csv` (every source record -> true person, role). Never feed these to the matcher; only to the evaluation harness.
+
+Hard cases built in: shared mobile/email within families, minors under a parent's phone, twins, junior/senior same name, namesakes (same name + city, different people), maiden vs married names, old mobile/address, initials, transliteration, typos, swapped/placeholder DOBs, dropped PINs, city aliases, OCR digit confusion, and in-source duplicates. Row order and IDs are shuffled so they leak nothing.
+
+Known limitations: names come from limited lists; addresses are template-based; no non-Latin scripts yet; individuals only. Results on this data do not prove real-world accuracy.
