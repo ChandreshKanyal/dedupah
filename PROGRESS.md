@@ -79,7 +79,7 @@ Dedupe/
 - [x] 1.2 Evaluation harness (pairwise precision/recall/F1, false merges split same-family vs cross-family, per-hard-case breakdown) — `src/dedupe/evaluation/`; run `python -m dedupe.evaluation baseline|score --data data/synthetic [--pred file.csv]`. Prediction file format: CSV `source,source_record_id,cluster_id`.
 - [x] 1.3 Connector plugin interface + schema-mapping layer (see 7a and section 11). Connectors: CSV/TSV, XLSX, Parquet, generic SQL (SQLAlchemy), Google Sheets. Run: `python -m dedupe.ingest --config configs/synthetic_sources.json`
 - [x] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN) — see section 12. Run: `python -m dedupe.standardise`; report: `python -m dedupe.standardise.quality`
-- [ ] 1.5 Candidate generation (blocking): UNION of several rules (strong-ID equality; phonetic surname + DOB; first-name + DOB; DOB + PIN prefix + initial...). **Frequency cap**: values shared by too many records (family phones, common names) are not used as keys. Measure pairs completeness (true pairs kept), reduction ratio and pairs generated, per rule.
+- [x] 1.5 (done, see section 13) Candidate generation (blocking): UNION of several rules (strong-ID equality; phonetic surname + DOB; first-name + DOB; DOB + PIN prefix + initial...). **Frequency cap**: values shared by too many records (family phones, common names) are not used as keys. Measure pairs completeness (true pairs kept), reduction ratio and pairs generated, per rule.
 - [ ] 1.6 Pair scoring: Fellegi-Sunter via Splink on DuckDB. Comparison levels per field (exact / phonetic / fuzzy / initials / swapped-DOB / missing). **Term-frequency adjustment** so rare agreeing values weigh more and common/shared ones less. Unsupervised EM, seeded by strong-ID pairs. Keep per-field contributions for explainability/audit.
 - [ ] 1.7 Decisions + hard constraints: score -> auto-merge / review / reject zones; **never-merge vetoes** (two different valid PANs or Aadhaar tokens, conflicting gender, large DOB gap, twin guard). This is the seed of the Phase 2 rules engine.
 - [ ] 1.8 Clustering: only auto-merge edges form clusters; connected components + **conflict check that splits clusters** + size alerts (no black-hole entities); review pairs stay unmerged. Add cluster-level metrics (purity, B-cubed).
@@ -147,6 +147,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.5 done: blocking with frequency cap; 45 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.4 done: standardisation + quality report; 41 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.3 done: connectors + mapping + ingest; 24 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.2 done: evaluation harness + baseline (F1 0.585). 14 tests passing in `.venv`.
@@ -202,3 +203,15 @@ Principles enforced: invalid identifiers become NULL (never matched on); raw Aad
 Measured on synthetic data (same-person record pairs agreeing on a field, raw -> cleaned): mobile 25% -> 98%, surname 62% -> 94%, whole name 25% -> 64%, DOB 42% -> 89%, city 57% -> 89%, PAN 94% -> 100%, Aadhaar 80% -> 100% (PAN/Aadhaar measured only on values that pass validation). Cross-person collisions rise for mobile (330 -> 1,248) because formats now line up and families share numbers: this is the family-sharing hazard, handled in scoring/rules, not here.
 
 Caveats: (1) the pincode "agreement" fell (95% -> 92%) only because the cleaned column also includes PINs extracted from free-text addresses, a larger and noisier population. (2) The synthetic generator and the cleaners share my assumptions about Indian naming/addresses, so these numbers are optimistic for real data. (3) Names remain Latin-script only; no transliteration from Devanagari etc. yet. (4) City aliases not in the real-world list (e.g. 'Mohali' vs 'Chandigarh', 'Pink City') stay unresolved on purpose; PIN prefix should cover them in scoring.
+
+## 13. Blocking (Phase 1.5)
+
+Code `src/dedupe/blocking/`: `rules.py` (each rule = SQL returning (rid, key); 12 default rules: PAN, Aadhaar token, passport, DL, voter ID, phone (either field), email key, surname+DOB, first name+DOB, all-name-sounds+birth year, surname+initial+birth year, first+last+PIN prefix, name+city, DOB+PIN), `generate.py` (union of rules, frequency cap, writes `candidates.parquet` (l_rid, r_rid, rules[]) + `candidates.index.parquet`), `report.py` (ground-truth evaluation). Run: `python -m dedupe.blocking --data data/synthetic [--cap 50]`.
+
+Results (synthetic, seed 42, 8,178 records): 33.4M possible pairs -> 13,210 candidates (99.96% reduction); 85.2% of true duplicate pairs found directly; **94.5% reachable through other records** (what clustering could achieve with perfect scoring). At 137k records: 9.4B possible pairs -> 539k candidates, 93.5% transitive completeness, 3.3 s. Pair count grows ~2.4x faster than records (real name/birth-year coincidences), so the cap and rule selectivity matter at millions.
+
+Candidates are not matches: ~3,200 of the 13,210 are false (family-shared phones, namesakes, twins, same-PIN same-DOB): scoring/vetoes must reject them.
+
+Misses (5.5% unreachable): mostly KYC-document-only and lead-only records that carry no phone/email/ID in common with anything else (leads have no DOB/ID; KYC docs have no phone/email). Documented limitation; fixing needs richer evidence (e.g. face/biometric, Phase 3) or review-queue suggestions.
+
+Caveat: the frequency cap (default 50) is unit-tested but this synthetic data contains no truly generic values (shared agent phones, '9999999999'), so its real-world setting is unproven. Tune it on pilot data.
