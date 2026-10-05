@@ -44,7 +44,7 @@ def run_a(tmp_path_factory):
 def test_one_command_produces_every_artifact_and_a_sane_summary(run_a):
     d, _, s = run_a
     for f in ["canonical.parquet", "standardised.parquet", "candidates.parquet", "scored_pairs.parquet", "decisions.parquet",
-              "clusters/clusters.parquet", "clusters/possible_matches.parquet", "review_queue.parquet", "households/household_members.parquet",
+              "clusters/clusters.parquet", "clusters/possible_matches.parquet", "review_queue.parquet", "golden/golden_records.parquet", "golden/golden_values.parquet", "households/household_members.parquet",
               "households/relationships.parquet", "pipeline_summary.json"]:
         assert (d / "work" / f).exists(), f
     assert (d / "models" / "fs_model.json").exists()

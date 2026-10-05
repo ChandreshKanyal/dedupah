@@ -30,6 +30,7 @@ from .review import build_queue
 from .scoring import score, train
 from .scoring.__main__ import load_tables
 from .standardise.run import run as standardise
+from .survivorship import SurvivorshipConfig, build_golden
 
 
 @dataclass
@@ -37,6 +38,7 @@ class PipelineConfig:
     sources: Path
     work: Path = Path("data/staging")
     decision_config: Path = Path("configs/decision_default.json")
+    survivorship_config: Path = Path("configs/survivorship_default.json")
     truth: Path | None = None  # ground-truth folder: development/synthetic evaluation only
     blocking_cap: int = 50
     household_threshold: float = 5.0
@@ -141,6 +143,9 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         summary["clustering"] = res.stats
         del nodes, edges, cannot, ids
         _drop(con, "cluster_flags")
+    with meter.stage("golden_record"):
+        summary["golden_record"] = build_golden(con, p["std"], p["canonical"], clusters_dir / "clusters.parquet",
+                                                SurvivorshipConfig.load(cfg.survivorship_config), work / "golden")
     with meter.stage("review_queue"):
         summary["review_queue"] = build_queue(con, work / "review_queue.parquet", cfg.review_min_probability, cfg.review_cap)
     with meter.stage("households"):

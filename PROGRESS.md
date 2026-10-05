@@ -122,7 +122,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 - [~] 2.1 Rule schema (JSON): auto-merge / review / never-merge — DONE in Phase 1.7 (`dedupe.decision`: safe condition language, `DecisionConfig`)
 - [~] 2.2 Rule → SQL compiler; dry-run impact preview — compiler + dev-time impact report DONE (needs a truth-free impact preview: pairs affected + samples)
 - [ ] 2.3 Rule versioning + audit trail (also for blocking rules, thresholds, household weights)
-- [ ] 2.4 Survivorship rules + golden record + lineage (per-field rules; keep which source record supplied each value; canonical.parquet `attributes` JSON carries source-specific fields)
+- [x] 2.4 (done, section 24) Survivorship rules + golden record + lineage (per-field rules; keep which source record supplied each value; canonical.parquet `attributes` JSON carries source-specific fields)
 - [~] 2.5 Review queue + merge/unmerge model. DONE: grouped, ranked queue per pair of people (`dedupe.review`, section 19). TODO: steward actions, persistence, merge/unmerge (steward decisions stored as must-link / cannot-link constraints fed back into clustering so they survive re-runs)
 - [ ] 2.6 API (FastAPI) over the above, Postgres persistence (compose already has Postgres)
 - [ ] 2.7 Thin web UI: source connection + mapping (use `dedupe.mapping.suggest`), rule editor with dry-run, review queue, golden record viewer
@@ -165,6 +165,8 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 | 2026-10-05 | Force-review rule `review_possible_namesake` (fuzzy name + DOB only, score >= 0.9, no ID/contact/home corroboration) | Most efficient of the measured options against namesake false merges: 15 checks per prevented error vs 40+ for a higher auto threshold (section 21) |
 | 2026-10-05 | Keep term-frequency adjustment ON | At 694k records it prevents ~650 wrong auto-merges for ~5k extra review items (~8 checks per error); the 8k-record benchmark, where it looked harmful, was too small (section 22) |
 | 2026-10-05 | Pipeline DuckDB connection gets a memory cap (`PipelineConfig.memory_limit`, default 4GB) + spill directory, and each stage drops its working tables | Peak memory 17 GB -> 4.6 GB at 694k records (section 23) |
+| 2026-10-05 | Golden record: per-field survivorship strategies (most trusted source / most recent / most complete / most frequent, ties fall back to trust then recency), address fields move as one block, every value keeps its source record (lineage) and source conflicts are flagged; settings in `configs/survivorship_default.json` | Business-editable, auditable; validated on synthetic truth (section 24) |
+| 2026-10-05 | Golden names come from the standardised clean name chosen by agreement, not the longest raw string; placeholder / year-only birth dates are never golden values | Longest-wins picked noisy forms ("Sri Mahes Krushnan", "Parekh, Kiran Bhhai"): first-name accuracy 60% -> 87% |
 | 2026-10-05 | Synthetic generator: email addresses unique per person | Bug: unrelated namesakes got identical mailboxes, which cannot happen; deliberate family sharing kept as a trap. All synthetic numbers shifted slightly |
 
 ## 7. Open questions
@@ -198,6 +200,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-05 (session 1, Phase 2 start)** — Golden record + survivorship (`dedupe.survivorship`, pipeline stage `golden_record`, 6 tests), checked against synthetic truth and fixed twice (name source, placeholder dates). Section 24.
 - **2026-10-05 (session 1, step 3 of fixes)** — Memory: per-stage memory metering, DuckDB memory cap + spill, stage tables dropped; 17 GB -> 4.6 GB at 694k. Section 23.
 - **2026-10-05 (session 1, step 2 of fixes)** — Term-frequency re-check at 138k and 694k: kept on. Section 22.
 - **2026-10-05 (session 1, step 1 of fixes)** — Namesake auto-merges: diagnosed at 694k, compared 6 options, added `review_possible_namesake` rule. Section 21.
@@ -414,3 +417,15 @@ Phone-only or email-only TF off changes nothing material (138k). **Decision: kee
 **Result:** overall peak 17.1 GB -> 4.6 GB; run time without evaluation 6.0 min. Per stage (peak / after): ingest 0.36 / 0.27 GB, standardise 0.63 / 0.48, blocking 2.9 / 0.86, scoring 3.9 / 0.79, decisions 4.6 / 1.5, clustering 4.3 / 3.5, households 3.9 / 3.6. At 138k: 1.4 -> 1.1 GB. Results unchanged (logic untouched; reproducibility test passes).
 
 **Remaining:** clustering is pure Python (dicts/lists per record) and leaves ~2 GB held; linear extrapolation is ~30 GB at 5M records. Next memory step before a multi-million run: array-based clustering (NumPy union-find) or clustering inside DuckDB.
+
+## 24. Golden record and survivorship (Phase 2.4; SYNTHETIC)
+
+**What it does:** after clustering, each person (cluster) gets one golden record built from its source records. Per field, a strategy picks the value: `most_trusted_source` (source ranking), `most_recent` (record date taken from a per-source attribute, e.g. bank_crm `account_open_date`), `most_complete` (longest / most filled), `most_frequent` (agreement between records; ties go to the more complete, then more trusted, then newer). Fields in a **group** (default: address, city, state, pincode) always come from ONE source record so a golden address is never a mix; the first group member is the key field (records without it are skipped unless no record of the person has it). Cleaned values from standardisation are used (title-cased names, validated identifiers, valid birth dates only); raw values only for address, marital status, occupation, income.
+
+**Outputs** (`<work>/golden/`): `golden_values.parquet` (person x field: value, source_id + source_record_id it came from, strategy, n_candidates, n_distinct = lineage and conflict evidence) and `golden_records.parquet` (one row per person: all fields, record_count, sources, conflict_fields). Settings: `configs/survivorship_default.json` (source_trust, source_dates, default_strategy, per-field strategies, groups), validated by Pydantic (`SurvivorshipConfig`); `python -m dedupe.survivorship --work data/staging` runs it alone.
+
+**Cost at 694k records:** +75 s, +0.4 GB peak; 299,563 golden records, 2.8M values, 564k values where sources disagreed.
+
+**Accuracy vs synthetic truth** (clusters made of one true person, 288,011 of 299,563): PAN 100%, gender 100%, father name 99%, mobile 97%, DOB 96.5%, pincode 95%, email 93.6%, first name 87%, city 91.5%. Two bugs found by this check and fixed: (1) longest-raw-name wins chose noisy forms (honorifics, surname-first commas, typos): first-name accuracy 60% -> 87% after using the cleaned name chosen by agreement; (2) 1-Jan placeholder birth dates were accepted as values: DOB 94% -> 96.5%. Remaining errors are mostly typos in clusters with a single record (nothing to vote against) and name variants; unavoidable without outside data.
+
+**Caveats:** defaults (source trust order, per-field strategies) are my guesses for a bank/insurer mix and need a business decision; `most_recent` only works where a source has a usable date attribute, else it falls back to trust; the golden record is a view of the current clusters (no steward overrides yet: Phase 2.5); no per-field survivorship audit trail across runs yet.

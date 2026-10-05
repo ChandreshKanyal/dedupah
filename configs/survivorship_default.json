@@ -1,0 +1,40 @@
+{
+  "source_trust": [
+    "kyc_documents",
+    "bank_crm",
+    "loans",
+    "insurance",
+    "leads"
+  ],
+  "source_dates": {
+    "bank_crm": "account_open_date",
+    "insurance": "start_date",
+    "loans": "disbursed_date",
+    "leads": "created_at"
+  },
+  "default_strategy": "most_recent",
+  "groups": {
+    "address_block": [
+      "address",
+      "city",
+      "state",
+      "pincode"
+    ]
+  },
+  "fields": {
+    "full_name": "most_frequent",
+    "father_name": "most_frequent",
+    "dob": "most_frequent",
+    "gender": "most_frequent",
+    "pan": "most_frequent",
+    "aadhaar_token": "most_frequent",
+    "aadhaar_last4": "most_frequent",
+    "passport_no": "most_frequent",
+    "dl_no": "most_frequent",
+    "voter_id": "most_frequent",
+    "address_block": "most_recent",
+    "mobile": "most_recent",
+    "mobile_alt": "most_recent",
+    "email": "most_frequent"
+  }
+}
