@@ -8,6 +8,7 @@ last four digits survive downstream). Set DEDUPE_TOKEN_KEY (and DEDUPE_ENV=produ
 """
 import argparse
 import json
+import shutil
 import subprocess
 import threading
 import time
@@ -45,22 +46,26 @@ class PipelineConfig:
     review_cap: int | None = None  # keep only the top N queue items
     cluster_guard: bool = True  # contradiction checks in clustering (off only for ablation studies)
     batch_size: int = 50_000
+    memory_limit: str = "4GB"  # DuckDB working-memory cap; larger intermediate data spills to <work>/.duckdb_tmp on disk
     stages: list = field(default_factory=list)
 
 
 class _Meter:
-    """Wall time per stage plus peak process memory (sampled)."""
+    """Wall time per stage plus process memory (sampled): peak within each stage, memory still held after it, overall peak."""
 
     def __init__(self):
         self.proc = psutil.Process()
         self.peak = 0
+        self.stage_peak = 0
         self._stop = threading.Event()
         self.rows = []
         threading.Thread(target=self._sample, daemon=True).start()
 
     def _sample(self):
         while not self._stop.is_set():
-            self.peak = max(self.peak, self.proc.memory_info().rss)
+            rss = self.proc.memory_info().rss
+            self.peak = max(self.peak, rss)
+            self.stage_peak = max(self.stage_peak, rss)
             time.sleep(0.2)
 
     def stage(self, name):
@@ -69,10 +74,13 @@ class _Meter:
         class _Ctx:
             def __enter__(self):
                 self.t = time.perf_counter()
+                meter.stage_peak = meter.proc.memory_info().rss
 
             def __exit__(self, *exc):
+                rss = meter.proc.memory_info().rss
+                meter.peak = max(meter.peak, rss)
                 meter.rows.append({"stage": name, "seconds": round(time.perf_counter() - self.t, 2),
-                                   "peak_memory_mb_so_far": round(max(meter.peak, meter.proc.memory_info().rss) / 2**20)})
+                                   "peak_memory_mb": round(max(meter.stage_peak, rss) / 2**20), "memory_after_mb": round(rss / 2**20)})
         return _Ctx()
 
     def stop(self):
@@ -110,23 +118,29 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     if cfg.redact_aadhaar:
         with meter.stage("redact_aadhaar"):
             redact_aadhaar(p["canonical"])
-    con = duckdb.connect()
+    tmp = work / ".duckdb_tmp"
+    con = duckdb.connect(config={"memory_limit": cfg.memory_limit, "temp_directory": str(tmp)})
     with meter.stage("blocking"):
         gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con)
         summary["blocking"] = {"records": gen["records"], "candidate_pairs": gen["candidate_pairs"], "all_pairs": gen["all_pairs"]}
+        _drop(con, "rule_pairs", "k", "blocks")
     with meter.stage("scoring"):
         load_tables(con, p["std"], p["cand"])
         model = train(con)
         model.save(p["model"])
         score(con, model, p["scored"])
         summary["scoring"] = {"seed_pairs": model.meta["seed_pairs"], "bias_bits": round(model.bias / 0.6931, 2)}
+        _drop(con, "cand_levels", "candidates", "rand_pairs", *_tables_like(con, "tf_"))
     with meter.stage("decisions"):
         summary["decisions"] = decide(con, p["scored"], dcfg, p["decisions"])
+        _drop(con, "scored", "wide", "flagged")
     with meter.stage("clustering"):
         nodes, edges, cannot, ids = load_inputs(con, p["std"], p["cand"], p["decisions"], dcfg)
         res = cluster(nodes, edges, ids, cannot, ClusterConfig(max_cluster_size=cfg.max_cluster_size), guard=cfg.cluster_guard)
         write_outputs(con, res, clusters_dir)
         summary["clustering"] = res.stats
+        del nodes, edges, cannot, ids
+        _drop(con, "cluster_flags")
     with meter.stage("review_queue"):
         summary["review_queue"] = build_queue(con, work / "review_queue.parquet", cfg.review_min_probability, cfg.review_cap)
     with meter.stage("households"):
@@ -148,11 +162,23 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
             fam = evaluate_households(hh, thh, e, {(a, b): ev for a, b, _, ev in scores}, tper)
             summary["eval_households"] = {"family_only": fam["family_only"], "exact_rate": fam["exact_rate"]}
     meter.stop()
+    con.close()
+    shutil.rmtree(tmp, ignore_errors=True)
     summary["stages"] = meter.rows
     summary["total_seconds"] = round(sum(r["seconds"] for r in meter.rows), 2)
     summary["peak_memory_mb"] = round(meter.peak / 2**20)
     (work / "pipeline_summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     return summary
+
+
+def _drop(con, *tables: str) -> None:
+    """Free a finished stage's working tables (they are already saved as parquet where needed)."""
+    for t in tables:
+        con.execute(f"DROP TABLE IF EXISTS {t}")
+
+
+def _tables_like(con, prefix: str) -> list[str]:
+    return [r[0] for r in con.execute("SELECT table_name FROM duckdb_tables() WHERE starts_with(table_name, ?)", [prefix]).fetchall()]
 
 
 def _fmt(s: dict) -> str:

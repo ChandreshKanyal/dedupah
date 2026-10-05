@@ -11,7 +11,7 @@
 
 **Immediate next steps (in order)**
 1. Try Docker again (`docker info`; Docker Desktop must show "Engine running"; if stuck, `wsl --shutdown` then reopen, or reboot). If it works, `docker compose run --rm --build app` must pass the tests inside the container; fix the Dockerfile as needed. Portability is a hard requirement, so Phase 0 is not truly done until this passes.
-2. Reduce peak memory of the one-command pipeline (17 GB at 692k records; standalone stages peak at 3 GB, the shared in-memory DuckDB connection plus Python lists of pairs/edges are the cause). Needed before millions of records.
+2. Memory for millions: peak is now 4.6 GB at 694k records (section 23). The remaining big holder is clustering in pure Python (dicts/lists per record, ~2 GB left after it). Linear extrapolation gives ~30 GB at 5M records, too much for one machine: move clustering to array-based union-find (NumPy) or DuckDB before a multi-million test.
 3. Phase 2, the product layer. Suggested order: (a) persist pipeline outputs in Postgres (golden-record store, lineage, audit); (b) survivorship + golden record per cluster (per-field rules: most recent / most trusted source / most complete / most frequent; keep full lineage); (c) review queue persistence + steward actions (possible-match links already exist in `clusters/possible_matches.parquet`); (d) merge/UNMERGE via must-link / cannot-link constraints fed back into clustering; (e) rule management service: versioned decision configs, dry-run impact, audit trail; (f) FastAPI; (g) thin web UI. Confirm with the user before starting.
 4. Phase 3 documents (OCR / MRZ / face) and Phase 4 hardening (see roadmap).
 
@@ -164,6 +164,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 | 2026-10-05 | `name_city` blocking rule moved to `OPTIONAL_RULES` (off by default) | 47% of candidates, superlinear growth, almost no surviving decisions; F1 rose slightly without it |
 | 2026-10-05 | Force-review rule `review_possible_namesake` (fuzzy name + DOB only, score >= 0.9, no ID/contact/home corroboration) | Most efficient of the measured options against namesake false merges: 15 checks per prevented error vs 40+ for a higher auto threshold (section 21) |
 | 2026-10-05 | Keep term-frequency adjustment ON | At 694k records it prevents ~650 wrong auto-merges for ~5k extra review items (~8 checks per error); the 8k-record benchmark, where it looked harmful, was too small (section 22) |
+| 2026-10-05 | Pipeline DuckDB connection gets a memory cap (`PipelineConfig.memory_limit`, default 4GB) + spill directory, and each stage drops its working tables | Peak memory 17 GB -> 4.6 GB at 694k records (section 23) |
 | 2026-10-05 | Synthetic generator: email addresses unique per person | Bug: unrelated namesakes got identical mailboxes, which cannot happen; deliberate family sharing kept as a trap. All synthetic numbers shifted slightly |
 
 ## 7. Open questions
@@ -197,6 +198,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-05 (session 1, step 3 of fixes)** — Memory: per-stage memory metering, DuckDB memory cap + spill, stage tables dropped; 17 GB -> 4.6 GB at 694k. Section 23.
 - **2026-10-05 (session 1, step 2 of fixes)** — Term-frequency re-check at 138k and 694k: kept on. Section 22.
 - **2026-10-05 (session 1, step 1 of fixes)** — Namesake auto-merges: diagnosed at 694k, compared 6 options, added `review_possible_namesake` rule. Section 21.
 - **2026-10-05 (session 1, later)** — Review queue fix: researched industry handling (Splink thresholds/prior, Senzing principles + generic values, Informatica filtered match rules, active learning); diagnosed queue composition; added `not_enough_evidence` rule type, made name_city blocking optional, fixed synthetic email uniqueness; grouped/ranked review queue (`dedupe.review`). Section 20.
@@ -402,3 +404,13 @@ TF ("common values count less") applies to name, dob, phone, email. The 8k-recor
 | 694k | off (name only) | 14,905 | 0.9961 | 0.857 | 0.922 | 99.61% | 0.9415 |
 
 Phone-only or email-only TF off changes nothing material (138k). **Decision: keep TF on.** Its value grows with data size: at 694k it prevents ~650 wrong auto-merges at a cost of ~5k extra review items (~8 checks per prevented error), and the reachable F1 after review is identical. Lesson: conclusions from 8k-record runs do not transfer to scale; check decisions at 100k+ records.
+
+## 23. Pipeline memory (SYNTHETIC, 694,330 records, 8 CPUs)
+
+**Cause of the 17 GB peak:** one in-memory DuckDB connection was shared by all stages and every stage left its working tables in it (blocking rule pairs, pair levels, scored/wide/flagged pair tables, ...), and DuckDB by default may use up to 80% of RAM.
+
+**Fix (`src/dedupe/pipeline.py`):** the meter now records peak memory per stage and memory still held after each stage (`peak_memory_mb`, `memory_after_mb`); the connection gets `memory_limit` (default 4GB, `PipelineConfig.memory_limit`) and a spill directory `<work>/.duckdb_tmp` (deleted at the end); each stage drops tables later stages do not need; clustering inputs are released.
+
+**Result:** overall peak 17.1 GB -> 4.6 GB; run time without evaluation 6.0 min. Per stage (peak / after): ingest 0.36 / 0.27 GB, standardise 0.63 / 0.48, blocking 2.9 / 0.86, scoring 3.9 / 0.79, decisions 4.6 / 1.5, clustering 4.3 / 3.5, households 3.9 / 3.6. At 138k: 1.4 -> 1.1 GB. Results unchanged (logic untouched; reproducibility test passes).
+
+**Remaining:** clustering is pure Python (dicts/lists per record) and leaves ~2 GB held; linear extrapolation is ~30 GB at 5M records. Next memory step before a multi-million run: array-based clustering (NumPy union-find) or clustering inside DuckDB.
