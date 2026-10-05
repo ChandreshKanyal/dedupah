@@ -4,10 +4,15 @@ Records are nodes; auto-merge pairs are weighted edges (weight = match probabili
 1. Connected components of the auto-merge graph.
 2. A component is CONTRADICTORY if it contains
      - two different valid PANs, or two different Aadhaar tokens, or
-     - a 'cannot-link' pair (a pair a never-merge rule vetoed).
+     - a 'cannot-link' pair (a pair a never-merge rule vetoed, or a steward said are different people), or
+     - two records from different parts of a steward 'split' (`separations`).
 3. A contradictory component is split: find the widest (max-bottleneck) path between a conflicting pair and delete
    its weakest edge; re-form components; repeat until no contradiction remains (bounded by `max_removals`).
    If the bound is hit the component is released as singletons and flagged, so a human decides.
+
+Steward decisions enter as extra edges and constraints: a 'same person' judgment is an edge heavier than any automatic one
+(weight 2 + a tiny bonus for newer judgments), so the guard removes automatic edges first and, if two judgments truly
+contradict each other, the older one first (the newer decision wins).
 """
 import heapq
 from collections import defaultdict
@@ -56,12 +61,19 @@ def components(nodes, edges) -> list[set]:
     return list(groups.values())
 
 
-def _find_conflict(nodes: set, ids: dict, cannot: dict):
+def _find_conflict(nodes: set, ids: dict, cannot: dict, sep: dict | None = None):
     """Return (x, y, reason) for one contradiction inside `nodes`, or None."""
     for n in sorted(nodes):
         for m in sorted(cannot.get(n, ())):
             if m in nodes:
                 return (n, m, "vetoed_pair")
+    if sep:
+        first: dict = {}
+        for n in sorted(nodes):
+            for split_id, part in sep.get(n, ()):
+                seen = first.setdefault(split_id, (part, n))
+                if seen[0] != part:
+                    return (seen[1], n, "steward_split")
     for kind in ("pan", "aadhaar"):
         seen: dict = {}
         for n in sorted(nodes):
@@ -76,9 +88,9 @@ def _find_conflict(nodes: set, ids: dict, cannot: dict):
 
 def _widest_path_bottleneck(adj: dict, x, y):
     """Edge (min,max) with the lowest probability on the max-bottleneck path x -> y; None if not connected."""
-    best = {x: 2.0}
+    best = {x: float("inf")}
     parent = {}
-    heap = [(-2.0, x)]
+    heap = [(-float("inf"), x)]
     while heap:
         negb, u = heapq.heappop(heap)
         b = -negb
@@ -93,7 +105,7 @@ def _widest_path_bottleneck(adj: dict, x, y):
                 heapq.heappush(heap, (-nb, v))
     if y not in parent:
         return None
-    worst, edge = 3.0, None
+    worst, edge = float("inf"), None
     v = y
     while v != x:
         u, p = parent[v]
@@ -105,16 +117,18 @@ def _widest_path_bottleneck(adj: dict, x, y):
 
 
 def cluster(nodes, edges, ids: dict | None = None, cannot_links=(), cfg: ClusterConfig | None = None,
-            guard: bool = True) -> ClusterResult:
+            guard: bool = True, separations: dict | None = None) -> ClusterResult:
     """
     nodes        iterable of record ids (ints)
     edges        iterable of (l, r, probability) auto-merge links
     ids          {rid: {"pan": ..., "aadhaar": ...}} for the contradiction check
-    cannot_links iterable of (l, r) pairs that must not end up together (vetoed by a never-merge rule)
+    cannot_links iterable of (l, r) pairs that must not end up together (vetoed by a never-merge rule, or by a steward)
+    separations  {rid: [(split_id, part_no), ...]} from steward splits: records of different parts must not end up together
     guard=False  plain connected components (for comparison)
     """
     cfg = cfg or ClusterConfig()
     ids = ids or {}
+    separations = separations or {}
     nodes = list(nodes)
     edges = list(edges)
     cannot: dict = defaultdict(set)
@@ -143,7 +157,7 @@ def cluster(nodes, edges, ids: dict | None = None, cannot_links=(), cfg: Cluster
 
     for i, comp in enumerate(comps):
         comp_edges = by_comp_edges.get(i, [])
-        if not guard or len(comp) == 1 or _find_conflict(comp, ids, cannot) is None:
+        if not guard or len(comp) == 1 or _find_conflict(comp, ids, cannot, separations) is None:
             finalize(comp)
             continue
         stats["contradictory_components"] += 1
@@ -151,7 +165,7 @@ def cluster(nodes, edges, ids: dict | None = None, cannot_links=(), cfg: Cluster
         stack = [(comp, comp_edges)]
         while stack:
             nodeset, es = stack.pop()
-            conflict = _find_conflict(nodeset, ids, cannot) if len(nodeset) > 1 else None
+            conflict = _find_conflict(nodeset, ids, cannot, separations) if len(nodeset) > 1 else None
             if conflict is None:
                 finalize(nodeset, "split_from_contradictory_group" if len(nodeset) < len(comp) else None)
                 continue

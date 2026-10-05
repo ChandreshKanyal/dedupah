@@ -187,7 +187,14 @@ class JudgmentStore:
                 self._append(conn, "revoke", actor, "{}", f"superseded by a new {kind} judgment", None, o.id)
             return self._append(conn, kind, actor, subject, reason, evidence, None, requires_approval)
 
-    def same_person(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None, requires_approval: bool = False) -> int:
+    def same_person(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None, requires_approval: bool = False,
+                    confirm_id_conflict: bool = False) -> int:
+        """`confirm_id_conflict`: the records carry different valid PANs/Aadhaar and the steward confirms they are still one person
+        (needs a reason); without it such a link is not applied by the clustering step and is reported."""
+        if confirm_id_conflict:
+            if not reason:
+                raise JudgmentError("confirming a merge across conflicting identifiers needs a reason")
+            evidence = {**(evidence or {}), "confirmed_id_conflict": True}
         return self._decide_pair("same_person", a, b, actor, reason, evidence, requires_approval)
 
     def different_person(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None, requires_approval: bool = False) -> int:

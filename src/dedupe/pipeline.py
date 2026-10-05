@@ -17,9 +17,11 @@ from pathlib import Path
 
 import duckdb
 import psutil
+import pyarrow as pa
 
 from .blocking import generate as block
 from .clustering import ClusterConfig, cluster
+from .clustering.judged import audit, constraints_from_store, drop_vetoes_overridden_by_stewards
 from .clustering.run import load_inputs, predictions, write_outputs
 from .decision import DecisionConfig, decide
 from .households.group import group_households  # noqa: F401  (re-exported for convenience)
@@ -30,6 +32,7 @@ from .review import build_queue
 from .scoring import score, train
 from .scoring.__main__ import load_tables
 from .standardise.run import run as standardise
+from .store import JudgmentStore
 from .survivorship import SurvivorshipConfig, build_golden
 
 
@@ -39,6 +42,7 @@ class PipelineConfig:
     work: Path = Path("data/staging")
     decision_config: Path = Path("configs/decision_default.json")
     survivorship_config: Path = Path("configs/survivorship_default.json")
+    judgments_url: str | None = None  # steward decision store (SQLAlchemy URL); None = ignore stewards (see dedupe.store)
     truth: Path | None = None  # ground-truth folder: development/synthetic evaluation only
     blocking_cap: int = 50
     household_threshold: float = 5.0
@@ -138,7 +142,23 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         _drop(con, "scored", "wide", "flagged")
     with meter.stage("clustering"):
         nodes, edges, cannot, ids = load_inputs(con, p["std"], p["cand"], p["decisions"], dcfg)
-        res = cluster(nodes, edges, ids, cannot, ClusterConfig(max_cluster_size=cfg.max_cluster_size), guard=cfg.cluster_guard)
+        cons = None
+        if cfg.judgments_url:
+            cons = constraints_from_store(con, JudgmentStore.open(cfg.judgments_url))
+            cannot = drop_vetoes_overridden_by_stewards(cannot, cons) + cons.cannot
+            edges = list(edges) + cons.must
+            for rid in cons.neutralise:
+                ids[rid] = {}
+        res = cluster(nodes, edges, ids, cannot, ClusterConfig(max_cluster_size=cfg.max_cluster_size), guard=cfg.cluster_guard,
+                      separations=cons.separations if cons else None)
+        if cons:
+            rep = audit(cons, res.labels, ids)
+            summary["judgments"] = {**cons.summary(), "held": rep["held"], "not_held": rep["not_held"]}
+            clusters_dir.mkdir(parents=True, exist_ok=True)
+            (clusters_dir / "judgment_report.json").write_text(json.dumps(rep, indent=2), encoding="utf-8")
+            con.register("judged_src", pa.table({"l_rid": pa.array([a for a, _ in cons.judged_pairs], pa.int64()),
+                                                 "r_rid": pa.array([b for _, b in cons.judged_pairs], pa.int64())}))
+            con.execute("CREATE OR REPLACE TABLE judged_pairs AS SELECT * FROM judged_src")
         summary["identity"] = write_outputs(con, res, clusters_dir, work / "identity")
         summary["clustering"] = res.stats
         del nodes, edges, cannot, ids

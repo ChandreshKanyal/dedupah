@@ -90,3 +90,17 @@ def test_equal_overlap_ties_are_broken_deterministically(tmp_path):
     x = two_runs("x", [[A, C], [B, D]])
     y = two_runs("y", [[B, D], [A, C]])              # same groups, different input order and labels
     assert x == y and x[A] == x[C] == "P000000001" and x[B] == x[D] == "P000000002"
+
+
+def test_an_undone_merge_gets_its_ids_back_and_a_different_person_never_does(tmp_path):
+    first, _ = _run(tmp_path, [[A, B], [C, D]])
+    merged, _ = _run(tmp_path, [[A, B, C, D]])                        # P2 retired into P1
+    assert _persons(tmp_path)[first[C]][0] == "retired"
+    undone, info = _run(tmp_path, [[A, B], [C, D]])                   # the merge is undone
+    assert undone == first and info["reactivated"] == 1 and info["created"] == 0 and _persons(tmp_path)[first[C]][0] == "active"
+    assert (3, first[C], "reactivated", None) in _events(tmp_path)
+    # a retired ID does not go to a different group of records
+    _run(tmp_path, [[A, B, C, D]], reg="r2")
+    _run(tmp_path, [[A, B, C, D], [E]], reg="r2")
+    third, _ = _run(tmp_path, [[A, B, C, D], [F]], reg="r2")          # E vanished, F is a brand-new person
+    assert third[F] not in ("P000000002",) and third[F] == "P000000003"

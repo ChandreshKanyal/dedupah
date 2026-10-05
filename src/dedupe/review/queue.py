@@ -2,7 +2,8 @@
 
 Record pairs in the 'review' zone are collapsed per cluster pair (one decision settles all of them), pairs that clustering
 already placed in the same person are dropped (nothing left to decide), and the rest is ranked so the most likely real
-matches come first. Needs tables `decisions` and `cluster_map` (rid, cluster_id) in `con`.
+matches come first. Needs tables `decisions` and `cluster_map` (rid, cluster_id) in `con`; if a table `judged_pairs` (l_rid, r_rid)
+exists, record pairs a steward already decided on (or marked unsure) are left out.
 """
 from pathlib import Path
 
@@ -13,12 +14,14 @@ def build_queue(con: duckdb.DuckDBPyConnection, out: Path, min_probability: floa
     """Writes `out` (parquet) and returns counts. Columns: cluster_l, cluster_r, record_pairs, top_probability, mean_probability,
     forced (a business rule sent it to review), size_l, size_r, priority. Sorted by priority, highest first.
     `min_probability` drops weak cases; `cap` keeps only the top N (both optional workload controls)."""
+    judged = con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'judged_pairs'").fetchone()[0] > 0
+    skip = "AND NOT EXISTS (SELECT 1 FROM judged_pairs j WHERE j.l_rid = least(d.l_rid, d.r_rid) AND j.r_rid = greatest(d.l_rid, d.r_rid))" if judged else ""
     con.execute("""CREATE OR REPLACE TEMP TABLE _csize AS SELECT cluster_id, count(*) AS size FROM cluster_map GROUP BY 1""")
     con.execute(f"""CREATE OR REPLACE TEMP TABLE _queue AS
         WITH p AS (SELECT least(a.cluster_id, b.cluster_id) AS cluster_l, greatest(a.cluster_id, b.cluster_id) AS cluster_r,
                           d.probability, d.decided_by
                    FROM decisions d JOIN cluster_map a ON a.rid = d.l_rid JOIN cluster_map b ON b.rid = d.r_rid
-                   WHERE d.decision = 'review' AND a.cluster_id <> b.cluster_id),
+                   WHERE d.decision = 'review' AND a.cluster_id <> b.cluster_id {skip}),
              g AS (SELECT cluster_l, cluster_r, count(*) AS record_pairs, max(probability) AS top_probability,
                           avg(probability) AS mean_probability, bool_or(decided_by <> 'score') AS forced FROM p GROUP BY 1, 2)
         SELECT g.*, sl.size AS size_l, sr.size AS size_r,
