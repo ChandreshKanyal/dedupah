@@ -240,6 +240,120 @@
           }
         ]
       }
+    },
+    {
+      "id": "not_enough_evidence",
+      "type": "not_enough_evidence",
+      "reason": "Too little independent evidence to merge or even ask a person: a similar name plus a location (or a shared contact with a different name) is common between different people. Needs an identifier, or a name plus a date of birth, contact or home address, or an exact birth date plus a contact or address.",
+      "when": {
+        "not": {
+          "any": [
+            {
+              "comparison": "pan",
+              "is": "same PAN"
+            },
+            {
+              "comparison": "aadhaar",
+              "in": [
+                "same Aadhaar token",
+                "same last-4 (no full number on one side)"
+              ]
+            },
+            {
+              "comparison": "gov_id",
+              "is": "same passport / licence / voter ID"
+            },
+            {
+              "all": [
+                {
+                  "comparison": "name",
+                  "in": [
+                    "identical cleaned name",
+                    "same name sounds (any order)",
+                    "first+last sound equal",
+                    "initial + same surname",
+                    "one side first-name only, first names agree",
+                    "fuzzy full-name match (JW>=0.90)"
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "comparison": "dob",
+                      "in": [
+                        "exact date",
+                        "exact date, but a 1-Jan default",
+                        "day and month swapped"
+                      ]
+                    },
+                    {
+                      "comparison": "phone",
+                      "in": [
+                        "same primary number",
+                        "number matches an alternate number"
+                      ]
+                    },
+                    {
+                      "comparison": "email",
+                      "is": "same email"
+                    },
+                    {
+                      "comparison": "address",
+                      "is": "same PIN + house number + similar text"
+                    },
+                    {
+                      "all": [
+                        {
+                          "comparison": "dob",
+                          "is": "same year (partial or differing day/month)"
+                        },
+                        {
+                          "comparison": "address",
+                          "in": [
+                            "same PIN",
+                            "same PIN + similar text",
+                            "same PIN + house number + similar text"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "all": [
+                {
+                  "comparison": "dob",
+                  "is": "exact date"
+                },
+                {
+                  "any": [
+                    {
+                      "comparison": "phone",
+                      "in": [
+                        "same primary number",
+                        "number matches an alternate number"
+                      ]
+                    },
+                    {
+                      "comparison": "email",
+                      "is": "same email"
+                    },
+                    {
+                      "comparison": "address",
+                      "in": [
+                        "same PIN + similar text",
+                        "same PIN + house number + similar text"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
     }
   ]
 }

@@ -7,9 +7,11 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from .conditions import compile_condition
 
-RuleType = Literal["never_merge", "auto_merge", "force_review"]
-# Precedence when several rules fire: a veto always wins, then forced review, then auto-merge, then the score zones.
-PRECEDENCE = ("never_merge", "force_review", "auto_merge")
+RuleType = Literal["never_merge", "auto_merge", "force_review", "not_enough_evidence"]
+# Precedence when several rules fire: a veto always wins, then forced review, then auto-merge, then 'not enough evidence'
+# (a soft reject: the pair is neither merged nor reviewed, but unlike a veto it does not forbid the two records from ending
+# up together through other evidence), then the score zones.
+PRECEDENCE = ("never_merge", "force_review", "auto_merge", "not_enough_evidence")
 
 
 class Rule(BaseModel):

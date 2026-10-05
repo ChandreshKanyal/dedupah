@@ -71,11 +71,19 @@ def make_address(rng: random.Random, city: dict) -> dict:
     }
 
 
-def make_email(rng: random.Random, first: str, last: str, dob: date) -> str:
+def make_email(rng: random.Random, first: str, last: str, dob: date, taken: set | None = None) -> str:
+    """A mailbox belongs to one person: if the address is already taken by someone else, add digits (as mail providers
+    force users to). Deliberate sharing (family members using one address) is modelled separately as a trap."""
     f, l = first.lower().replace("'", ""), last.lower().replace("'", "")
     local = rng.choice([f"{f}.{l}", f"{f}{l}", f"{f[0]}{l}", f"{f}_{l}", f"{f}.{l}{dob.year % 100}",
                         f"{f}{rng.randint(1, 999)}", f"{l}{f[0]}{dob.year}", f"{f}.{l[0]}{rng.randint(1, 99)}"])
-    return f"{local}@{rng.choices(ref.FREE_MAIL, weights=[60, 12, 5, 8, 3, 6, 3, ][:len(ref.FREE_MAIL)])[0]}"
+    domain = rng.choices(ref.FREE_MAIL, weights=[60, 12, 5, 8, 3, 6, 3, ][:len(ref.FREE_MAIL)])[0]
+    email = f"{local}@{domain}"
+    while taken is not None and email in taken:
+        email = f"{local}{rng.randint(1, 9999)}@{domain}"
+    if taken is not None:
+        taken.add(email)
+    return email
 
 
 def _pick_community(rng, city) -> str:
@@ -88,6 +96,7 @@ class PopulationBuilder:
         self.ref_date = ref_date
         self.ids = IdFactory(rng)
         self._pid = 0
+        self.emails: set = set()  # issued mailboxes (unique per person)
         self._hid = 0
         self.heads_by_city: dict[str, list[Person]] = {}
 
@@ -127,7 +136,7 @@ class PopulationBuilder:
             maiden_last=maiden_last or last, gender=gender, dob=dob, community=community, marital_status=marital,
             education=edu, occupation=occ, employment_type=emp_type, employer=employer, annual_income=income,
             mobile=mobile, mobile_old=mobile_old,
-            email=make_email(rng, first, last, dob) if adult and rng.random() < 0.85 else None,
+            email=make_email(rng, first, last, dob, self.emails) if adult and rng.random() < 0.85 else None,
             addr=addr, prev_addr=None,
             pan=self.ids.pan(maiden_last or last) if rng.random() < (0.9 if adult else 0.04) else None,
             aadhaar=self.ids.aadhaar() if rng.random() < (0.97 if adult else 0.7) else None,

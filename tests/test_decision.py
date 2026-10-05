@@ -40,15 +40,19 @@ DEFAULT = DecisionConfig.load("configs/decision_default.json")
 PAN_A, PAN_B = "ABCPD1234E", "ABCPD9999F"
 
 
+RS = {"full_name": "Raj Shah", "email": "raj.shah@example.com"}  # name + one corroborating contact
+
+
 def test_precedence_and_zones(tmp_path):
     cases = [
         ({"pan": PAN_A, "full_name": "Raj Shah"}, {"pan": PAN_B, "full_name": "Raj Shah"}, 0.99),   # PAN conflict -> reject
         ({"pan": PAN_A, "full_name": "Raj Shah"}, {"pan": PAN_A, "full_name": "R Shah"}, 0.20),      # same PAN, compatible -> auto
         ({"pan": PAN_A, "full_name": "Raj Shah"}, {"pan": PAN_A, "full_name": "Anita Verma"}, 0.99),  # same PAN, other name -> review
-        ({"full_name": "Raj Shah"}, {"full_name": "Raj Shah"}, 0.95),                               # score zones
-        ({"full_name": "Raj Shah"}, {"full_name": "Raj Shah"}, 0.50),
-        ({"full_name": "Raj Shah"}, {"full_name": "Raj Shah"}, 0.05),
+        (dict(RS), dict(RS), 0.95),                                                                 # score zones
+        (dict(RS), dict(RS), 0.50),
+        (dict(RS), dict(RS), 0.05),
         ({"gender": "M", "full_name": "Raj Shah"}, {"gender": "F", "full_name": "Raj Shah"}, 0.95),  # gender veto
+        ({"full_name": "Raj Shah", "city": "Pune"}, {"full_name": "Raj Shah", "city": "Pune"}, 0.95),  # name + city only
     ]
     got = _decide(cases, DEFAULT, tmp_path)
     assert got[0] == ("reject", "veto_pan_conflict")
@@ -56,6 +60,7 @@ def test_precedence_and_zones(tmp_path):
     assert got[2] == ("review", "review_identifier_with_different_name")
     assert [g[0] for g in got[3:6]] == ["auto_merge", "review", "reject"] and got[3][1] == "score"
     assert got[6] == ("reject", "veto_gender_conflict")
+    assert got[7] == ("reject", "not_enough_evidence")  # a high score alone is not enough without corroborating evidence
 
 
 def test_minor_twin_guard_blocks_auto_merge(tmp_path):

@@ -24,7 +24,7 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
                 else "CREATE OR REPLACE TEMP TABLE flagged AS SELECT l_rid, r_rid, probability FROM wide")
     # decision by precedence: first rule type that has a fired rule wins; within a type the first listed rule is credited
     whens, by = [], []
-    zone = {"never_merge": "reject", "force_review": "review", "auto_merge": "auto_merge"}
+    zone = {"never_merge": "reject", "force_review": "review", "auto_merge": "auto_merge", "not_enough_evidence": "reject"}
     for rtype in PRECEDENCE:
         for r in (x for x in rules if x.type == rtype):
             whens.append(f"WHEN f_{r.id} THEN '{zone[rtype]}'")

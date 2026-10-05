@@ -37,7 +37,12 @@ DEFAULT_RULES = [
          "surname sound + first initial + birth year; survives initials"),
     Rule("name_pin3", _combo("name_first_phon || '|' || name_last_phon || '|' || substr(address_pin, 1, 3)",
                              "name_first_phon", "name_last_phon", "address_pin"), "first+last sound + PIN prefix"),
+    Rule("dob_pin", _combo("dob || '|' || address_pin", "dob", "address_pin"), "full DOB + PIN"),
+]
+
+# Off by default. name_city produced ~47% of all candidate pairs at 138k records and grows faster than the data, yet almost
+# none of its pairs carry enough evidence to merge or review (see PROGRESS.md section 20); removing it raised F1 slightly.
+OPTIONAL_RULES = [
     Rule("name_city", _combo("name_first_phon || '|' || name_last_phon || '|' || city", "name_first_phon", "name_last_phon", "city"),
          "first+last sound + city; links ID-less records (leads) to documents"),
-    Rule("dob_pin", _combo("dob || '|' || address_pin", "dob", "address_pin"), "full DOB + PIN"),
 ]
