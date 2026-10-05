@@ -76,13 +76,13 @@ Dedupe/
 
 ### Phase 1 — Core engine
 - [x] 1.1 Synthetic Indian customer generator with ground-truth duplicates — see section 9. Run in `.venv`: `python -m dedupe.synthetic --households 1200 --seed 42 --out data/synthetic`
-- [ ] 1.2 Evaluation harness (pairwise precision/recall/F1 + cluster metrics)
+- [x] 1.2 Evaluation harness (pairwise precision/recall/F1, false merges split same-family vs cross-family, per-hard-case breakdown) — `src/dedupe/evaluation/`; run `python -m dedupe.evaluation baseline|score --data data/synthetic [--pred file.csv]`. Prediction file format: CSV `source,source_record_id,cluster_id`.
 - [ ] 1.3 Connector plugin interface + schema-mapping layer (see 7a); first connectors: CSV/XLSX/Parquet, Postgres/MySQL (SQLAlchemy), Google Sheets
 - [ ] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN)
 - [ ] 1.5 Blocking
 - [ ] 1.6 Scoring with Splink (unsupervised EM start)
 - [ ] 1.7 Clustering (guard against chaining)
-- [ ] 1.8 Baseline benchmark recorded here
+- [ ] 1.8 Final Phase 1 benchmark recorded here (see section 10 for running results)
 
 ### Phase 2 — Rules and golden record
 - [ ] 2.1 Rule schema (JSON): auto-merge / review / never-merge
@@ -144,6 +144,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.2 done: evaluation harness + baseline (F1 0.585). 14 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.1 done: synthetic generator, 10 tests passing in `.venv`.
 - **2026-10-05** — Phase 0.2–0.4 done (repo, skeleton, Dockerfile, compose). 0.5 blocked by Docker engine failure on the host (engine pipe missing, `wsl` command hangs). Waiting on user to restart Docker Desktop / reboot. No commits yet. Fallback: dev proceeds in `.venv` (`.venv/Scripts/python -m pytest`).
 - **2026-10-05** — User answered open questions: no real data (synthetic only); platform must ingest from any source. Added connector design (7a), updated roadmap 1.3 and decisions log.
@@ -167,3 +168,13 @@ Ground truth in `data/synthetic/ground_truth/`: `persons_truth.csv` (true person
 Hard cases built in: shared mobile/email within families, minors under a parent's phone, twins, junior/senior same name, namesakes (same name + city, different people), maiden vs married names, old mobile/address, initials, transliteration, typos, swapped/placeholder DOBs, dropped PINs, city aliases, OCR digit confusion, and in-source duplicates. Row order and IDs are shuffled so they leak nothing.
 
 Known limitations: names come from limited lists; addresses are template-based; no non-Latin scripts yet; individuals only. Results on this data do not prove real-world accuracy.
+
+## 10. Benchmark log (all on SYNTHETIC data, seed 42, 1200 households, 8,178 scored records, 2,842 persons)
+
+Note: 9 people appear only as loan co-applicants and have no record of their own, so scored persons (2,842) < persons with any mention (2,851).
+
+| Date | Matcher | Precision | Recall | F1 | False-merge pairs | Notes |
+|---|---|---|---|---|---|---|
+| 2026-10-05 | Baseline: exact PAN or exact mobile (union-find) | 0.790 | 0.465 | 0.585 | 1,459 (all within the same family) | Shared family mobiles cause false merges; misses records without PAN/mobile, typo'd identifiers and OCR'd docs |
+
+Key lesson: a naive shared-mobile rule merges family members. The real engine must treat shared contact details as weak evidence.
