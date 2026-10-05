@@ -81,7 +81,7 @@ Dedupe/
 - [x] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN) — see section 12. Run: `python -m dedupe.standardise`; report: `python -m dedupe.standardise.quality`
 - [x] 1.5 (done, see section 13) Candidate generation (blocking): UNION of several rules (strong-ID equality; phonetic surname + DOB; first-name + DOB; DOB + PIN prefix + initial...). **Frequency cap**: values shared by too many records (family phones, common names) are not used as keys. Measure pairs completeness (true pairs kept), reduction ratio and pairs generated, per rule.
 - [x] 1.6 (done, see section 14; deviated from plain Splink/Fellegi-Sunter, reasons there) Pair scoring: Fellegi-Sunter via Splink on DuckDB. Comparison levels per field (exact / phonetic / fuzzy / initials / swapped-DOB / missing). **Term-frequency adjustment** so rare agreeing values weigh more and common/shared ones less. Unsupervised EM, seeded by strong-ID pairs. Keep per-field contributions for explainability/audit.
-- [ ] 1.7 Decisions + hard constraints: score -> auto-merge / review / reject zones; **never-merge vetoes** (two different valid PANs or Aadhaar tokens, conflicting gender, large DOB gap, twin guard). This is the seed of the Phase 2 rules engine.
+- [x] 1.7 (done, see section 15) Decisions + hard constraints: score -> auto-merge / review / reject zones; **never-merge vetoes** (two different valid PANs or Aadhaar tokens, conflicting gender, large DOB gap, twin guard). This is the seed of the Phase 2 rules engine.
 - [ ] 1.8 Clustering: only auto-merge edges form clusters; connected components + **conflict check that splits clusters** + size alerts (no black-hole entities); review pairs stay unmerged. Add cluster-level metrics (purity, B-cubed).
 - [ ] 1.9 Household/relationship layer: families are NOT merges. A separate graph of 'related' links between resolved people (shared address, phone, nominee/co-applicant, father name, surname) -> household groups. Evaluate against household truth.
 - [ ] 1.10 Final Phase 1 benchmark recorded here (see section 10 for running results)
@@ -147,6 +147,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.7 done: decision zones + rule language; 59 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.6 done: scoring (identifier-seeded logistic + TF), best pair F1 0.90 on 8k records; 53 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.5 done: blocking with frequency cap; 45 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.4 done: standardisation + quality report; 41 tests passing in `.venv`.
@@ -234,3 +235,21 @@ At 137,471 records (20k households): precision 0.997 at p>=0.9 (387 false merges
 Remaining errors: false merges at 0.9 are twins, junior/senior and shared-mobile family members (strongest misleading field: DOB/name placeholders). Missed true pairs (in candidates): weakest fields are name (maiden/married, initials, OCR) and address (previous addresses, one-sided city). Many involve ID-less leads where only name+phone+city exist: genuinely ambiguous, belong in review.
 
 Caveats: weights learned from identifier-bearing pairs; behaviour on ID-less pairs is extrapolated. Training data and test data are the same synthetic population (no hand labels, but no held-out set either). The strong-ID bits are principled constants, not fitted. Real-data behaviour unproven.
+
+## 15. Decisions and business rules (Phase 1.7)
+
+Code `src/dedupe/decision/`: `conditions.py` (safe condition language compiled to SQL; no raw SQL accepted; unknown comparison/level/field raises), `config.py` (pydantic `DecisionConfig`/`Rule`; rules validated at load time; precedence **never_merge > force_review > auto_merge > score zones**), `apply.py` (writes `decisions.parquet`: l_rid, r_rid, probability, decision, decided_by, reason, fired[]), `report.py` (dry-run impact vs ground truth, dev only). Default rules in `configs/decision_default.json`. Run: `python -m dedupe.decision --config configs/decision_default.json`.
+
+Default zones: auto-merge at probability >= 0.90, review 0.10-0.90, reject below. Default rules (9): vetoes for PAN conflict, Aadhaar conflict, gender conflict, birth years >10 apart (each unless an identifier agrees); auto-merge for same PAN / same Aadhaar token with a compatible name; force-review when an identifier agrees but names differ, when PAN and Aadhaar contradict each other, and a **twin guard** (minors, same exact DOB and PIN, no identifier agreeing). Every decision records which rule (or 'score') decided and why, so it is auditable.
+
+Results (SYNTHETIC, 13,260 candidate pairs, 11,787 true pairs):
+| zone | pairs | real matches | not matches |
+|---|---|---|---|
+| auto_merge | 6,643 | 6,638 (99.9%) | 5 |
+| review | 4,077 | 3,393 (83.2%) | 684 |
+| reject | 2,540 | 29 (1.1%) | 2,511 |
+Auto-merge precision 0.9992 (score-only zones: 0.9988, 8 false merges), recall 0.563. Rules moved 71 pairs review->reject (0 real) i.e. 71 fewer for a human, 55 pairs auto->review (52 real: the price of the twin/identifier guards), 1 auto->reject. The twin guard fired on 14 pairs (10 real, 4 not).
+
+Honest reading: on this data the vetoes mostly save reviewer effort (they decided ~1,700 pairs that the score had already kept out of auto-merge) and the guards trade a little auto-merge recall for safety; the score alone was already precise. Vetoes matter more when scores are less reliable (real data). The review zone is 83% real matches, so it is a worthwhile queue, not noise. Remaining 5 auto-merge false merges are initial-only twin/sibling records and family members sharing a phone.
+
+Notes: gender veto is safe here because the synthetic data has no gender noise; real data will, so tune/disable via the config (this is exactly what Phase 2 exposes to business users). 'Possible twins' uses a dob_year >= 2008 cut-off tied to the data's reference date (2026): make it relative to run date when Phase 2 adds parameters.

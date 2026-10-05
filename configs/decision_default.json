@@ -1,0 +1,245 @@
+{
+  "auto_merge_at": 0.9,
+  "review_at": 0.1,
+  "rules": [
+    {
+      "id": "veto_pan_conflict",
+      "type": "never_merge",
+      "reason": "Two different valid PANs: different taxpayers (unless an Aadhaar agrees, handled by the contradiction rule)",
+      "when": {
+        "all": [
+          {
+            "comparison": "pan",
+            "is": "different PANs"
+          },
+          {
+            "not": {
+              "comparison": "aadhaar",
+              "in": [
+                "same Aadhaar token",
+                "same last-4 (no full number on one side)"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "veto_aadhaar_conflict",
+      "type": "never_merge",
+      "reason": "Two different valid Aadhaar numbers: different people (unless a PAN agrees)",
+      "when": {
+        "all": [
+          {
+            "comparison": "aadhaar",
+            "is": "different Aadhaar"
+          },
+          {
+            "not": {
+              "comparison": "pan",
+              "is": "same PAN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "veto_gender_conflict",
+      "type": "never_merge",
+      "reason": "Recorded genders differ and no identifier agrees",
+      "when": {
+        "all": [
+          {
+            "comparison": "gender",
+            "is": "different gender"
+          },
+          {
+            "not": {
+              "comparison": "pan",
+              "is": "same PAN"
+            }
+          },
+          {
+            "not": {
+              "comparison": "aadhaar",
+              "is": "same Aadhaar token"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "veto_birth_year_far_apart",
+      "type": "never_merge",
+      "reason": "Birth years differ by more than 10 years and no identifier agrees (parent/child, junior/senior)",
+      "when": {
+        "all": [
+          {
+            "field": "dob_year",
+            "op": "abs_diff_gt",
+            "value": 10
+          },
+          {
+            "not": {
+              "comparison": "pan",
+              "is": "same PAN"
+            }
+          },
+          {
+            "not": {
+              "comparison": "aadhaar",
+              "is": "same Aadhaar token"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "auto_same_pan_compatible_name",
+      "type": "auto_merge",
+      "reason": "Same PAN and a compatible name",
+      "when": {
+        "all": [
+          {
+            "comparison": "pan",
+            "is": "same PAN"
+          },
+          {
+            "comparison": "name",
+            "in": [
+              "identical cleaned name",
+              "same name sounds (any order)",
+              "first+last sound equal",
+              "initial + same surname",
+              "one side first-name only, first names agree",
+              "fuzzy full-name match (JW>=0.90)"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "auto_same_aadhaar_compatible_name",
+      "type": "auto_merge",
+      "reason": "Same Aadhaar token and a compatible name",
+      "when": {
+        "all": [
+          {
+            "comparison": "aadhaar",
+            "is": "same Aadhaar token"
+          },
+          {
+            "comparison": "name",
+            "in": [
+              "identical cleaned name",
+              "same name sounds (any order)",
+              "first+last sound equal",
+              "initial + same surname",
+              "one side first-name only, first names agree",
+              "fuzzy full-name match (JW>=0.90)"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "review_identifier_with_different_name",
+      "type": "force_review",
+      "reason": "An identifier agrees but the names are clearly different (marriage name change, data-entry error or identity misuse)",
+      "when": {
+        "all": [
+          {
+            "any": [
+              {
+                "comparison": "pan",
+                "is": "same PAN"
+              },
+              {
+                "comparison": "aadhaar",
+                "is": "same Aadhaar token"
+              }
+            ]
+          },
+          {
+            "comparison": "name",
+            "in": [
+              "same surname, different first name",
+              "different"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "review_identifiers_contradict",
+      "type": "force_review",
+      "reason": "One identifier agrees while another conflicts: needs a human",
+      "when": {
+        "any": [
+          {
+            "all": [
+              {
+                "comparison": "pan",
+                "is": "same PAN"
+              },
+              {
+                "comparison": "aadhaar",
+                "is": "different Aadhaar"
+              }
+            ]
+          },
+          {
+            "all": [
+              {
+                "comparison": "pan",
+                "is": "different PANs"
+              },
+              {
+                "comparison": "aadhaar",
+                "is": "same Aadhaar token"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "review_possible_twins",
+      "type": "force_review",
+      "reason": "Minors with the same exact birth date and PIN, no identifier agreeing: possible twins/siblings, never auto-merge",
+      "when": {
+        "all": [
+          {
+            "field": "dob_year",
+            "op": "both_gte",
+            "value": 2008
+          },
+          {
+            "comparison": "dob",
+            "is": "exact date"
+          },
+          {
+            "comparison": "address",
+            "in": [
+              "same PIN",
+              "same PIN + similar text",
+              "same PIN + house number + similar text"
+            ]
+          },
+          {
+            "not": {
+              "comparison": "pan",
+              "is": "same PAN"
+            }
+          },
+          {
+            "not": {
+              "comparison": "aadhaar",
+              "is": "same Aadhaar token"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
