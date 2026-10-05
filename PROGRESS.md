@@ -82,7 +82,7 @@ Dedupe/
 - [x] 1.5 (done, see section 13) Candidate generation (blocking): UNION of several rules (strong-ID equality; phonetic surname + DOB; first-name + DOB; DOB + PIN prefix + initial...). **Frequency cap**: values shared by too many records (family phones, common names) are not used as keys. Measure pairs completeness (true pairs kept), reduction ratio and pairs generated, per rule.
 - [x] 1.6 (done, see section 14; deviated from plain Splink/Fellegi-Sunter, reasons there) Pair scoring: Fellegi-Sunter via Splink on DuckDB. Comparison levels per field (exact / phonetic / fuzzy / initials / swapped-DOB / missing). **Term-frequency adjustment** so rare agreeing values weigh more and common/shared ones less. Unsupervised EM, seeded by strong-ID pairs. Keep per-field contributions for explainability/audit.
 - [x] 1.7 (done, see section 15) Decisions + hard constraints: score -> auto-merge / review / reject zones; **never-merge vetoes** (two different valid PANs or Aadhaar tokens, conflicting gender, large DOB gap, twin guard). This is the seed of the Phase 2 rules engine.
-- [ ] 1.8 Clustering: only auto-merge edges form clusters; connected components + **conflict check that splits clusters** + size alerts (no black-hole entities); review pairs stay unmerged. Add cluster-level metrics (purity, B-cubed).
+- [x] 1.8 (done, see section 16) Clustering: only auto-merge edges form clusters; connected components + **conflict check that splits clusters** + size alerts (no black-hole entities); review pairs stay unmerged. Add cluster-level metrics (purity, B-cubed).
 - [ ] 1.9 Household/relationship layer: families are NOT merges. A separate graph of 'related' links between resolved people (shared address, phone, nominee/co-applicant, father name, surname) -> household groups. Evaluate against household truth.
 - [ ] 1.10 Final Phase 1 benchmark recorded here (see section 10 for running results)
 
@@ -147,6 +147,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.8 done: guarded clustering; found and fixed over-regularisation (L2 2.0 -> 0.2); end-to-end cluster F1 0.907; 68 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.7 done: decision zones + rule language; 59 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.6 done: scoring (identifier-seeded logistic + TF), best pair F1 0.90 on 8k records; 53 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.5 done: blocking with frequency cap; 45 tests passing in `.venv`.
@@ -184,6 +185,9 @@ Note: 9 people appear only as loan co-applicants and have no record of their own
 | Date | Matcher | Precision | Recall | F1 | False-merge pairs | Notes |
 |---|---|---|---|---|---|---|
 | 2026-10-05 | Baseline: exact PAN or exact mobile (union-find) | 0.790 | 0.465 | 0.585 | 1,459 (all within the same family) | Shared family mobiles cause false merges; misses records without PAN/mobile, typo'd identifiers and OCR'd docs |
+| 2026-10-05 | **Full pipeline (rules + scoring + decisions + guarded clustering), cluster-level pairwise, 8.2k records** | 0.992 | 0.836 | **0.907** | 77 | auto-merge groups only; 3,514 clusters for 2,842 true persons (single-record leftovers + review queue pending) |
+| 2026-10-05 | Same, 137k records (20k households) | 0.996 | 0.841 | **0.912** | - | 8.5 s clustering; review queue 57k pairs (42% real) |
+| 2026-10-05 | Dev-only ceiling: stewards approve every real match in review queue | 0.993 | 0.942 | 0.967 | - | upper bound for the review workflow, not a real result |
 
 Key lesson: a naive shared-mobile rule merges family members. The real engine must treat shared contact details as weak evidence.
 
@@ -253,3 +257,13 @@ Auto-merge precision 0.9992 (score-only zones: 0.9988, 8 false merges), recall 0
 Honest reading: on this data the vetoes mostly save reviewer effort (they decided ~1,700 pairs that the score had already kept out of auto-merge) and the guards trade a little auto-merge recall for safety; the score alone was already precise. Vetoes matter more when scores are less reliable (real data). The review zone is 83% real matches, so it is a worthwhile queue, not noise. Remaining 5 auto-merge false merges are initial-only twin/sibling records and family members sharing a phone.
 
 Notes: gender veto is safe here because the synthetic data has no gender noise; real data will, so tune/disable via the config (this is exactly what Phase 2 exposes to business users). 'Possible twins' uses a dob_year >= 2008 cut-off tied to the data's reference date (2026): make it relative to run date when Phase 2 adds parameters.
+
+## 16. Clustering (Phase 1.8) and a model correction
+
+Code `src/dedupe/clustering/`: `graph.py` (connected components over auto-merge edges; contradiction check = two different PANs, two different Aadhaar tokens, or a vetoed 'cannot-link' pair inside one group; split by repeatedly deleting the weakest edge on the max-bottleneck path between the conflicting records; bounded by `max_removals`, unresolved groups are released as singletons and flagged; oversize groups flagged), `run.py` (writes `data/staging/clusters/`: `clusters.parquet`, `cluster_stats.parquet`, `possible_matches.parquet` (review pairs between different clusters, for the steward queue), `removed_edges.json`, `report.json`; evaluates with the Phase 1.2 harness). Run: `python -m dedupe.clustering`. No ML here by design: deterministic and fully traceable.
+
+Results (SYNTHETIC): 8,178 records -> 3,514 clusters (1,555 singletons), cluster-level pairwise precision 0.992, recall 0.836, F1 0.907 (naive baseline 0.585). The guard fired on 8 groups (16 edges removed); without it precision is 0.985 and impure clusters 17 vs 15. At 137,471 records: precision 0.996, recall 0.841, F1 0.912; guard fired on 124 groups (229 edges), impure clusters 170 vs 248 without it, largest cluster 12 vs 16. Dev-only ceiling if stewards approved all real matches in the review queue: F1 0.967.
+
+**Model correction found while testing.** Quality depended on dataset size (F1 0.56 / 0.71 / 0.79 at 150 / 400 / 1,200 households): the logistic regularisation (L2 = 2.0) was too strong, shrinking evidence and pushing pairs into review. Experiment over L2 in {2.0, 0.5, 0.1}; set L2 = 0.2 (F1 at 150 / 400 / 1,200 households about .75-.9, precision >= 0.99). This supersedes the scoring/decision numbers in sections 14 and 15 (they used L2 = 2.0): with L2 = 0.2 scoring best F1 is 0.902 (p>=0.32); at p>=0.9 precision 0.9966 and recall 0.703; zones are auto-merge 8,252 pairs (99.7% real, 24 false merges), review 2,306 (77.7% real), reject 2,702 (1.5% real).
+
+Caveats: (1) L2 was tuned on the same synthetic family of data it is evaluated on; treat as a sensible default and re-tune on pilot data. (2) At scale the review queue grows large (57k pairs at 137k records, 42% real): real deployments need prioritisation (sort by probability / cluster impact) and bulk-approve tools in the steward UI. (3) 'Persons split across clusters' is high (588 of 2,842) because records that only a human can link remain separate: that is the review queue's job. (4) The contradiction guard only knows PAN/Aadhaar and vetoed pairs; other contradictions go undetected.
