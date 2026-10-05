@@ -159,13 +159,15 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
             con.register("judged_src", pa.table({"l_rid": pa.array([a for a, _ in cons.judged_pairs], pa.int64()),
                                                  "r_rid": pa.array([b for _, b in cons.judged_pairs], pa.int64())}))
             con.execute("CREATE OR REPLACE TABLE judged_pairs AS SELECT * FROM judged_src")
-        summary["identity"] = write_outputs(con, res, clusters_dir, work / "identity")
+        summary["identity"] = write_outputs(con, res, clusters_dir, work / "identity", p["scored"])
         summary["clustering"] = res.stats
         del nodes, edges, cannot, ids
         _drop(con, "cluster_flags")
     with meter.stage("golden_record"):
+        overrides = [{"id": j.id, "field": j.subject["field"], "value": j.subject["value"], "anchors": j.subject["anchors"]}
+                     for j in JudgmentStore.open(cfg.judgments_url).active(("field_override",))] if cfg.judgments_url else []
         summary["golden_record"] = build_golden(con, p["std"], p["canonical"], clusters_dir / "clusters.parquet",
-                                                SurvivorshipConfig.load(cfg.survivorship_config), work / "golden")
+                                                SurvivorshipConfig.load(cfg.survivorship_config), work / "golden", overrides)
     with meter.stage("review_queue"):
         summary["review_queue"] = build_queue(con, work / "review_queue.parquet", cfg.review_min_probability, cfg.review_cap)
     with meter.stage("households"):

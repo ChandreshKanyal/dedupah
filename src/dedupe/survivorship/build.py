@@ -39,7 +39,10 @@ _ORDER = {  # strategy -> ORDER BY inside the cluster; every strategy falls back
 }
 
 
-def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clusters: Path, cfg: SurvivorshipConfig, out_dir: Path) -> dict:
+def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clusters: Path, cfg: SurvivorshipConfig, out_dir: Path,
+                 overrides: list | None = None) -> dict:
+    """`overrides`: steward field overrides [{id, field, value, anchors: [(source_id, source_record_id), ...]}]. Each applies to the person
+    holding most of its anchor records; a later one (higher id) replaces an earlier one for the same person and field; value None clears."""
     out_dir.mkdir(parents=True, exist_ok=True)
     cols = ", ".join(f"({GOLDEN_FIELDS[f]})::VARCHAR AS {f}" for f in GOLDEN_FIELDS)
     con.execute(f"""CREATE OR REPLACE TABLE g_src AS
@@ -67,6 +70,19 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
             con.execute(f"CREATE TABLE g_values AS {sel}" if first else f"INSERT INTO g_values {sel}")
             first = False
     con.execute("DROP TABLE IF EXISTS g_unit")
+    applied = 0
+    for o in sorted(overrides or [], key=lambda o: o["id"]):
+        anchors = [tuple(a) for a in o["anchors"]]
+        row = con.execute("SELECT cluster_id, count(*) FROM g_src WHERE (source_id, source_record_id) IN (SELECT unnest(?), unnest(?)) "
+                          "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 1", [[a[0] for a in anchors], [a[1] for a in anchors]]).fetchone() if anchors else None
+        if row is None:
+            continue   # the anchor records are no longer in the data
+        cid = row[0]
+        con.execute("DELETE FROM g_values WHERE cluster_id = ? AND field = ?", [cid, o["field"]])
+        if o["value"] is not None:
+            con.execute("INSERT INTO g_values VALUES (?, ?, ?, 'steward', ?, 'steward_override', 1, 1, NULL)",
+                        [cid, o["field"], o["value"], str(o["id"])])
+        applied += 1
     con.execute(f"COPY (SELECT * EXCLUDE (rec_date) FROM g_values ORDER BY cluster_id, field) TO '{out_dir / 'golden_values.parquet'}' (FORMAT PARQUET)")
     fields = ", ".join(f"max(value) FILTER (WHERE field = '{f}') AS {f}" for f in GOLDEN_FIELDS)
     con.execute(f"""COPY (
@@ -79,5 +95,5 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
     nc = con.execute("SELECT count(*) FROM g_values WHERE n_distinct > 1").fetchone()[0]
     con.execute("DROP TABLE IF EXISTS g_values")
     con.execute("DROP TABLE IF EXISTS g_src")
-    return {"golden_records": n, "values": nv, "values_with_source_conflict": nc}
+    return {"golden_records": n, "values": nv, "values_with_source_conflict": nc, "steward_overrides_applied": applied}
 

@@ -34,9 +34,10 @@ def load_inputs(con, std: Path, cand: Path, decisions: Path, decision_cfg: Decis
     return nodes, edges, cannot, ids
 
 
-def write_outputs(con, res, out_dir: Path, registry_dir: Path | None = None) -> dict | None:
+def write_outputs(con, res, out_dir: Path, registry_dir: Path | None = None, scored: Path | None = None) -> dict | None:
     """Writes clusters etc. With `registry_dir`, group labels are replaced by stable person IDs (see dedupe.identity) and the
-    id summary is returned; without it the per-run labels are kept (stand-alone / test use)."""
+    id summary is returned; without it the per-run labels are kept (stand-alone / test use). With `scored`, possible_matches also
+    carries each review pair's per-field evidence (lv_*, w_*, match_weight) so a review screen never has to scan all scored pairs."""
     out_dir.mkdir(parents=True, exist_ok=True)
     rids = list(res.labels)
     con.register("cluster_map_src", pa.table({"rid": pa.array(rids, pa.int64()),
@@ -51,9 +52,15 @@ def write_outputs(con, res, out_dir: Path, registry_dir: Path | None = None) -> 
     con.execute(f"""COPY (SELECT m.cluster_id, count(*) AS size, count(DISTINCT r.source_id) AS sources, f.flags
                           FROM cluster_map m JOIN records r USING (rid) LEFT JOIN cluster_flags f USING (cluster_id)
                           GROUP BY m.cluster_id, f.flags ORDER BY size DESC) TO '{out_dir / 'cluster_stats.parquet'}' (FORMAT PARQUET)""")
-    con.execute(f"""COPY (SELECT a.cluster_id AS cluster_l, b.cluster_id AS cluster_r, d.l_rid, d.r_rid, d.probability, d.decided_by, d.reason
+    ev_join = (f"JOIN read_parquet('{scored}') s ON s.l_rid = d.l_rid AND s.r_rid = d.r_rid" if scored else "")
+    ev_cols = ", s.match_weight, s.* EXCLUDE (l_rid, r_rid, rules, probability, match_weight)" if scored else ""
+    con.execute(f"""COPY (SELECT a.cluster_id AS cluster_l, b.cluster_id AS cluster_r, d.l_rid, d.r_rid, d.probability, d.decided_by, d.reason,
+                                 rl.source_id AS l_source_id, rl.source_record_id AS l_source_record_id,
+                                 rr.source_id AS r_source_id, rr.source_record_id AS r_source_record_id{ev_cols}
                           FROM decisions d JOIN cluster_map a ON a.rid = d.l_rid JOIN cluster_map b ON b.rid = d.r_rid
-                          WHERE d.decision = 'review' AND a.cluster_id <> b.cluster_id)
+                          JOIN records rl ON rl.rid = d.l_rid JOIN records rr ON rr.rid = d.r_rid {ev_join}
+                          WHERE d.decision = 'review' AND a.cluster_id <> b.cluster_id
+                          ORDER BY least(a.cluster_id, b.cluster_id), greatest(a.cluster_id, b.cluster_id), d.probability DESC)
                     TO '{out_dir / 'possible_matches.parquet'}' (FORMAT PARQUET)""")
     (out_dir / "removed_edges.json").write_text(json.dumps(
         [{"l_rid": a, "r_rid": b, "probability": p, "reason": why} for a, b, p, why in res.removed_edges], indent=1), encoding="utf-8")
