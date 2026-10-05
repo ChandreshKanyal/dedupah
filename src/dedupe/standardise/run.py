@@ -22,7 +22,7 @@ SCHEMA = pa.schema([
     ("source_id", S), ("source_record_id", S), ("party_role", S), ("relation_to_proposer", S),
     ("name_clean", S), ("name_first", S), ("name_middle", S), ("name_last", S), ("name_first_is_initial", B),
     ("name_first_phon", S), ("name_last_phon", S), ("name_tokens_phon", S),
-    ("father_name_clean", S), ("related_name_clean", S),
+    ("father_name_clean", S), ("related_name_clean", S), ("father_name_phon", S), ("related_name_phon", S),
     ("dob", S), ("dob_year", I), ("dob_month", I), ("dob_day", I), ("dob_precision", S), ("dob_placeholder", B),
     ("gender", S), ("mobile", S), ("mobile_alt", S),
     ("email", S), ("email_key", S), ("email_domain", S),
@@ -39,6 +39,7 @@ _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_al
 
 def standardise_row(r: dict) -> dict:
     name = parse_name(r["full_name"])
+    father, related = parse_name(r["father_name"]), parse_name(r["related_name"])
     d = dates.parse_dob(r["dob"])
     em, em_key, em_dom = ids.email(r["email"])
     pan, pan_fixed = ids.pan(r["pan"])
@@ -55,7 +56,8 @@ def standardise_row(r: dict) -> dict:
         "name_clean": name.clean, "name_first": name.first, "name_middle": name.middle, "name_last": name.last,
         "name_first_is_initial": name.first_is_initial if name.first else None,
         "name_first_phon": name.first_phon, "name_last_phon": name.last_phon, "name_tokens_phon": name.tokens_phon,
-        "father_name_clean": parse_name(r["father_name"]).clean, "related_name_clean": parse_name(r["related_name"]).clean,
+        "father_name_clean": father.clean, "related_name_clean": related.clean,
+        "father_name_phon": father.tokens_phon, "related_name_phon": related.tokens_phon,
         "dob": d[0], "dob_year": d[1], "dob_month": d[2], "dob_day": d[3], "dob_precision": d[4], "dob_placeholder": d[5] if d[4] else None,
         "gender": _GENDER.get((r["gender"] or "").strip().lower()),
         "mobile": ids.phone(r["mobile"]), "mobile_alt": ids.phone(r["mobile_alt"]),

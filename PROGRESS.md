@@ -83,7 +83,7 @@ Dedupe/
 - [x] 1.6 (done, see section 14; deviated from plain Splink/Fellegi-Sunter, reasons there) Pair scoring: Fellegi-Sunter via Splink on DuckDB. Comparison levels per field (exact / phonetic / fuzzy / initials / swapped-DOB / missing). **Term-frequency adjustment** so rare agreeing values weigh more and common/shared ones less. Unsupervised EM, seeded by strong-ID pairs. Keep per-field contributions for explainability/audit.
 - [x] 1.7 (done, see section 15) Decisions + hard constraints: score -> auto-merge / review / reject zones; **never-merge vetoes** (two different valid PANs or Aadhaar tokens, conflicting gender, large DOB gap, twin guard). This is the seed of the Phase 2 rules engine.
 - [x] 1.8 (done, see section 16) Clustering: only auto-merge edges form clusters; connected components + **conflict check that splits clusters** + size alerts (no black-hole entities); review pairs stay unmerged. Add cluster-level metrics (purity, B-cubed).
-- [ ] 1.9 Household/relationship layer: families are NOT merges. A separate graph of 'related' links between resolved people (shared address, phone, nominee/co-applicant, father name, surname) -> household groups. Evaluate against household truth.
+- [x] 1.9 (done, see section 17) Household/relationship layer: families are NOT merges. A separate graph of 'related' links between resolved people (shared address, phone, nominee/co-applicant, father name, surname) -> household groups. Evaluate against household truth.
 - [ ] 1.10 Final Phase 1 benchmark recorded here (see section 10 for running results)
 
 ### Phase 2 — Rules and golden record
@@ -147,6 +147,7 @@ Dedupe/
 ## 8. Session log
 
 - **2026-10-05** — Research completed (entity resolution tools, Splink/Zingg/dedupe, KYC/doc pipelines). Requirements gathered. Created PROGRESS.md. Next: Phase 0.2–0.6.
+- **2026-10-05** — Phase 1.9 done: household layer (evidence + guarded grouping); 75 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.8 done: guarded clustering; found and fixed over-regularisation (L2 2.0 -> 0.2); end-to-end cluster F1 0.907; 68 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.7 done: decision zones + rule language; 59 tests passing in `.venv`.
 - **2026-10-05** — Phase 1.6 done: scoring (identifier-seeded logistic + TF), best pair F1 0.90 on 8k records; 53 tests passing in `.venv`.
@@ -267,3 +268,22 @@ Results (SYNTHETIC): 8,178 records -> 3,514 clusters (1,555 singletons), cluster
 **Model correction found while testing.** Quality depended on dataset size (F1 0.56 / 0.71 / 0.79 at 150 / 400 / 1,200 households): the logistic regularisation (L2 = 2.0) was too strong, shrinking evidence and pushing pairs into review. Experiment over L2 in {2.0, 0.5, 0.1}; set L2 = 0.2 (F1 at 150 / 400 / 1,200 households about .75-.9, precision >= 0.99). This supersedes the scoring/decision numbers in sections 14 and 15 (they used L2 = 2.0): with L2 = 0.2 scoring best F1 is 0.902 (p>=0.32); at p>=0.9 precision 0.9966 and recall 0.703; zones are auto-merge 8,252 pairs (99.7% real, 24 false merges), review 2,306 (77.7% real), reject 2,702 (1.5% real).
 
 Caveats: (1) L2 was tuned on the same synthetic family of data it is evaluated on; treat as a sensible default and re-tune on pilot data. (2) At scale the review queue grows large (57k pairs at 137k records, 42% real): real deployments need prioritisation (sort by probability / cluster impact) and bulk-approve tools in the steward UI. (3) 'Persons split across clusters' is high (588 of 2,842) because records that only a human can link remain separate: that is the review queue's job. (4) The contradiction guard only knows PAN/Aadhaar and vetoed pairs; other contradictions go undetected.
+
+## 17. Households (Phase 1.9)
+
+Code `src/dedupe/households/`: `evidence.py` (SQL relationship evidence between resolved people), `group.py` (components with size guard), `run.py` (outputs + dev evaluation). Run: `python -m dedupe.households [--threshold 5]` -> `data/staging/households/` (`household_members.parquet`, `relationships.parquet` with score + evidence list, `report.json`). Standardiser gained `father_name_phon` / `related_name_phon`.
+
+Principle: a household is a set of DISTINCT people linked by evidence; nothing is merged. Evidence per pair of people (each type counted once, strongest instance): policy_member 5 (insured on the same policy), policy_nominee 3, same_home 4 (same PIN + flat number + similar text), same_area_text 1, shared_phone 4 and shared_email 3 (ignored if used by more than 8 people: agents/call centres), named_relative 3 (a nominee/co-applicant name matches the other person; must not contradict known cities; diluted by namesake count), father_named 2 (age gap >= 15 years, male), same_surname 1 (only counts when other evidence exists). Households = connected components of links with score >= threshold (default 5); components over 10 people are re-split at stricter thresholds (chaining guard), flagged if unsplittable.
+
+Results (SYNTHETIC, dev evaluation vs true households; people = predicted person-clusters):
+| size | threshold | pairwise P / R / F1 | family-only P / R | note |
+|---|---|---|---|---|
+| 8.2k records | 5 (default) | 0.983 / 0.518 / 0.678 | 0.980 / 0.538 | 350 of 927 multi-person households reproduced exactly |
+| 8.2k records | 4 | 0.910 / 0.619 / 0.737 | 0.898 / 0.637 | best F1, recall-leaning |
+| 137k records | 5 | 0.996 / 0.403 / 0.574 | 0.996 / 0.434 | 4,218 of 15,469 exactly |
+| 137k records | 4 | 0.751 / 0.524 / 0.617 | 0.728 / 0.545 | precision collapses; 422 size-guard escalations |
+'Family-only' ignores pairs that are really two fragments of one person (a clustering miss, 783 pairs in the 8.2k run).
+
+Evidence reliability (share of links inside one true household), 8.2k -> 137k records: policy 99% -> 99.9%, same_home 99.7% -> 99.9%, shared_phone 99.9% -> 99.8%; but named_relative 78% -> 17%, father_named 50% -> 6%, shared_email 82% -> 26%, same_surname 88% -> 28%. Name/email-based evidence stops being reliable as the population grows (coincidences), so **threshold 5 is the default** (needs a strong signal plus support) and weak evidence types must never act alone.
+
+Limits: (1) 46% of true family pairs have no evidence at all in the data (e.g. a family member who appears only as a lead/document with their own phone and no address): inherently unreachable, recall ceiling ~55%. (2) The synthetic data has no apartment-complex neighbours with identical society names, so same_area_text (99.6% precise here) will be far less reliable on real data: it is kept at weight 1. (3) Weights are hand-set defaults informed by the measured reliabilities on synthetic data, not learned; to be exposed as business-user settings in Phase 2. (4) The evidence queries took 30 s at 137k records; PIN joins are capped (300 records per PIN) but real data with large PINs needs a locality-aware key.
