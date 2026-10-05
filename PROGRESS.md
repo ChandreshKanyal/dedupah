@@ -79,10 +79,12 @@ Dedupe/
 - [x] 1.2 Evaluation harness (pairwise precision/recall/F1, false merges split same-family vs cross-family, per-hard-case breakdown) — `src/dedupe/evaluation/`; run `python -m dedupe.evaluation baseline|score --data data/synthetic [--pred file.csv]`. Prediction file format: CSV `source,source_record_id,cluster_id`.
 - [x] 1.3 Connector plugin interface + schema-mapping layer (see 7a and section 11). Connectors: CSV/TSV, XLSX, Parquet, generic SQL (SQLAlchemy), Google Sheets. Run: `python -m dedupe.ingest --config configs/synthetic_sources.json`
 - [x] 1.4 Standardisation (names, phones, PAN/Aadhaar validators, addresses/PIN) — see section 12. Run: `python -m dedupe.standardise`; report: `python -m dedupe.standardise.quality`
-- [ ] 1.5 Blocking
-- [ ] 1.6 Scoring with Splink (unsupervised EM start)
-- [ ] 1.7 Clustering (guard against chaining)
-- [ ] 1.8 Final Phase 1 benchmark recorded here (see section 10 for running results)
+- [ ] 1.5 Candidate generation (blocking): UNION of several rules (strong-ID equality; phonetic surname + DOB; first-name + DOB; DOB + PIN prefix + initial...). **Frequency cap**: values shared by too many records (family phones, common names) are not used as keys. Measure pairs completeness (true pairs kept), reduction ratio and pairs generated, per rule.
+- [ ] 1.6 Pair scoring: Fellegi-Sunter via Splink on DuckDB. Comparison levels per field (exact / phonetic / fuzzy / initials / swapped-DOB / missing). **Term-frequency adjustment** so rare agreeing values weigh more and common/shared ones less. Unsupervised EM, seeded by strong-ID pairs. Keep per-field contributions for explainability/audit.
+- [ ] 1.7 Decisions + hard constraints: score -> auto-merge / review / reject zones; **never-merge vetoes** (two different valid PANs or Aadhaar tokens, conflicting gender, large DOB gap, twin guard). This is the seed of the Phase 2 rules engine.
+- [ ] 1.8 Clustering: only auto-merge edges form clusters; connected components + **conflict check that splits clusters** + size alerts (no black-hole entities); review pairs stay unmerged. Add cluster-level metrics (purity, B-cubed).
+- [ ] 1.9 Household/relationship layer: families are NOT merges. A separate graph of 'related' links between resolved people (shared address, phone, nominee/co-applicant, father name, surname) -> household groups. Evaluate against household truth.
+- [ ] 1.10 Final Phase 1 benchmark recorded here (see section 10 for running results)
 
 ### Phase 2 — Rules and golden record
 - [ ] 2.1 Rule schema (JSON): auto-merge / review / never-merge
@@ -115,6 +117,7 @@ Dedupe/
 | 2026-10-05 | Containerised + modular from day one | User requirement: easy to move to another device/instance |
 | 2026-10-05 | Connectors are a plugin interface + canonical schema mapping | Requirement: accept any source; the list is unbounded |
 | 2026-10-05 | Develop in project-local `.venv` while Docker is broken on the dev host; Docker files kept for deployment | Docker engine failing on this machine; must not block progress |
+| 2026-10-05 | Revised 1.5-1.10 after researching industry tools (Splink, dedupe/Zingg, Senzing, Reltio/Informatica, ER literature) | Adopt: union blocking + frequency caps, TF-adjusted Fellegi-Sunter, auto/review/reject zones, veto rules, conflict-aware clustering, families as relationships not merges |
 | 2026-10-05 | Synthetic data only for now | No design partner / real data available |
 
 ## 7. Open questions
