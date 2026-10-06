@@ -233,6 +233,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-06 (session 1, UI redesign)** — Screens redesigned as a flat, neutral workspace (top bar, grouped left navigation, plain tables, tabs, dialogs instead of browser prompts); screenshots checked in a real browser engine for the first time; a test pins the no-decoration rules. Section 43.
 - **2026-10-06 (session 1, sources + mapping)** — Sources and field-mapping screen and endpoints: inspect a source (masked sample, suggested mapping), preview, propose with a deep check; `sources` is a versioned, audited, four-eyes configuration and runs use the ACTIVE version; 14 new tests (273 + 1 skipped). Section 42.
 - **2026-10-06 (session 1, encryption at rest)** — `dedupe.crypto`: Parquet modular encryption (AES-GCM-256) for every file the pipeline writes, encrypted DuckDB spill files, key from the environment, wrong/missing/mixed key refused, convert/rekey tools, production refuses to start without a key; 8 new tests. Section 41.
 - **2026-10-06 (session 1, 2.7)** — Thin web screens served by the API (`/ui`): review queue and comparison with decisions, people, approvals, rules with dry run, runs; found and fixed a hole in the authorization-matrix test (it never saw routes added with include_router); 4 UI tests. Section 40.
@@ -811,3 +812,15 @@ At 139k records (20,000 households), with age: precision 0.9973, recall 0.8556, 
 **Honest limits:** only the connector types that exist (files, Google Sheets, SQL); no S3; the inspect call runs synchronously (a very large Excel file or slow database blocks that request up to the server timeout); the sample is the first rows only, so a column that is empty at the top of a file can look empty; the mapping picker handles plain column choices (combined columns need the JSON box); `config.read` holders (including viewers) can read source settings (file paths, environment variable NAMES, never secrets); the UI is still unverified in a real browser; a Google Sheets source is untested against live Google.
 
 **Next:** erasure and retention design, a KMS client for the data key, S3 connector, business-unit scoping; then the gates: compliance opinion on Aadhaar, independent penetration test, legal review.
+
+## 43. Screen redesign (workspace look)
+
+**Request:** the screens should look like a professional data-platform workspace (the Databricks style), minimalist, easy to find options, none of the usual generated-interface decoration.
+
+**Done (`api/ui/style.css`, `index.html`, `app.js`):**
+- Frame: 48 px top bar (product name, who is signed in, sign out); left navigation grouped by task (Review: queue, people, approvals; Configure: sources, rules and settings; Operate: pipeline runs) showing only what the signed-in roles may use; content area with a page header (title, one-line description, the page's actions top right) and breadcrumbs on the comparison page.
+- Components: flat tables with a grey header row, tabs with an underline for the four configurations, labelled form fields, small square-cornered status tags in plain words (no dots), banners for messages, a modal dialog for every written reason (replaces browser prompts; Escape cancels), dry-run result as a table (before, after, change) instead of raw JSON, queue filter (open / marked not sure / all), automatic refresh of the run list while a run is in progress.
+- One accent colour (blue), 1 px borders, system font, 13 px text; no gradients, shadows, animation, icons, emoji, coloured side stripes, round pills or status dots. Light only (the earlier dark mode was dropped to keep one consistent look). `test_the_screens_stay_flat_and_plain` fails if any of those return.
+- Checked by rendering the real CSS and JavaScript in Microsoft Edge (headless) against canned API answers: login, queue, comparison, approvals, rules, sources, runs and the reason dialog. Not yet checked against the live API in a browser, on a phone width, or with a screen reader.
+
+**Honest limits:** this is the Databricks STYLE (layout and restraint), not a copy: no logo, no icons, no brand colours beyond a similar blue. The sources form is long (one column of fields); a two-column layout would be tidier. No keyboard-navigation or accessibility audit beyond labels, focus outlines and dialog focus.

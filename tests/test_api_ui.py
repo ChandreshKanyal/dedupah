@@ -56,3 +56,13 @@ def test_the_script_only_calls_endpoints_and_permissions_that_exist(app):
 def test_the_script_is_valid_javascript():
     r = subprocess.run([shutil.which("node"), "--check", str(UI / "app.js")], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_the_screens_stay_flat_and_plain():
+    """The look is a deliberate choice: neutral workspace, one accent colour, no decoration. These rules keep later edits from drifting."""
+    css = re.sub(r"/\*.*?\*/", "", (UI / "style.css").read_text(encoding="utf-8"), flags=re.S)          # rules only, not the comments about them
+    text = css + (UI / "index.html").read_text(encoding="utf-8") + (UI / "app.js").read_text(encoding="utf-8")
+    for decoration in ("gradient", "box-shadow", "text-shadow", "@keyframes", "animation", "blur(", "border-left", "border-inline-start", "::before", "::after", "backdrop-filter"):
+        assert decoration not in css, decoration
+    assert not [ch for ch in text if ord(ch) > 0x2000 and ch not in "—–‘’“”…"], "no emoji or symbol characters"
+    assert "border-radius: 99" not in css and "border-radius: 50%" not in css                     # no pills or dots
