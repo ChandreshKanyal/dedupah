@@ -131,7 +131,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
   - [x] 2.5c (done, section 28) Judgments applied inside clustering: must-link edges, cannot-links (steward beats automation; an ID conflict (two different PANs) needs a stronger confirmation), contradiction report
   - [x] 2.5d (done, section 29) Review service: queue, explain (why / why-not from the stored per-field contributions), approve / reject / unsure / split / undo, bulk actions, golden-field overrides; optional four-eyes approval
   - [x] 2.5e (done, section 30) Simulated-reviewer test harness: review-budget curves (F1 vs reviews) for ranking strategies, property tests (idempotent, adding a cannot-link never merges, IDs stable, unmerge never re-merges)
-- [ ] 2.6 API (FastAPI) over the above, Postgres persistence (compose already has Postgres)
+- [ ] 2.6 API (FastAPI) over the above, REVISED after research (section 34): 2.6a authentication + roles (OIDC/JWT, dev tokens), 2.6b read endpoints with role-based masking and access logging, 2.6c write endpoints (judgments, config governance) acting as the authenticated user, 2.6d run jobs (202 + status + idempotency key). Postgres persistence of pipeline outputs MOVED to Phase 4 (with incremental matching)
 - [ ] 2.7 Thin web UI: source connection + mapping (use `dedupe.mapping.suggest`), rule editor with dry-run, review queue, golden record viewer
 
 ### Phase 3 — Documents
@@ -229,6 +229,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-06 (session 1, 2.6 research)** — Researched API authentication, roles, audit and long-running jobs; revised plan recorded in section 34 (no code yet).
 - **2026-10-06 (session 1, 2.3)** — Versioned, audited configuration (`dedupe.governance`): config log, four-eyes approval, rollback, plain-language diffs, truth-free dry run, pipeline uses active versions and records them; blocking rules selectable by name; 11 new tests (164). Section 33.
 - **2026-10-05 (session 1, code-review fixes)** — Fixed 10 review findings on the age work (generator bug, timestamps, stale reference date, rule precedence, old canonical files, label-keyed age weights, blocking namesakes, offset validation, age formats, dead field) plus the twin-guard cut-off; re-measured at 35k and 139k; regenerated benchmark and review simulation; 153 tests. Section 32.
 - **2026-10-05 (session 1, accuracy: blocking and age)** — Diagnosed never-candidate pairs (information-poor records), added age evidence end to end, tuned rules at 35k and 139k, fixed a config-signature break in the pipeline CLI and benchmark (+2 entry-point tests), regenerated benchmark and review simulation; 146 tests. Section 31.
@@ -628,3 +629,19 @@ At 139k records (20,000 households), with age: precision 0.9973, recall 0.8556, 
 **Tests (11, `tests/test_governance.py`):** draft/approve/activate with four eyes, solo mode, refusal of invalid / empty / unchanged proposals, database refuses edits and deletes, tamper detection, decline and rollback and full history, independent versioning per name, plain-language diff, a run records exactly which configuration it used (and fewer blocking rules means fewer candidates), dry run equals the real run, dry run without a previous run, command-line workflow.
 
 **Honest limits:** the `actor` is trusted text until the API has authentication (so "four eyes" is a workflow control, not security, until then); Postgres path (LOCK TABLE, triggers) not yet run against a real Postgres; household evidence weights, source mappings and the SQL of blocking rules themselves are still code or files, only the on/off choice of blocking rules is versioned; no approval roles (anyone other than the proposer may approve); no scheduled or staged rollout.
+
+## 34. Research before the API (roadmap 2.6) and the adjusted plan
+
+**Sources consulted (web search, summaries only, no vendor internals):** FastAPI security practice write-ups (OAuth2 bearer tokens, OIDC with JWKS validation, role/scope checks as route dependencies), MDM stewardship and governance material (least privilege, segregation of duties between creators and approvers, audit log for every change, masking by policy, APIs that enforce identity, scope, rate limits and data minimisation), and REST patterns for long-running jobs (202 Accepted + status resource, idempotency key, separate worker rather than in-process background tasks for heavy work).
+
+**What this means for us, compared with the original plan:**
+1. **Identity comes from the customer's identity provider, we do not build a user database or password login.** Banks and insurers use SSO (OIDC/SAML through their IdP or a broker). The API validates the bearer token (signature via the provider's key set, issuer, audience, expiry, allowed algorithms) and reads the user's name and roles from claims. A local development token mode (secret from an environment variable, refused when `DEDUPE_ENV=production`, same pattern as the Aadhaar token key) keeps tests and demos possible. This also turns the trusted-text `actor` of the judgment log and config log into a verified identity.
+2. **Roles are explicit and checked on every route:** viewer (read masked), steward (decide pairs, split, override fields), approver (second pair of eyes on pending decisions and config changes), rule_admin (propose rule/setting changes, run dry runs), auditor (read logs and unmasked evidence, cannot change anything), platform_admin (run pipelines, manage sources). Segregation of duties: nobody approves their own change (already enforced in both logs; the API makes the identity real).
+3. **Masking becomes access control:** today masking is only a convenience. Unmasked PAN / phone / email will need a role and every unmasked read is written to an access log (who looked at whom), which regulators ask for.
+4. **Runs are jobs:** `POST /runs` returns 202 with a run id, `GET /runs/{id}` reports status and stage progress, an idempotency key prevents double submission, one run at a time per workspace. The worker is a separate process (subprocess now, a queue later) because a pipeline would block the web server.
+5. **Postgres persistence of pipeline outputs is moved to Phase 4.** The API can serve from the parquet outputs already (queue 0.03 s, explain 0.3 s at 139k records); the judgment and config logs are already in the database. Persisting outputs matters for incremental matching and many concurrent users, not for a first API. (Honest: this reorders the original roadmap.)
+6. **Small but needed:** request validation (pydantic), pagination, rate limiting, security headers, no PII in logs or error messages, consistent error format, OpenAPI docs.
+
+**Not covered by this research:** actual customers' IdP setups (SAML-only shops need a broker), penetration testing, legal review, performance under many users.
+
+**Proposed order:** 2.6a auth + roles + access log (with tests using dev tokens and a fake JWKS), 2.6b read endpoints, 2.6c write endpoints, 2.6d run jobs.
