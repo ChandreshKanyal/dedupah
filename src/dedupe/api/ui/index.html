@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dedupe</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<header>
+  <h1>Dedupe</h1>
+  <nav id="tabs" hidden></nav>
+  <span id="who"></span>
+  <button id="signout" hidden>Sign out</button>
+</header>
+<main>
+  <section id="login">
+    <p>Paste your access token. It is kept in this page's memory only and is gone when you close or reload the tab.</p>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" aria-label="Access token">
+    <button id="signin">Sign in</button>
+  </section>
+  <p id="notice" role="status"></p>
+  <div id="view"></div>
+</main>
+<script src="/ui/app.js"></script>
+</body>
+</html>

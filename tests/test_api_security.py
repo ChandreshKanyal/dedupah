@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import time
 
 import jwt
@@ -166,8 +167,17 @@ def bearer(s, role=None, sub=None, roles=None, ttl=600):
 
 
 def all_routes(app):
-    from fastapi.routing import APIRoute
-    return [r for r in app.routes if isinstance(r, APIRoute) and r.path not in ("/openapi.json", "/docs", "/redoc")]
+    from dedupe.api.guards import api_routes
+    return [r for r in api_routes(app) if r.path not in ("/openapi.json", "/docs", "/redoc")]
+
+
+SAMPLE = {"person_id": "P000000001", "person_l": "P000000001", "person_r": "P000000002", "name": "decision", "version": "1", "judgment_id": "1",
+          "action_id": "abcdef012345", "job_id": "J000000000000"}
+
+
+def concrete(path):
+    """A route template with a valid example in every path parameter, so the request reaches the guard instead of a 404."""
+    return re.sub(r"\{(\w+)\}", lambda m: SAMPLE[m.group(1)], path)
 
 
 def access_of(route):
@@ -178,7 +188,7 @@ def access_of(route):
 def test_every_route_declares_its_access(tmp_path):
     app, _ = dev_app(tmp_path)
     routes = all_routes(app)
-    assert len(routes) >= 5
+    assert len(routes) >= 35, len(routes)                                     # includes the routers (reads, writes, runs, screens)
     for r in routes:
         assert len(access_of(r)) == 1, f"{r.path} must declare public(), authenticated() or require(...) exactly once"
 
@@ -186,11 +196,11 @@ def test_every_route_declares_its_access(tmp_path):
 def test_authorization_matrix_every_route_for_every_role(tmp_path):
     """The generic check: whoever lacks the permission gets 403, an anonymous caller gets 401, a permitted role is never refused.
     Later routes are covered automatically."""
-    app, s = dev_app(tmp_path)
+    app, s = dev_app(tmp_path, ip_rate_limit_per_min=10**6, rate_limit_per_min=10**6, auth_fail_limit_per_min=10**6)         # thousands of calls from one address
     c = TestClient(app)
     for r in all_routes(app):
         (kind, perm), = access_of(r)
-        path = r.path.replace("{", "").replace("}", "")                  # path parameters become literal text
+        path = concrete(r.path)
         for method in sorted(r.methods - {"HEAD", "OPTIONS"}):
             def call(headers, method=method, path=path):
                 return c.request(method, path, headers=headers, json={} if method in ("POST", "PUT", "PATCH") else None)

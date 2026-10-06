@@ -73,3 +73,14 @@ def require(permission: str):
         return principal
     guard.access = ("permission", permission)
     return guard
+
+
+def api_routes(app):
+    """Every route of the application, including the ones added with `include_router` (newer FastAPI wraps those, so `app.routes` alone misses them).
+    Each item has `.path`, `.methods` and `.dependant`. Used by the tests that enforce the access rules."""
+    from fastapi.routing import APIRoute
+    for r in app.routes:
+        if isinstance(r, APIRoute):
+            yield r
+        elif hasattr(r, "effective_route_contexts"):
+            yield from r.effective_route_contexts()
