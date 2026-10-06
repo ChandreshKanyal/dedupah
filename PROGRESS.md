@@ -131,7 +131,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
   - [x] 2.5c (done, section 28) Judgments applied inside clustering: must-link edges, cannot-links (steward beats automation; an ID conflict (two different PANs) needs a stronger confirmation), contradiction report
   - [x] 2.5d (done, section 29) Review service: queue, explain (why / why-not from the stored per-field contributions), approve / reject / unsure / split / undo, bulk actions, golden-field overrides; optional four-eyes approval
   - [x] 2.5e (done, section 30) Simulated-reviewer test harness: review-budget curves (F1 vs reviews) for ranking strategies, property tests (idempotent, adding a cannot-link never merges, IDs stable, unmerge never re-merges)
-- [ ] 2.6 API (FastAPI) over the above, REVISED after research (section 34): 2.6a authentication + roles (OIDC/JWT, dev tokens), 2.6b read endpoints with role-based masking and access logging, 2.6c write endpoints (judgments, config governance) acting as the authenticated user, 2.6d run jobs (202 + status + idempotency key). Postgres persistence of pipeline outputs MOVED to Phase 4 (with incremental matching)
+- [ ] 2.6 API (FastAPI) over the above, REVISED after research (sections 34-35): 2.6a security baseline + authentication + roles (OIDC/JWT, dev tokens, authorization matrix tests, access log, request limits, CI security scanning, threat model), 2.6b read endpoints with role-based masking and access logging, 2.6c write endpoints (judgments, config governance) acting as the authenticated user, 2.6d run jobs (202 + status + idempotency key). Postgres persistence of pipeline outputs MOVED to Phase 4 (with incremental matching)
 - [ ] 2.7 Thin web UI: source connection + mapping (use `dedupe.mapping.suggest`), rule editor with dry-run, review queue, golden record viewer
 
 ### Phase 3 — Documents
@@ -229,6 +229,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-06 (session 1, security research)** — Researched API security standards, Indian regulator requirements (RBI, CERT-In, IRDAI, DPDP, UIDAI) and secure-development practice; section 35 (findings, gaps in our design, gates before real data). No code yet.
 - **2026-10-06 (session 1, 2.6 research)** — Researched API authentication, roles, audit and long-running jobs; revised plan recorded in section 34 (no code yet).
 - **2026-10-06 (session 1, 2.3)** — Versioned, audited configuration (`dedupe.governance`): config log, four-eyes approval, rollback, plain-language diffs, truth-free dry run, pipeline uses active versions and records them; blocking rules selectable by name; 11 new tests (164). Section 33.
 - **2026-10-05 (session 1, code-review fixes)** — Fixed 10 review findings on the age work (generator bug, timestamps, stale reference date, rule precedence, old canonical files, label-keyed age weights, blocking namesakes, offset validation, age formats, dead field) plus the twin-guard cut-off; re-measured at 35k and 139k; regenerated benchmark and review simulation; 153 tests. Section 32.
@@ -645,3 +646,45 @@ At 139k records (20,000 households), with age: precision 0.9973, recall 0.8556, 
 **Not covered by this research:** actual customers' IdP setups (SAML-only shops need a broker), penetration testing, legal review, performance under many users.
 
 **Proposed order:** 2.6a auth + roles + access log (with tests using dev tokens and a fake JWKS), 2.6b read endpoints, 2.6c write endpoints, 2.6d run jobs.
+
+## 35. Security research: standards, Indian requirements, what we must build, what we can never claim
+
+**Method and caveat:** web searches (OWASP API Security Top 10 2023, OWASP ASVS 5.0, RBI / CERT-In / IRDAI / DPDP / UIDAI summaries, secure-SDLC checklists). Most Indian-regulation facts below come from SECONDARY sources (law-firm and vendor write-ups, some dated 2026) and MUST be checked against the primary texts (RBI directions, CERT-In directions, IRDAI guidelines, DPDP Rules, UIDAI circulars) by the customer's compliance team or counsel before anyone relies on them. Nothing here is legal advice.
+
+**Industry standards to design and test against**
+- OWASP API Security Top 10 (2023): broken object-level authorization (BOLA), broken authentication, broken object-property-level authorization (field exposure / mass assignment), unrestricted resource consumption, broken function-level authorization, server-side request forgery (SSRF), security misconfiguration, unrestricted access to sensitive business flows (automation), improper asset management, unsafe consumption of other APIs.
+- OWASP ASVS 5.0 (May 2025): target Level 2 for the whole application (the standard level for business apps with sensitive data) and Level 3 for the parts that handle identifiers (vault-like areas), verified by an independent tester.
+- Secure-SDLC practice: static analysis and dependency scanning on every change, secret scanning (pre-commit + CI + history), SBOM (CycloneDX/SPDX) per build, container image scanning, pinned dependencies, rebuild on critical CVEs.
+
+**Indian requirements reported by secondary sources (verify!)**
+| Source | Requirement relevant to us |
+|---|---|
+| RBI cybersecurity / technology-risk directions for commercial banks (reported as issued 31 Jul 2026, replacing earlier circulars) | VA every 6 months, annual penetration test of critical internet-facing systems, half-yearly DR drills; central log aggregation with 180 days online and longer archive, SIEM and 24x7 SOC; encryption in transit (TLS 1.2+) and at rest (AES-256), keys in an HSM; incident reporting within 6 hours; data-localisation expectations |
+| CERT-In Directions 2022 | report cyber incidents within 6 hours; keep ICT logs 180 days within India; synchronise clocks (NTP) |
+| IRDAI information and cyber security guidelines (reported: 2023, replaced April 2026) | encrypt sensitive personal data in transit and at rest (AES-256 or equivalent, TLS 1.2+), stronger responsibility for third-party vendors |
+| DPDP Act 2023 + Rules 2025 | "reasonable security safeguards" (encryption, masking, obfuscation, access control), breach intimation to affected people and a report to the Data Protection Board within 72 hours, logs and processing records kept at least a year; heavy penalties |
+| UIDAI Aadhaar Data Vault rules | each Aadhaar number must be represented by a random REFERENCE KEY mapped only inside an Aadhaar Data Vault (ADV); HASHING IS NOT PERMITTED as the reference-key method; vault contents encrypted with keys in an HSM; ADV in an isolated network zone with access logging and alerts; full Aadhaar numbers must not be stored outside the vault |
+
+**Finding that contradicts a current design choice (needs a decision):** we replace each Aadhaar number with a deterministic keyed token (HMAC) so that two records with the same Aadhaar can be matched. UIDAI's published position, as reported, rejects hashing as a way to make reference keys and expects a vault with random keys. A keyed HMAC is not a plain hash, but it is deterministic and we cannot claim UIDAI compliance. Options: (1) customers feed us THEIR reference keys (from their own ADV) instead of Aadhaar numbers, which still lets us match within one customer; (2) we run inside the customer's vault-governed zone and treat the token as a vault-managed value; (3) drop Aadhaar as a matching key. Recommendation: support (1) now (a canonical field for reference keys, same strong-ID weight), document (2), and get a compliance opinion before real Aadhaar numbers are processed.
+
+**What we must build ourselves (application level, in 2.6a unless noted)**
+1. Authentication: verify tokens from the customer's identity provider (signature via key set, issuer, audience, expiry, allowed algorithms only, no "none"), short-lived tokens, dev-token mode refused in production.
+2. Authorization on every route with a role matrix and an automated test that tries every route as every role (function-level), plus object-level checks (a user may only act on records inside their scope: workspace now, business-unit scope later) and explicit field allow-lists for requests and responses (no mass assignment, no accidental PII in responses).
+3. Resource limits: request size, page size caps, bulk-action caps, rate limiting per user and per route, timeouts, one pipeline run at a time, idempotency keys.
+4. Input validation with strict pydantic models (reject unknown fields); consistent errors that never echo PII or internals; no stack traces to clients.
+5. Access log of PII views (who viewed which person, which fields unmasked) and security event log (login failures, permission denials, config changes, exports), structured JSON, no PII in log text, tamper-evident (same hash-chain pattern), forwardable to the customer's SIEM, clock-synchronised timestamps.
+6. Security headers, strict CORS (allow-list), TLS required outside development, cookies not used for auth.
+7. Secrets only from environment or a secret manager; startup refuses insecure defaults in production (dev token key, dev signing key, sqlite).
+8. Connector hardening (existing attack surface, to review in 2.6a): file connector path traversal, SQL connector (user-supplied queries or URLs, least-privilege read-only accounts, no multi-statement), Google Sheets / S3 / URL connectors (SSRF: block private and metadata addresses, allow-list hosts), CSV/Excel formula injection when exporting.
+9. Delete / retention: DPDP erasure and retention rules need a defined way to erase a person from staging, outputs and logs (the append-only judgment log conflicts with erasure: design needed, e.g. keep keys not names, crypto-shredding). Not built.
+10. Encryption at rest for staging and output files (envelope encryption: data key per file, key-encryption key in a KMS/HSM; AES-256-GCM) and database-level encryption (Phase 4 item, PULLED FORWARD as a gate, see below).
+
+**CI / build-time controls to add (2.6a):** bandit and ruff security rules, `pip-audit` on pinned dependencies, secret scanning (gitleaks pre-commit + CI), CycloneDX SBOM artifact, container image scan (Trivy) once Docker works, dependency update bot, signed images later. Authorization-matrix, token-forgery (expired, wrong audience, wrong algorithm, tampered, unsigned) and BOLA tests run in the normal test suite.
+
+**Deployment-side controls (customer / operations, documented not built):** TLS termination with 1.2+, WAF or API gateway in front, network segmentation and a restricted zone for identifier data, database and disk encryption, HSM/KMS, SIEM and SOC, log retention and India residency, backups and DR drills, vulnerability assessments and an annual independent penetration test (by a CERT-In-empanelled auditor where the regulator requires), incident-response runbook with the 6-hour (CERT-In, RBI) and 72-hour (DPDP) clocks, vendor-risk and outsourcing approvals.
+
+**What can NEVER be claimed from engineering alone:** "most secure", certifications (ISO 27001, SOC 2, CERT-In empanelment), or "penetration-proof". Penetration testing must be done by an independent party on a deployed system; certifications need organisational processes and audits. What we can do is design to the standards above, test the controls automatically, publish a threat model, and fix what independent testing finds.
+
+**Gates before ANY real customer data touches the system:** (1) encryption at rest for staging/output files and database, (2) role-based access and PII access logging in place, (3) Aadhaar approach decided and reviewed (option 1 above), (4) independent penetration test and fixes, (5) legal/compliance review (DPDP, RBI, IRDAI, UIDAI), (6) retention/erasure design, (7) incident-response and log-retention procedures agreed with the customer.
+
+**Plan adjustments:** 2.6a grows from "login and roles" to "security baseline + login + roles" (items 1-8 above, CI scanning, authorization-matrix and token tests, `docs/SECURITY.md` with the threat model and the control-to-standard mapping). Encryption at rest moves from Phase 4 to just before the first real-data pilot (gate 1) and is scheduled right after the API. Reference-key support for Aadhaar is added to the ingestion schema in the same step as the connector review.
