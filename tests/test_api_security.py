@@ -19,11 +19,9 @@ from dedupe.api import ApiSettings, SecurityLog, SettingsError, TokenVerifier, c
 from dedupe.api.auth import AuthError
 from dedupe.api.devtoken import issue
 from dedupe.api.guards import public
-from dedupe.api.jobs import RunJobs
 from dedupe.api.roles import PERMISSIONS, ROLES, roles_allowed
 from dedupe.api.seclog import scrub
-from dedupe.governance import ConfigStore
-from dedupe.store import JudgmentStore
+from dedupe.workspace import Workspace
 
 SECRET = "x" * 40
 ISS, AUD = "https://idp.example.com", "dedupe-api"
@@ -78,10 +76,12 @@ def test_production_refuses_insecure_settings():
     for needle in ("dev tokens are not allowed", "ALLOWED_HOSTS", "server database", "https"):
         assert needle in msg
     ok = ApiSettings(env="production", auth_mode="oidc", oidc_issuer=ISS, oidc_audience=AUD, oidc_jwks_url="https://idp.example.com/jwks",
-                     allowed_hosts=("dedupe.bank.example",), require_https=True, database_url="postgresql://u:p@db/dedupe")
+                     allowed_hosts=("dedupe.bank.example",), require_https=True, database_url="postgresql://u:p@db/dedupe",
+                     project_database_url="postgresql://u:p@db/dedupe_{project}")
     ok.validate()
     for bad, needle in ((dict(oidc_jwks_url="http://idp.example.com/jwks"), "https"), (dict(oidc_algorithms=("HS256",)), "asymmetric"),
-                        (dict(oidc_algorithms=("none",)), "asymmetric"), (dict(cors_origins=("*",)), "CORS")):
+                        (dict(oidc_algorithms=("none",)), "asymmetric"), (dict(cors_origins=("*",)), "CORS"),
+                        (dict(project_database_url=None), "PROJECT_DATABASE_URL"), (dict(project_database_url="postgresql://u:p@db/one"), "PROJECT_DATABASE_URL")):
         with pytest.raises(SettingsError, match=needle):
             ApiSettings(**{**ok.__dict__, **bad}).validate()
     with pytest.raises(SettingsError, match="32 characters"):
@@ -91,6 +91,7 @@ def test_production_refuses_insecure_settings():
 def test_settings_come_from_the_environment_and_production_defaults_to_oidc(monkeypatch):
     for k, v in {"DEDUPE_ENV": "production", "DEDUPE_OIDC_ISSUER": ISS, "DEDUPE_OIDC_AUDIENCE": AUD, "DEDUPE_OIDC_JWKS_URL": "https://idp.example.com/jwks",
                  "DEDUPE_ALLOWED_HOSTS": "a.example.com,b.example.com", "DEDUPE_DATABASE_URL": "postgresql://u:p@db/x",
+                 "DEDUPE_PROJECT_DATABASE_URL": "postgresql://u:p@db/x_{project}",
                  "DEDUPE_OIDC_ROLE_MAP": '{"Dedupe-Stewards": "steward"}'}.items():
         monkeypatch.setenv(k, v)
     s = ApiSettings.from_env()
@@ -181,7 +182,7 @@ def all_routes(app):
 
 
 SAMPLE = {"person_id": "P000000001", "person_l": "P000000001", "person_r": "P000000002", "name": "decision", "version": "1", "judgment_id": "1",
-          "action_id": "abcdef012345", "job_id": "J000000000000"}
+          "action_id": "abcdef012345", "project_id": "demo", "run_id": "R000000000000", "connection_id": "crm"}
 
 
 def concrete(path):
@@ -206,6 +207,7 @@ def test_authorization_matrix_every_route_for_every_role(tmp_path):
     """The generic check: whoever lacks the permission gets 403, an anonymous caller gets 401, a permitted role is never refused.
     Later routes are covered automatically."""
     app, s = dev_app(tmp_path, ip_rate_limit_per_min=10**6, rate_limit_per_min=10**6, auth_fail_limit_per_min=10**6)         # thousands of calls from one address
+    app.state.services.workspace.create("demo", "Demo", "", "setup")             # so routes open to any signed-in user find their project
     c = TestClient(app)
     for r in all_routes(app):
         (kind, perm), = access_of(r)
@@ -264,11 +266,11 @@ def test_security_headers_request_ids_and_no_server_banner(tmp_path):
 
 def prod_app(tmp_path, **kw):
     s = ApiSettings(env="production", auth_mode="oidc", oidc_issuer=ISS, oidc_audience=AUD, oidc_jwks_url="https://idp.example.com/jwks",
-                    allowed_hosts=("dedupe.bank.example",), require_https=True, trust_proxy=True, database_url="postgresql://u:p@db/dedupe", work=tmp_path, **kw)
+                    allowed_hosts=("dedupe.bank.example",), require_https=True, trust_proxy=True, database_url="postgresql://u:p@db/dedupe",
+                    project_database_url="postgresql://u:p@db/dedupe_{project}", work=tmp_path, **kw)
     local = f"sqlite:///{tmp_path / 'sec.db'}"            # the settings name a server database; the test uses local ones
     return create_app(s, verifier=TokenVerifier(s, key_resolver=resolver), seclog=SecurityLog.open(local),
-                      judgments=JudgmentStore.open(local), configs=ConfigStore.open(local),
-                      jobs=RunJobs.open(local, tmp_path, None)), s
+                      workspace=Workspace(tmp_path, local)), s
 
 
 def test_production_app_requires_https_the_right_host_and_hides_its_docs(tmp_path):

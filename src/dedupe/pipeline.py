@@ -63,6 +63,8 @@ class PipelineConfig:
     stages: list = field(default_factory=list)
     config_store_url: str | None = None  # versioned config store (SQLAlchemy URL): its ACTIVE versions override the config files and settings
     blocking_rules: list | None = None  # names of the blocking rules to use (None = the defaults)
+    registry_dir: Path | None = None  # person-ID registry kept across runs (None = <work>/identity)
+    model_path: Path | None = None  # where the fitted model is saved (None = <work>/../models/fs_model.json)
 
 
 class _Meter:
@@ -125,9 +127,12 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     work = cfg.work
     crypto.require_in_production(os.environ.get("DEDUPE_ENV", "dev").strip().lower())
     work.mkdir(parents=True, exist_ok=True)
-    crypto.bind_work(work)       # refuses a missing, wrong or mixed key before anything is written
+    registry = Path(cfg.registry_dir) if cfg.registry_dir else work / "identity"
+    crypto.bind_work(work, extra=(registry,))       # refuses a missing, wrong or mixed key before anything is written
     p = {k: work / v for k, v in {"canonical": "canonical.parquet", "std": "standardised.parquet", "cand": "candidates.parquet",
                                   "scored": "scored_pairs.parquet", "decisions": "decisions.parquet", "model": "../models/fs_model.json"}.items()}
+    if cfg.model_path:
+        p["model"] = Path(cfg.model_path)
     clusters_dir, hh_dir = work / "clusters", work / "households"
     summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources) if cfg.sources else None,
                      "encryption_at_rest": {"enabled": crypto.enabled(), "key_id": crypto.active().key_id if crypto.enabled() else None}}
@@ -194,7 +199,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
             con.register("judged_src", pa.table({"l_rid": pa.array([a for a, _ in cons.judged_pairs], pa.int64()),
                                                  "r_rid": pa.array([b for _, b in cons.judged_pairs], pa.int64())}))
             con.execute("CREATE OR REPLACE TABLE judged_pairs AS SELECT * FROM judged_src")
-        summary["identity"] = write_outputs(con, res, clusters_dir, work / "identity", p["scored"])
+        summary["identity"] = write_outputs(con, res, clusters_dir, registry, p["scored"])
         summary["clustering"] = res.stats
         del nodes, edges, cannot, ids
         _drop(con, "cluster_flags")
@@ -266,6 +271,8 @@ def main() -> None:
     ap.add_argument("--config-store-url", default=None, help="versioned config store (SQLAlchemy URL); its active versions override the config files")
     ap.add_argument("--database-from-env", action="store_true",
                     help="use DEDUPE_DATABASE_URL for BOTH the steward decisions and the config store (keeps credentials off the command line)")
+    ap.add_argument("--registry-dir", type=Path, default=None, help="person-ID registry kept across runs (default: <work>/identity)")
+    ap.add_argument("--model-path", type=Path, default=None, help="where to save the fitted model")
     ap.add_argument("--truth", type=Path, default=None, help="ground-truth folder (dev/synthetic only)")
     ap.add_argument("--cap", type=int, default=50)
     ap.add_argument("--household-threshold", type=float, default=5.0)
@@ -278,7 +285,7 @@ def main() -> None:
         a.judgments_url = a.config_store_url = url
     s = run_pipeline(PipelineConfig(a.sources, a.work, decision_config=a.decision_config, survivorship_config=a.survivorship_config,
                                     judgments_url=a.judgments_url, config_store_url=a.config_store_url, truth=a.truth, blocking_cap=a.cap, household_threshold=a.household_threshold,
-                                    redact_aadhaar=not a.keep_raw_aadhaar))
+                                    redact_aadhaar=not a.keep_raw_aadhaar, registry_dir=a.registry_dir, model_path=a.model_path))
     print(_fmt(s))
 
 

@@ -10,18 +10,19 @@ import hashlib
 import json
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from dedupe.governance.impact import dry_run
 from dedupe.governance.store import MODELS, ConfigError
-from dedupe.review.service import ReviewError
+from dedupe.review.service import ReviewError, ReviewService
 from dedupe.store.judgments import JudgmentError
 from dedupe.survivorship.config import GOLDEN_FIELDS
 
 from .auth import Principal
 from .guards import _context, _services, require
-from .routes_read import PERSON_ID, ConfigName, _review
+from .routes_read import PERSON_ID, PID, RID, ConfigName
+from .scope import RUN_ID, project_scope, run_scope
 
 router = APIRouter()
 WRITE = Depends(require("judgment.write"))
@@ -119,6 +120,11 @@ class PendingRow(BaseModel):
 
 
 # ---- helpers ---------------------------------------------------------------------------------------------------------
+RUN = "/projects/{project_id}/runs/{run_id}"
+PROJ = "/projects/{project_id}"
+_DECISIONS = ("same_person", "different_person", "unsure", "split", "field_override")
+
+
 def _action_id(p: Principal, route: str, key: str | None, body: BaseModel, extra: str = "") -> str | None:
     """Same caller + same key + same body = same action id (idempotent); no key = a fresh random id from the service."""
     if key is None:
@@ -131,12 +137,12 @@ def _key(value: str | None = Header(None, alias="Idempotency-Key", pattern=KEY_P
     return value
 
 
-def _seen(sv, action_id: str | None) -> dict | None:
+def _seen(store, action_id: str | None) -> dict | None:
     """The judgments an earlier request with this action id created, if any."""
     if action_id is None:
         return None
     ids, pending = [], False
-    for j in sv.review.store.history(("same_person", "different_person", "unsure", "split", "field_override")):
+    for j in store.history(_DECISIONS):
         if j.evidence.get("action_id") == action_id:
             ids.append(j.id)
             pending = pending or j.status == "pending_approval"
@@ -162,186 +168,187 @@ def _invalid_config(name: str, content: dict) -> HTTPException:
     return HTTPException(422, "The configuration is not valid.")
 
 
-def _configs(request: Request):
-    sv = _services(request)
-    if sv.configs is None:
-        raise HTTPException(404, "Not found.")
-    return sv.configs
-
-
-def _do(request: Request, p: Principal, route: str, key: str | None, body: BaseModel, ref: str, kind: str, run) -> dict:
-    sv = _review(request)
-    action_id = _action_id(p, route, key, body)
-    if (again := _seen(sv, action_id)) is not None:
+def _do(request: Request, p: Principal, project_id: str, run_id: str, route: str, key: str | None, body: BaseModel, ref: str, kind: str, run) -> dict:
+    rs = run_scope(request, project_id, run_id)
+    action_id = _action_id(p, f"{project_id}:{route}", key, body)
+    if (again := _seen(rs.judgments, action_id)) is not None:
         return again
     try:
-        out = run(sv.review, action_id)
+        out = run(rs.review, action_id)
     except (ReviewError, JudgmentError) as e:
         raise _conflict(e) from None
-    _log(request, p, "judgment_change", kind, ref, judgments=len(out["judgment_ids"]), pending=out["pending_approval"])
+    _log(request, p, "judgment_change", kind, f"{project_id}/{ref}", judgments=len(out["judgment_ids"]), pending=out["pending_approval"])
     return out
 
 
-# ---- review decisions --------------------------------------------------------------------------------------------------
-@router.post("/decisions/approve", response_model=ActionOut)
-def approve(request: Request, body: ApproveIn, key: str | None = Depends(_key), p: Principal = WRITE):
-    return _do(request, p, "approve", key, body, f"{body.person_l},{body.person_r}", "approve_match",
+# ---- review decisions (made while looking at a run's results; they belong to the project and apply to its later runs) --------------------
+@router.post(RUN + "/decisions/approve", response_model=ActionOut)
+def approve(request: Request, body: ApproveIn, project_id: str = PID, run_id: str = RID, key: str | None = Depends(_key), p: Principal = WRITE):
+    return _do(request, p, project_id, run_id, "approve", key, body, f"{body.person_l},{body.person_r}", "approve_match",
                lambda r, a: r.approve_match(body.person_l, body.person_r, p.actor, body.reason, body.confirm_id_conflict, a))
 
 
-@router.post("/decisions/reject", response_model=ActionOut)
-def reject(request: Request, body: DecideIn, key: str | None = Depends(_key), p: Principal = WRITE):
-    return _do(request, p, "reject", key, body, f"{body.person_l},{body.person_r}", "reject_match",
+@router.post(RUN + "/decisions/reject", response_model=ActionOut)
+def reject(request: Request, body: DecideIn, project_id: str = PID, run_id: str = RID, key: str | None = Depends(_key), p: Principal = WRITE):
+    return _do(request, p, project_id, run_id, "reject", key, body, f"{body.person_l},{body.person_r}", "reject_match",
                lambda r, a: r.reject_match(body.person_l, body.person_r, p.actor, body.reason, a))
 
 
-@router.post("/decisions/unsure", response_model=ActionOut)
-def unsure(request: Request, body: DecideIn, key: str | None = Depends(_key), p: Principal = WRITE):
-    return _do(request, p, "unsure", key, body, f"{body.person_l},{body.person_r}", "mark_unsure",
+@router.post(RUN + "/decisions/unsure", response_model=ActionOut)
+def unsure(request: Request, body: DecideIn, project_id: str = PID, run_id: str = RID, key: str | None = Depends(_key), p: Principal = WRITE):
+    return _do(request, p, project_id, run_id, "unsure", key, body, f"{body.person_l},{body.person_r}", "mark_unsure",
                lambda r, a: r.mark_unsure(body.person_l, body.person_r, p.actor, body.reason, a))
 
 
-@router.post("/people/{person_id}/split", response_model=ActionOut)
-def split(request: Request, body: SplitIn, person_id: str = Path(pattern=PERSON_ID), key: str | None = Depends(_key), p: Principal = WRITE):
+@router.post(RUN + "/people/{person_id}/split", response_model=ActionOut)
+def split(request: Request, body: SplitIn, project_id: str = PID, run_id: str = RID, person_id: str = Path(pattern=PERSON_ID),
+          key: str | None = Depends(_key), p: Principal = WRITE):
     parts = [[(k.source_id, k.source_record_id) for k in part] for part in body.parts]
-    return _do(request, p, f"split:{person_id}", key, body, person_id, "split_person",
+    return _do(request, p, project_id, run_id, f"split:{person_id}", key, body, person_id, "split_person",
                lambda r, a: r.split_person(person_id, parts, p.actor, body.reason, a))
 
 
-@router.post("/people/{person_id}/override", response_model=ActionOut)
-def override(request: Request, body: OverrideIn, person_id: str = Path(pattern=PERSON_ID), key: str | None = Depends(_key), p: Principal = WRITE):
+@router.post(RUN + "/people/{person_id}/override", response_model=ActionOut)
+def override(request: Request, body: OverrideIn, project_id: str = PID, run_id: str = RID, person_id: str = Path(pattern=PERSON_ID),
+             key: str | None = Depends(_key), p: Principal = WRITE):
     # the value is personal data: it goes to the judgment log (the audited record of the decision) but never to the security log
-    return _do(request, p, f"override:{person_id}", key, body, person_id, "override_field",
+    return _do(request, p, project_id, run_id, f"override:{person_id}", key, body, person_id, "override_field",
                lambda r, a: r.override_field(person_id, body.field, body.value, p.actor, body.reason, a))
 
 
-@router.post("/decisions/{action_id}/undo")
-def undo(request: Request, body: UndoIn, action_id: str = Path(pattern=r"^[0-9a-f]{12}$"), p: Principal = WRITE):
-    sv = _review(request)
-    try:
-        out = sv.review.undo_action(action_id, p.actor, body.reason)
-    except (ReviewError, JudgmentError) as e:
-        raise _conflict(e) from None
-    _log(request, p, "judgment_change", "undo", action_id, judgments=len(out["revoked"]))
-    return out
-
-
-@router.post("/decisions/bulk", response_model=BulkOut)
-def bulk(request: Request, body: BulkIn, key: str | None = Depends(_key), p: Principal = WRITE):
+@router.post(RUN + "/decisions/bulk", response_model=BulkOut)
+def bulk(request: Request, body: BulkIn, project_id: str = PID, run_id: str = RID, key: str | None = Depends(_key), p: Principal = WRITE):
     """Up to 100 pairs, each decided on its own: one failure does not undo the others, and each result says why it failed."""
-    sv = _review(request)
+    rs = run_scope(request, project_id, run_id)
     done, failed = [], []
     for item in body.items:
-        action_id = _action_id(p, "bulk:" + body.decision, key, body, f"{item.person_l},{item.person_r}")
+        action_id = _action_id(p, f"{project_id}:bulk:" + body.decision, key, body, f"{item.person_l},{item.person_r}")
         pair = f"{item.person_l},{item.person_r}"
-        if (again := _seen(sv, action_id)) is not None:
+        if (again := _seen(rs.judgments, action_id)) is not None:
             done.append({"pair": pair, **again})
             continue
         try:
             if body.decision == "approve":
-                out = sv.review.approve_match(item.person_l, item.person_r, p.actor, body.reason, False, action_id)
+                out = rs.review.approve_match(item.person_l, item.person_r, p.actor, body.reason, False, action_id)
             else:
-                out = sv.review.reject_match(item.person_l, item.person_r, p.actor, body.reason, action_id)
+                out = rs.review.reject_match(item.person_l, item.person_r, p.actor, body.reason, action_id)
             done.append({"pair": pair, **out})
         except (ReviewError, JudgmentError) as e:
             failed.append({"pair": pair, "error": str(e)[:300]})
-    _log(request, p, "judgment_change", "bulk_" + body.decision, "bulk", done=len(done), failed=len(failed))
+    _log(request, p, "judgment_change", "bulk_" + body.decision, f"{project_id}/bulk", done=len(done), failed=len(failed))
     return {"done": done, "failed": failed}
 
 
-# ---- four eyes on decisions --------------------------------------------------------------------------------------------
-@router.get("/approvals", response_model=list[PendingRow])
-def pending(request: Request, p: Principal = SEE_PENDING):
-    return _review(request).review.pending()
-
-
-@router.post("/approvals/{judgment_id}/approve")
-def approve_pending(request: Request, body: ReasonIn, judgment_id: int = Path(ge=1, le=10**9), p: Principal = APPROVE):
+@router.post(PROJ + "/decisions/{action_id}/undo")
+def undo(request: Request, body: UndoIn, project_id: str = PID, action_id: str = Path(pattern=r"^[0-9a-f]{12}$"), p: Principal = WRITE):
+    ps = project_scope(request, project_id)
     try:
-        out = _review(request).review.approve_pending(judgment_id, p.actor, body.reason)
+        out = ReviewService(_services(request).workspace.project_dir(project_id), ps.judgments).undo_action(action_id, p.actor, body.reason)
     except (ReviewError, JudgmentError) as e:
         raise _conflict(e) from None
-    _log(request, p, "judgment_change", "approve_pending", str(judgment_id))
+    _log(request, p, "judgment_change", "undo", f"{project_id}/{action_id}", judgments=len(out["revoked"]))
+    return out
+
+
+# ---- four eyes on decisions --------------------------------------------------------------------------------------------
+@router.get(PROJ + "/approvals", response_model=list[PendingRow])
+def pending(request: Request, project_id: str = PID, p: Principal = SEE_PENDING):
+    return [{"id": j.id, "kind": j.kind, "actor": j.actor, "reason": j.reason, "persons": j.evidence.get("persons"), "created_at": j.created_at}
+            for j in project_scope(request, project_id).judgments.pending_approval()]
+
+
+@router.post(PROJ + "/approvals/{judgment_id}/approve")
+def approve_pending(request: Request, body: ReasonIn, project_id: str = PID, judgment_id: int = Path(ge=1, le=10**9), p: Principal = APPROVE):
+    try:
+        out = project_scope(request, project_id).judgments.approve(judgment_id, p.actor, body.reason)
+    except (ReviewError, JudgmentError) as e:
+        raise _conflict(e) from None
+    _log(request, p, "judgment_change", "approve_pending", f"{project_id}/{judgment_id}")
     return {"judgment_id": judgment_id, "approval_id": out}
 
 
-@router.post("/approvals/{judgment_id}/decline")
-def decline_pending(request: Request, body: DeclineIn, judgment_id: int = Path(ge=1, le=10**9), p: Principal = APPROVE):
+@router.post(PROJ + "/approvals/{judgment_id}/decline")
+def decline_pending(request: Request, body: DeclineIn, project_id: str = PID, judgment_id: int = Path(ge=1, le=10**9), p: Principal = APPROVE):
     try:
-        out = _review(request).review.decline_pending(judgment_id, p.actor, body.reason)
+        out = project_scope(request, project_id).judgments.decline(judgment_id, p.actor, body.reason)
     except (ReviewError, JudgmentError) as e:
         raise _conflict(e) from None
-    _log(request, p, "judgment_change", "decline_pending", str(judgment_id))
+    _log(request, p, "judgment_change", "decline_pending", f"{project_id}/{judgment_id}")
     return {"judgment_id": judgment_id, "decline_id": out}
 
 
-# ---- rules and settings: propose -> approve (someone else) -> activate ---------------------------------------------------
-@router.post("/config/{name}/propose")
-def propose(request: Request, name: ConfigName, body: ProposeIn, p: Principal = PROPOSE):
-    if name == "sources":
-        raise HTTPException(422, "Sources are proposed from the Sources screen (they need to be checked against the real source first).")
-    store = _configs(request)
+# ---- the project's rules and settings: propose -> approve (someone else) -> activate ------------------------------------
+@router.post(PROJ + "/config/{name}/propose")
+def propose(request: Request, name: ConfigName, body: ProposeIn, project_id: str = PID, p: Principal = PROPOSE):
+    store = project_scope(request, project_id).configs
     try:
         version = store.propose(name, body.content, p.actor, body.reason)
     except ConfigError as e:
         raise (_invalid_config(name, body.content) if str(e).startswith("invalid") else _conflict(e)) from None
-    _log(request, p, "config_change", "propose", f"{name}:{version}")
+    _log(request, p, "config_change", "propose", f"{project_id}/{name}:{version}")
     return {"name": name, "version": version, "status": "proposed"}
 
 
-@router.post("/config/{name}/versions/{version}/dry-run")
-def dry_run_version(request: Request, name: ConfigName, version: int = Path(ge=1, le=1_000_000), p: Principal = PROPOSE):
-    """What the proposed decision rules would change on the pairs of the last run. Decision rules only; nothing is changed."""
-    store, sv = _configs(request), _services(request)
+@router.post(PROJ + "/config/{name}/versions/{version}/dry-run")
+def dry_run_version(request: Request, name: ConfigName, project_id: str = PID, version: int = Path(ge=1, le=1_000_000),
+                    run_id: str | None = Query(None, pattern=RUN_ID), p: Principal = PROPOSE):
+    """What the proposed decision rules would change on the pairs of a run (default: the project's latest finished run). Nothing is changed."""
+    ps, sv = project_scope(request, project_id), _services(request)
     if name != "decision":
         raise HTTPException(422, "A dry run exists for decision rules only; settings and survivorship need a full run.")
+    run = sv.jobs.get(project_id, run_id) if run_id else sv.jobs.latest_succeeded(project_id)
+    if run is None or run.status != "succeeded":
+        raise HTTPException(404, "No finished run was found to compare against.")
     try:
-        candidate = MODELS[name].model_validate(store.get(name, version))
-        result = dry_run(sv.settings.work, candidate)
+        candidate = MODELS[name].model_validate(ps.configs.get(name, version))
+        result = dry_run(sv.workspace.run_dir(project_id, run.id), candidate)
     except ConfigError:
         raise HTTPException(404, "Not found.") from None
     except FileNotFoundError:
-        raise HTTPException(404, "No pipeline run was found.") from None
-    _log(request, p, "config_change", "dry_run", f"{name}:{version}")
-    return result
+        raise HTTPException(404, "No finished run was found to compare against.") from None
+    _log(request, p, "config_change", "dry_run", f"{project_id}/{name}:{version}")
+    return {**result, "run_id": run.id}
 
 
-@router.post("/config/{name}/versions/{version}/approve")
-def approve_version(request: Request, name: ConfigName, body: ReasonIn, version: int = Path(ge=1, le=1_000_000), p: Principal = APPROVE_CFG):
+@router.post(PROJ + "/config/{name}/versions/{version}/approve")
+def approve_version(request: Request, name: ConfigName, body: ReasonIn, project_id: str = PID, version: int = Path(ge=1, le=1_000_000),
+                    p: Principal = APPROVE_CFG):
     try:
-        _configs(request).approve(name, version, p.actor, body.reason)
+        project_scope(request, project_id).configs.approve(name, version, p.actor, body.reason)
     except ConfigError as e:
         raise _conflict(e) from None
-    _log(request, p, "config_change", "approve", f"{name}:{version}")
+    _log(request, p, "config_change", "approve", f"{project_id}/{name}:{version}")
     return {"name": name, "version": version, "approved": True}
 
 
-@router.post("/config/{name}/versions/{version}/decline")
-def decline_version(request: Request, name: ConfigName, body: DeclineIn, version: int = Path(ge=1, le=1_000_000), p: Principal = APPROVE_CFG):
+@router.post(PROJ + "/config/{name}/versions/{version}/decline")
+def decline_version(request: Request, name: ConfigName, body: DeclineIn, project_id: str = PID, version: int = Path(ge=1, le=1_000_000),
+                    p: Principal = APPROVE_CFG):
     try:
-        _configs(request).decline(name, version, p.actor, body.reason)
+        project_scope(request, project_id).configs.decline(name, version, p.actor, body.reason)
     except ConfigError as e:
         raise _conflict(e) from None
-    _log(request, p, "config_change", "decline", f"{name}:{version}")
+    _log(request, p, "config_change", "decline", f"{project_id}/{name}:{version}")
     return {"name": name, "version": version, "declined": True}
 
 
-@router.post("/config/{name}/versions/{version}/activate")
-def activate_version(request: Request, name: ConfigName, body: ReasonIn, version: int = Path(ge=1, le=1_000_000), p: Principal = ACTIVATE_CFG):
-    """Takes effect at the NEXT pipeline run; nothing already computed changes."""
+@router.post(PROJ + "/config/{name}/versions/{version}/activate")
+def activate_version(request: Request, name: ConfigName, body: ReasonIn, project_id: str = PID, version: int = Path(ge=1, le=1_000_000),
+                     p: Principal = ACTIVATE_CFG):
+    """Takes effect at the project's NEXT run; nothing already computed changes."""
     try:
-        _configs(request).activate(name, version, p.actor, body.reason)
+        project_scope(request, project_id).configs.activate(name, version, p.actor, body.reason)
     except ConfigError as e:
         raise _conflict(e) from None
-    _log(request, p, "config_change", "activate", f"{name}:{version}")
-    return {"name": name, "version": version, "active": True, "applies": "from the next pipeline run"}
+    _log(request, p, "config_change", "activate", f"{project_id}/{name}:{version}")
+    return {"name": name, "version": version, "active": True, "applies": "from the next run of this project"}
 
 
-@router.post("/config/{name}/rollback")
-def rollback(request: Request, name: ConfigName, body: RollbackIn, p: Principal = ACTIVATE_CFG):
+@router.post(PROJ + "/config/{name}/rollback")
+def rollback(request: Request, name: ConfigName, body: RollbackIn, project_id: str = PID, p: Principal = ACTIVATE_CFG):
     try:
-        new = _configs(request).rollback(name, body.to_version, p.actor, body.reason)
+        new = project_scope(request, project_id).configs.rollback(name, body.to_version, p.actor, body.reason)
     except ConfigError as e:
         raise _conflict(e) from None
-    _log(request, p, "config_change", "rollback", f"{name}:{new}")
-    return {"name": name, "version": new, "rolled_back_to": body.to_version, "applies": "from the next pipeline run"}
+    _log(request, p, "config_change", "rollback", f"{project_id}/{name}:{new}")
+    return {"name": name, "version": new, "rolled_back_to": body.to_version, "applies": "from the next run of this project"}

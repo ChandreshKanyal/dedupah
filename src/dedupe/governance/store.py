@@ -15,6 +15,7 @@ The actor is trusted text until the API has authentication.
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,13 +23,13 @@ from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, cr
 from sqlalchemy.engine import Engine
 
 from dedupe.decision.config import DecisionConfig
-from dedupe.mapping.config import IngestConfig
+from dedupe.mapping.config import IngestConfig, SourceConfig
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
 from dedupe.survivorship.config import SurvivorshipConfig
 
 from .settings import MatchingSettings
 
-MODELS = {"decision": DecisionConfig, "survivorship": SurvivorshipConfig, "settings": MatchingSettings, "sources": IngestConfig}
+MODELS = {"decision": DecisionConfig, "survivorship": SurvivorshipConfig, "settings": MatchingSettings, "sources": IngestConfig, "connection": SourceConfig}
 KINDS = ("propose", "approve", "decline", "activate", "rollback")
 
 _meta = MetaData()
@@ -55,12 +56,21 @@ class ConfigError(ValueError):
     pass
 
 
+NAME = re.compile(r"^(decision|survivorship|settings|sources)$|^connection/[A-Za-z0-9_-]{1,40}$")
+
+
+def model_for(name: str):
+    """The model of a configuration name: a fixed name, or `connection/<id>` (a saved source and its mapping)."""
+    if not NAME.match(name or ""):
+        raise ConfigError(f"unknown config {name!r}; valid: {sorted(MODELS)} or connection/<id>")
+    return MODELS[name.split("/", 1)[0]]
+
+
 def canonical(name: str, content: dict) -> dict:
     """Validate `content` against the model for `name` and return it in full, canonical form (defaults filled in)."""
-    if name not in MODELS:
-        raise ConfigError(f"unknown config {name!r}; valid: {sorted(MODELS)}")
+    model = model_for(name)
     try:
-        return MODELS[name].model_validate(content).model_dump(mode="json")
+        return model.model_validate(content).model_dump(mode="json")
     except ValueError as e:
         raise ConfigError(f"invalid {name} config: {e}") from e
 
@@ -154,6 +164,12 @@ class ConfigStore:
                 status = "proposed"
             result[k] = Version(status=status, **{**d, "approved_by": tuple(dict.fromkeys(d["approved_by"]))})
         return result
+
+    def names(self, prefix: str = "") -> list[str]:
+        """Every configuration name that has at least one version (optionally only those starting with `prefix`)."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(config_log.c.name).distinct().order_by(config_log.c.name)).scalars().all()
+        return [n for n in rows if n.startswith(prefix)]
 
     def versions(self, name: str) -> list[Version]:
         with self.engine.connect() as conn:

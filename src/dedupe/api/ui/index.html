@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,8 +21,18 @@
 </div>
 <div id="app" hidden>
   <header id="topbar">
-    <span id="brand">Dedupe</span>
-    <div id="account"><span id="who"></span><button id="signout">Sign out</button></div>
+    <div id="brand"><span class="mark">D</span>Dedupe</div>
+    <div id="search-wrap">
+      <input id="search" type="search" placeholder="Search projects, runs and connections" aria-label="Search" autocomplete="off">
+      <span id="search-hint">Ctrl + K</span>
+      <div id="search-results" role="listbox" hidden></div>
+    </div>
+    <div id="account">
+      <button id="theme" class="ghost" aria-label="Switch between dark and light"></button>
+      <span id="avatar" aria-hidden="true"></span>
+      <span id="who"></span>
+      <button id="signout" class="ghost">Sign out</button>
+    </div>
   </header>
   <nav id="nav" aria-label="Main"></nav>
   <main id="content">

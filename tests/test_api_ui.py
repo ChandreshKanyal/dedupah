@@ -36,10 +36,14 @@ def test_nothing_in_the_page_or_script_can_inject_markup_or_leak_the_token():
     lines = (UI / "app.js").read_text(encoding="utf-8").splitlines()
     js = chr(10).join(x for x in lines if not x.lstrip().startswith("//"))      # code only, not comments
     assert re.findall(r"<script\b(?![^>]*\bsrc=)", html) == [] and not re.search(r"\son[a-z]+\s*=|style\s*=", html)          # no inline code or styles
-    for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "localStorage", "sessionStorage", "document.cookie",
+    for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "sessionStorage", "document.cookie",
                    "location.hash", "location.search"):
         assert banned not in js, banned
-    assert "http://" not in js and "https://" not in js                                                 # every request stays on this origin
+    # browser storage holds the colour theme and nothing else (never the token)
+    assert re.findall(r"localStorage\.(\w+)\(([^,)]*)", js) == [("setItem", "THEME_KEY"), ("getItem", "THEME_KEY")]
+    assert 'const THEME_KEY = "dedupe-theme";' in js
+    # every request stays on this origin; the only absolute address is the SVG namespace name, which is never fetched
+    assert js.replace('"http://www.w3.org/2000/svg"', "").count("http://") == 0 and "https://" not in js
     assert all(not u.startswith("//") for u in re.findall(r'"(//[^"]*)"', js))
 
 
@@ -48,8 +52,11 @@ def test_the_script_only_calls_endpoints_and_permissions_that_exist(app):
     first_segments = {r.path.split("/")[1] for r in api_routes(app)}
     called = set(re.findall(r'api\("(?:GET|POST)", "/([a-z-]+)', js))
     assert called and called <= first_segments, called - first_segments
-    used = set(re.findall(r'(?:can\("|"Review queue", ")([a-z]+\.[a-z]+)', js)) | set(re.findall(r'\["[A-Za-z ]+", "([a-z]+\.[a-z]+)"', js))
+    used = set(re.findall(r'can\("([a-z]+\.[a-z]+)"', js)) | set(re.findall(r'\["[A-Za-z ]+", "([a-z]+\.[a-z]+)"', js))
     assert used and used <= set(PERMISSIONS), used - set(PERMISSIONS)
+    menu = re.findall(r'\["([A-Za-z ]+)", "(any|[a-z]+\.[a-z]+)", "([a-z]+)"', js)
+    assert {"Home", "Projects", "Runs", "Connections", "Approvals", "Audit log"} <= {m[0] for m in menu}
+    assert {m[1] for m in menu} - {"any"} <= set(PERMISSIONS)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

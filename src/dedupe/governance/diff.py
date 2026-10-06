@@ -83,4 +83,6 @@ def describe_changes(name: str, old: dict | None, new: dict) -> list[str]:
         return out + _rules(old, new)
     if name == "sources":
         return _sources(old, new)
+    if name.startswith("connection/"):
+        return _sources({"sources": [old]}, {"sources": [new]})
     return _generic(old, new)

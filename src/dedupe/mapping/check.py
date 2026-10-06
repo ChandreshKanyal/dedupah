@@ -24,10 +24,12 @@ ALLOWED_SETTINGS = {
     "csv": _FILE | {"delimiter", "encoding"}, "tsv": _FILE | {"delimiter", "encoding"}, "xlsx": _FILE | {"sheet"}, "excel": _FILE | {"sheet"},
     "parquet": _FILE, "gsheet": {"type", "spreadsheet_id", "gid", "token_env"}, "google_sheets": {"type", "spreadsheet_id", "gid", "token_env"},
     **{t: {"type", "url_env", "table", "schema", "query"} for t in ("sql", "postgres", "mysql", "rds")},
+    "upload": {"type", "upload_id"},
 }
 SETTING_HELP = {
     "csv": "path (a file inside an allowed data folder), delimiter, encoding", "tsv": "path, delimiter, encoding", "xlsx": "path, sheet",
     "parquet": "path", "gsheet": f"spreadsheet_id, gid, token_env (an environment variable name starting with {ENV_PREFIX})",
+    "upload": "upload_id (a file uploaded on the Connections screen)",
     "sql": f"url_env (an environment variable name starting with {ENV_PREFIX} that holds the database URL), and one of table (+ schema) or query (one SELECT)",
 }
 _TEXT_LIMIT = 500

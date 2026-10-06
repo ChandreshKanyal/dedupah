@@ -55,7 +55,8 @@ class ApiSettings:
     enable_docs: bool | None = None                     # /docs and /openapi.json: None = on in dev, off in production; True/False forces it
     database_url: str | None = None
     work: Path = Path("data/staging")
-    pipeline_sources: Path | None = None                # the folder of canonical source files a run reads; fixed by the operator, never by a caller
+    upload_max_bytes: int = 50_000_000                  # largest file accepted from the browser
+    project_database_url: str | None = None             # template with {project}: one server database per project (production)
 
     @property
     def production(self) -> bool:
@@ -88,7 +89,7 @@ class ApiSettings:
             trust_proxy=_bool("DEDUPE_TRUST_PROXY", False), require_https=_bool("DEDUPE_REQUIRE_HTTPS", prod),
             enable_docs=_bool("DEDUPE_API_DOCS", not prod), database_url=os.environ.get("DEDUPE_DATABASE_URL") or None,
             work=Path(os.environ.get("DEDUPE_WORK_DIR", "data/staging")),
-            pipeline_sources=Path(os.environ["DEDUPE_PIPELINE_SOURCES"]) if os.environ.get("DEDUPE_PIPELINE_SOURCES") else None,
+            upload_max_bytes=_int("DEDUPE_UPLOAD_MAX_BYTES", 50_000_000), project_database_url=os.environ.get("DEDUPE_PROJECT_DATABASE_URL") or None,
         )
         s.validate()
         return s
@@ -125,7 +126,9 @@ class ApiSettings:
                 problems.append("production needs DEDUPE_DATABASE_URL pointing at a server database (not sqlite)")
             if "*" in self.cors_origins:
                 problems.append("CORS origin '*' is not allowed")
-        if self.max_token_lifetime_s < 60 or self.max_page_size < 1 or self.max_body_bytes < 1024:
+            if not self.project_database_url or "{project}" not in self.project_database_url or self.project_database_url.startswith("sqlite"):
+                problems.append("production needs DEDUPE_PROJECT_DATABASE_URL: a server database URL template containing {project}")
+        if self.max_token_lifetime_s < 60 or self.max_page_size < 1 or self.max_body_bytes < 1024 or self.upload_max_bytes < 1024:
             problems.append("token lifetime, page size and body size limits are out of range")
         if problems:
             raise SettingsError("; ".join(problems))

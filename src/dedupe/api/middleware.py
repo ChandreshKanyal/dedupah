@@ -105,15 +105,17 @@ class ContextMiddleware:
 class BodyLimitMiddleware:
     """Refuses oversized request bodies, whether or not the client declares a length."""
 
-    def __init__(self, app, max_bytes: int, on_event=None):
+    def __init__(self, app, max_bytes: int, on_event=None, overrides: dict | None = None):
         self.app, self.max, self.on_event = app, max_bytes, on_event
+        self.overrides = overrides or {}            # path -> a larger cap (file uploads only)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         rid = scope.get("state", {}).get("request_id", "")
+        limit = self.overrides.get(scope.get("path", ""), self.max)
         declared = dict(scope["headers"]).get(b"content-length")
-        if declared and declared.isdigit() and int(declared) > self.max:
+        if declared and declared.isdigit() and int(declared) > limit:
             return await self._reject(scope, send, rid)
         seen, started = 0, False
 
@@ -122,7 +124,7 @@ class BodyLimitMiddleware:
             msg = await receive()
             if msg["type"] == "http.request":
                 seen += len(msg.get("body", b""))
-                if seen > self.max:
+                if seen > limit:
                     raise _TooLarge
             return msg
 

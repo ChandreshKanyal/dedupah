@@ -4,8 +4,9 @@ echo the caller's input, and security-relevant events go to the tamper-evident s
     python -m dedupe.api            (development: DEDUPE_DEV_AUTH_SECRET and tokens from `python -m dedupe.api.devtoken`)
 """
 import logging
+import os
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,17 +18,15 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from dedupe import crypto
 from dedupe.governance.store import ConfigStore
-from dedupe.review.service import ReviewPolicy, ReviewService
-from dedupe.store import JudgmentStore
+from dedupe.workspace import RunJobs, Uploads, Workspace
 
 from .auth import Principal, TokenVerifier
 from .guards import authenticated, public, require
-from .jobs import RunJobs
 from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddleware, SlidingWindow
 from .roles import ROLES
+from .routes_connections import router as connections_router
+from .routes_projects import router as projects_router
 from .routes_read import router as read_router
-from .routes_runs import router as runs_router
-from .routes_sources import router as sources_router
 from .routes_ui import router as ui_router
 from .routes_write import router as write_router
 from .seclog import EVENTS, SecurityLog
@@ -42,10 +41,11 @@ class Services:
     verifier: TokenVerifier
     seclog: SecurityLog
     limiter: SlidingWindow
-    review: ReviewService | None = None            # masks identifiers, whatever it is asked
-    review_reveal: ReviewService | None = None     # may unmask: used only after the permission, reason and rate-limit checks
-    configs: ConfigStore | None = None
-    jobs: RunJobs | None = None
+    workspace: Workspace
+    connections: ConfigStore                       # saved connections (main database), versioned with four eyes
+    uploads: Uploads
+    jobs: RunJobs
+    reviews: dict = field(default_factory=dict)    # (project, run, reveal) -> ReviewService, built on first use
 
 
 class Me(BaseModel):
@@ -81,18 +81,18 @@ def _error(status: int, code: str, message: str, request: Request, headers: dict
 
 
 def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier | None = None, seclog: SecurityLog | None = None,
-               judgments: JudgmentStore | None = None, configs: ConfigStore | None = None, jobs: RunJobs | None = None) -> FastAPI:
+               workspace: Workspace | None = None, command=None) -> FastAPI:
     settings = settings or ApiSettings.from_env()
     settings.validate()
-    crypto.bind_work(settings.work, write=False)      # a missing or wrong key stops the API at start-up, not on the first request
+    crypto.bind_work(settings.work)                   # a missing or wrong key stops the API at start-up, not on the first request
     db = settings.database_url or f"sqlite:///{settings.work}/api.db"
-    store = judgments or JudgmentStore.open(db)
-    sv = Services(settings, verifier or TokenVerifier(settings), seclog or SecurityLog.open(db), SlidingWindow(),
-                  ReviewService(settings.work, store, ReviewPolicy(reveal_sensitive=False)),
-                  ReviewService(settings.work, store, ReviewPolicy(reveal_sensitive=True)), configs or ConfigStore.open(db))
-    sv.jobs = RunJobs.open(db, settings.work, settings.pipeline_sources) if jobs is None else jobs
-    sv.jobs.on_finish = lambda job_id, code: sv.seclog.record(
-        "run_finished", status=None, object_ref=job_id, detail={"exit_code": code, "outcome": "succeeded" if code == 0 else "failed"})
+    ws = workspace or Workspace(settings.work, db, settings.project_database_url)
+    os.environ["DEDUPE_UPLOAD_DIR"] = str(ws.upload_dir)      # where `upload` connections find their files (inspect, preview)
+    jobs = RunJobs(ws, command) if command else RunJobs(ws)
+    sv = Services(settings, verifier or TokenVerifier(settings), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws, ConfigStore.open(ws.url),
+                  Uploads(ws.engine, ws.upload_dir), jobs)
+    jobs.on_finish = lambda run: sv.seclog.record("run_finished", status=None, object_ref=f"{run.project_id}/{run.id}",
+                                                  detail={"exit_code": run.exit_code, "outcome": run.status})
 
     @asynccontextmanager
     async def lifespan(app):
@@ -115,7 +115,7 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
                            allow_headers=["authorization", "content-type", "x-request-id"], allow_credentials=False)
     if "*" not in settings.allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
-    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes, on_event=on_event)
+    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes, on_event=on_event, overrides={"/uploads": settings.upload_max_bytes})
     app.add_middleware(ContextMiddleware, settings=settings, limiter=sv.limiter, on_event=on_event)
     app.add_middleware(HeadersMiddleware, production=settings.production)
 
@@ -156,9 +156,9 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     def roles(p: Principal = ANY_USER):
         return {r: sorted(perms) for r, perms in ROLES.items()}
 
+    app.include_router(projects_router)
     app.include_router(read_router)
     app.include_router(write_router)
-    app.include_router(runs_router)
-    app.include_router(sources_router)
+    app.include_router(connections_router)
     app.include_router(ui_router)
     return app

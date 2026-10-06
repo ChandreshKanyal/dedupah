@@ -145,12 +145,17 @@ def test_the_api_reads_encrypted_outputs_and_refuses_to_start_without_the_key(so
     crypto.configure(key)
     work = tmp_path / "work"
     run_pipeline(PipelineConfig(sources, work))
-    s = ApiSettings(env="dev", auth_mode="dev", dev_secret="e" * 40, work=work, database_url=f"sqlite:///{tmp_path / 'e.db'}")
-    c = TestClient(create_app(s))
+    s = ApiSettings(env="dev", auth_mode="dev", dev_secret="e" * 40, work=tmp_path / "ws", database_url=f"sqlite:///{tmp_path / 'e.db'}")
+    app = create_app(s)
+    sv = app.state.services
+    sv.workspace.create("demo", "Demo", "", "setup")
+    run = f"/projects/demo/runs/{sv.jobs.import_results('demo', work, 'setup').id}"
+    c = TestClient(app)
     h = {"Authorization": "Bearer " + issue(s, "u-v", ["viewer"])}
-    assert c.get("/queue?limit=3", headers=h).status_code == 200 and c.get("/runs/latest", headers=h).json()["records"] > 100
-    p = c.get("/queue?limit=1", headers=h).json()[0]["person_l"]
-    assert c.get(f"/people/{p}", headers=h).json()["records"]
+    assert c.get(run + "/queue?limit=3", headers=h).status_code == 200 and c.get(run, headers=h).json()["summary"]["records"] > 100
+    p = c.get(run + "/queue?limit=1", headers=h).json()[0]["person_l"]
+    assert c.get(f"{run}/people/{p}", headers=h).json()["records"]
+    assert all(crypto.is_encrypted_file(f) for f in (tmp_path / "ws").rglob("*.parquet"))
     crypto.configure(None)
     with pytest.raises(crypto.CryptoError):
         create_app(s)
@@ -162,7 +167,7 @@ def test_production_refuses_to_run_without_a_key(tmp_path):
     crypto.require_in_production("dev")
     from dedupe.api import SettingsError
     prod = dict(env="production", auth_mode="oidc", oidc_issuer="https://i", oidc_audience="a", oidc_jwks_url="https://i/jwks", allowed_hosts=("h.example",),
-                require_https=True, database_url="postgresql://u:p@db/x", work=tmp_path)
+                require_https=True, database_url="postgresql://u:p@db/x", project_database_url="postgresql://u:p@db/x_{project}", work=tmp_path)
     with pytest.raises(SettingsError, match="encryption at rest"):
         ApiSettings(**prod).validate()
     crypto.configure(new_key())
