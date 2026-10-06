@@ -1,9 +1,11 @@
+import os
 from typing import Iterator
 
 import pyarrow as pa
 from sqlalchemy import create_engine, select, table, text
 
 from .base import Connector, register, secret, to_string_table
+from .guard import ConnectorConfigError, check_identifier, check_select_only
 
 
 @register
@@ -18,14 +20,25 @@ class SqlConnector(Connector):
 
     def __init__(self, **config):
         super().__init__(**config)
+        if config.get("url") and os.environ.get("DEDUPE_ENV", "dev").strip().lower() == "production":
+            raise ConnectorConfigError("a database URL (it holds the password) must come from an environment variable (url_env) in production")
         url = secret(config.get("url"), config.get("url_env"), "database URL")
         if not url:
             raise ValueError("SQL connector needs url_env (preferred) or url")
         if bool(config.get("table")) == bool(config.get("query")):
             raise ValueError("SQL connector needs exactly one of: table, query")
-        if config.get("query") and not config["query"].lstrip().lower().startswith(("select", "with")):
-            raise ValueError("Only SELECT queries are allowed")
+        if config.get("query"):
+            check_select_only(config["query"])
+        else:
+            check_identifier(config["table"], "table")
+            if config.get("schema"):
+                check_identifier(config["schema"], "schema")
         self.engine = create_engine(url)
+
+    def _connect(self):
+        """A connection that cannot write where the database supports it (PostgreSQL read-only transaction). Elsewhere rely on a read-only user."""
+        conn = self.engine.connect()
+        return conn.execution_options(postgresql_readonly=True) if self.engine.dialect.name == "postgresql" else conn
 
     def _statement(self):
         if self.config.get("query"):
@@ -38,7 +51,7 @@ class SqlConnector(Connector):
         self.columns()
 
     def columns(self) -> list[str]:
-        with self.engine.connect() as conn:
+        with self._connect() as conn:
             if self.config.get("query"):  # wrap so the database does not run the full query just to name columns
                 stmt = text(f"SELECT * FROM ({self.config['query'].rstrip().rstrip(';')}) AS _q LIMIT 0")
             else:
@@ -49,7 +62,7 @@ class SqlConnector(Connector):
             return keys
 
     def read_batches(self, batch_size: int = 50_000) -> Iterator[pa.Table]:
-        with self.engine.connect().execution_options(stream_results=True) as conn:
+        with self._connect().execution_options(stream_results=True) as conn:
             res = conn.execute(self._statement())
             keys = list(res.keys())
             while True:

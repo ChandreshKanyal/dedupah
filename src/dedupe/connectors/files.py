@@ -7,12 +7,13 @@ import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
 from .base import Connector, register, to_string_table
+from .guard import check_path
 
 
 class _FileConnector(Connector):
     def __init__(self, path: str, **config):
         super().__init__(path=path, **config)
-        self.path = Path(path)
+        self.path = check_path(Path(path))
 
     def test_connection(self) -> None:
         if not self.path.is_file():

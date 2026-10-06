@@ -10,7 +10,7 @@ import argparse
 import dataclasses
 import json
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import threading
 import time
 from dataclasses import dataclass, field
@@ -108,7 +108,11 @@ def redact_aadhaar(canonical: Path) -> None:
 
 def _git_commit() -> str | None:
     try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5).stdout.strip() or None
+        git = shutil.which("git")
+        if not git:
+            return None
+        out = subprocess.run([git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)  # nosec B603
+        return out.stdout.strip() or None
     except Exception:
         return None
 

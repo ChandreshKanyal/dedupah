@@ -15,6 +15,7 @@ CANONICAL_FIELDS: dict[str, str] = {
     "pan": "PAN (permanent account number)",
     "aadhaar": "Full Aadhaar number if the source holds it (will be tokenised, never stored raw downstream)",
     "aadhaar_last4": "Last four digits of Aadhaar",
+    "aadhaar_reference_key": "The reference key (token) from the organisation's own Aadhaar Data Vault; preferred over the full number, which then never needs to enter this system",
     "passport_no": "Passport number",
     "dl_no": "Driving licence number",
     "voter_id": "Voter ID (EPIC) number",

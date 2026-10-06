@@ -66,6 +66,16 @@ def _token_key() -> bytes:
     return _DEV_KEY
 
 
+_REF_KEY = re.compile(r"[A-Za-z0-9_-]{8,128}")
+
+
+def aadhaar_reference(raw: str | None) -> str | None:
+    """A reference key issued by the customer's own Aadhaar Data Vault. Two records match when they carry the same key (that is, only within
+    one organisation's vault). Prefixed so it can never equal a token we derive ourselves."""
+    s = (raw or "").strip()
+    return "ref:" + s if _REF_KEY.fullmatch(s) else None
+
+
 def aadhaar(raw: str | None):
     """Returns (token, last4). Only a keyed hash leaves this function, never the number itself."""
     s = re.sub(r"[\s\-]", "", (raw or "").upper()).translate(_TO_DIGIT)

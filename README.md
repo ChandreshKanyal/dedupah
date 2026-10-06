@@ -24,7 +24,12 @@ python -m venv .venv
 .venv/Scripts/python -m dedupe.governance impact --work data/staging --version 1
 .venv/Scripts/python -m dedupe.pipeline --sources configs/synthetic_sources.json --config-store-url sqlite:///data/judgments.db
 
-# 4. reproduce the published benchmark
+# 4. start the API (development): needs DEDUPE_DEV_AUTH_SECRET (32+ characters); see docs/SECURITY.md before using real data
+.venv/Scripts/python -m dedupe.api.devtoken --sub asha --roles steward
+.venv/Scripts/python -m dedupe.api
+.venv/Scripts/python scripts/security_scan.py   # lint, static analysis, dependency audit, SBOM
+
+# 5. reproduce the published benchmark
 .venv/Scripts/python -m dedupe.benchmark --out docs/BENCHMARK.md
 ```
 

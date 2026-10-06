@@ -13,7 +13,9 @@ services:
       retries: 10
 
   app:
-    build: .
+    build:
+      context: .
+      target: test
     env_file:
       - path: .env
         required: false
@@ -24,6 +26,32 @@ services:
       - ./data:/data
       - ./src:/app/src
       - ./tests:/app/tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # the API (runtime image: unprivileged user). Needs DEDUPE_* settings from .env: see docs/SECURITY.md. Reachable from this machine only;
+  # put your TLS-terminating proxy / gateway in front for anything else.
+  api:
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DEDUPE_DATABASE_URL: postgresql://${POSTGRES_USER:-dedupe}:${POSTGRES_PASSWORD:-dedupe}@postgres:5432/${POSTGRES_DB:-dedupe}
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./data:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       postgres:
         condition: service_healthy

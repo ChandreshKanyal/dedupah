@@ -86,7 +86,7 @@ def order(run: Run, strategy: str, seed: int = 0) -> list[Item]:
         w = float(strategy.split("_", 1)[1])
         return sorted(its, key=lambda i: (-(i.priority + w * math.log(i.size_l * i.size_r)), i.cluster_l, i.cluster_r))
     if strategy == "random":
-        random.Random(seed).shuffle(its)
+        random.Random(seed).shuffle(its)  # nosec B311
         return its
     if strategy == "best_possible":     # not achievable: real matches first (the ceiling for any ordering)
         return sorted(its, key=lambda i: (not i.real, -i.priority, i.cluster_l, i.cluster_r))
@@ -99,7 +99,7 @@ STRATEGIES = ("priority", "probability", "uncertainty", "expected_gain", "random
 # ---- reviewer + scoring --------------------------------------------------------------------------------------------
 def decisions(items: list[Item], error_rate: float, seed: int) -> list[bool]:
     """True = 'same person'. The reviewer knows the truth and is wrong with probability error_rate."""
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # nosec B311
     return [(it.real != (rng.random() < error_rate)) for it in items]
 
 

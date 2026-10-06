@@ -35,7 +35,7 @@ SCHEMA = pa.schema([
 ])
 _GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O"}
 _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt",
-               "city", "state", "pincode", "pan", "aadhaar", "aadhaar_last4", "passport_no", "dl_no", "voter_id",
+               "city", "state", "pincode", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key", "passport_no", "dl_no", "voter_id",
                "related_name", "party_role", "relation_to_proposer", "age", "record_date", "source_id", "source_record_id"]
 
 
@@ -57,6 +57,8 @@ def standardise_row(r: dict) -> dict:
     em, em_key, em_dom = ids.email(r["email"])
     pan, pan_fixed = ids.pan(r["pan"])
     tok, last4 = ids.aadhaar(r["aadhaar"])
+    if not tok:                       # the customer's vault reference key: same strength as the keyed token, separate namespace
+        tok = ids.aadhaar_reference(r.get("aadhaar_reference_key"))
     if not last4:
         last4 = (r["aadhaar_last4"] or "").strip()
         last4 = last4 if len(last4) == 4 and last4.isdigit() else None

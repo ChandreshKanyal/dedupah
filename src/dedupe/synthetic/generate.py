@@ -56,7 +56,7 @@ def person_truth_row(p: Person, sources_seen: set[str]) -> dict:
 
 
 def generate(n_households: int, seed: int, out: Path, noise: float = 1.0) -> dict:
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # nosec B311
     people = PopulationBuilder(rng, REF_DATE).build(n_households)
     src = Sources(rng, people, REF_DATE, noise)
     tables = {"bank_crm": src.bank_crm(), "insurance": src.insurance(), "loans": src.loans(), "leads": src.leads()}

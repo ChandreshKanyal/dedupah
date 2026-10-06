@@ -6,6 +6,7 @@ from typing import Iterator
 import pyarrow as pa
 
 from .base import Connector, register, secret, to_string_table
+from .guard import MAX_SHEET_BYTES, ConnectorConfigError, check_sheet_ids, safe_opener
 
 
 @register
@@ -19,14 +20,17 @@ class GoogleSheetsConnector(Connector):
     types = ("gsheet", "google_sheets")
 
     def _url(self) -> str:
-        sid, gid = self.config["spreadsheet_id"], self.config.get("gid", "0")
+        sid, gid = check_sheet_ids(self.config["spreadsheet_id"], self.config.get("gid", "0"))
         return f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
 
     def _fetch(self) -> str:
         token = secret(None, self.config.get("token_env"), "Google access token") if self.config.get("token_env") else None
         req = urllib.request.Request(self._url(), headers={"Authorization": f"Bearer {token}"} if token else {})
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return resp.read().decode("utf-8-sig")
+        with safe_opener().open(req, timeout=60) as resp:
+            data = resp.read(MAX_SHEET_BYTES + 1)
+        if len(data) > MAX_SHEET_BYTES:
+            raise ConnectorConfigError("the sheet is larger than the allowed size")
+        return data.decode("utf-8-sig")
 
     def _rows(self) -> list[list[str]]:
         return list(csv.reader(io.StringIO(self._fetch())))
