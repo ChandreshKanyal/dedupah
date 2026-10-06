@@ -56,3 +56,15 @@ OPTIONAL_RULES = [
     Rule("name_city", _combo("name_first_phon || '|' || name_last_phon || '|' || city", "name_first_phon", "name_last_phon", "city"),
          "first+last sound + city; links ID-less records (leads) to documents"),
 ]
+
+ALL_RULES = {r.name: r for r in [*DEFAULT_RULES, *OPTIONAL_RULES]}
+
+
+def rules_by_name(names: list[str] | None) -> list[Rule]:
+    """The named blocking rules (None = the defaults). Unknown names are an error, not silently skipped."""
+    if names is None:
+        return list(DEFAULT_RULES)
+    unknown = [n for n in names if n not in ALL_RULES]
+    if unknown:
+        raise ValueError(f"unknown blocking rule(s) {unknown}; valid: {sorted(ALL_RULES)}")
+    return [ALL_RULES[n] for n in names]

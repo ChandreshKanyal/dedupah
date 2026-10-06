@@ -19,7 +19,12 @@ python -m venv .venv
 # 2. run the whole pipeline with one command (and score it against the ground truth)
 .venv/Scripts/python -m dedupe.pipeline --sources configs/synthetic_sources.json --truth data/synthetic
 
-# 3. reproduce the published benchmark
+# 3. change rules safely: propose -> approve (another person) -> activate; dry-run before going live
+.venv/Scripts/python -m dedupe.governance propose decision --file configs/decision_default.json --actor asha --reason "first version"
+.venv/Scripts/python -m dedupe.governance impact --work data/staging --version 1
+.venv/Scripts/python -m dedupe.pipeline --sources configs/synthetic_sources.json --config-store-url sqlite:///data/judgments.db
+
+# 4. reproduce the published benchmark
 .venv/Scripts/python -m dedupe.benchmark --out docs/BENCHMARK.md
 ```
 

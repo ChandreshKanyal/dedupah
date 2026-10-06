@@ -7,6 +7,7 @@ Privacy: after standardisation the raw Aadhaar column of the canonical file is e
 last four digits survive downstream). Set DEDUPE_TOKEN_KEY (and DEDUPE_ENV=production to enforce it).
 """
 import argparse
+import dataclasses
 import json
 import shutil
 import subprocess
@@ -19,11 +20,14 @@ import duckdb
 import psutil
 import pyarrow as pa
 
+from .blocking import DEFAULT_RULES, rules_by_name
 from .blocking import generate as block
 from .clustering import ClusterConfig, cluster
 from .clustering.judged import audit, constraints_from_store, drop_vetoes_overridden_by_stewards
 from .clustering.run import load_inputs, predictions, write_outputs
-from .decision import DecisionConfig, decide
+from .decision import decide
+from .governance import MatchingSettings, resolve
+from .governance.store import content_hash
 from .households.group import group_households  # noqa: F401  (re-exported for convenience)
 from .households.run import build_households, truth_of_clusters
 from .households.run import evaluate as evaluate_households
@@ -33,7 +37,7 @@ from .scoring import score, train
 from .scoring.__main__ import load_tables
 from .standardise.run import run as standardise
 from .store import JudgmentStore
-from .survivorship import SurvivorshipConfig, build_golden
+from .survivorship import build_golden
 
 
 @dataclass
@@ -54,6 +58,8 @@ class PipelineConfig:
     batch_size: int = 50_000
     memory_limit: str = "4GB"  # DuckDB working-memory cap; larger intermediate data spills to <work>/.duckdb_tmp on disk
     stages: list = field(default_factory=list)
+    config_store_url: str | None = None  # versioned config store (SQLAlchemy URL): its ACTIVE versions override the config files and settings
+    blocking_rules: list | None = None  # names of the blocking rules to use (None = the defaults)
 
 
 class _Meter:
@@ -115,7 +121,17 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
                                   "scored": "scored_pairs.parquet", "decisions": "decisions.parquet", "model": "../models/fs_model.json"}.items()}
     clusters_dir, hh_dir = work / "clusters", work / "households"
     summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources)}
-    dcfg = DecisionConfig.load(cfg.decision_config)
+    res_cfg = resolve(cfg.config_store_url, cfg.decision_config, cfg.survivorship_config)
+    dcfg, scfg = res_cfg.decision, res_cfg.survivorship
+    if res_cfg.settings:   # an active settings version in the store wins over the values passed in
+        cfg = dataclasses.replace(cfg, **res_cfg.settings.model_dump())
+    effective = {k: getattr(cfg, k) for k in MatchingSettings.model_fields}
+    effective["blocking_rules"] = effective["blocking_rules"] or [r.name for r in DEFAULT_RULES]
+    summary["configs"] = {**res_cfg.used, "effective_settings": {**effective, "hash": content_hash(effective)}}
+    used_dir = work / "config_used"
+    used_dir.mkdir(exist_ok=True)
+    for n, content in {**res_cfg.contents, "settings": effective}.items():
+        (used_dir / f"{n}.json").write_text(json.dumps(content, indent=2, ensure_ascii=False), encoding="utf-8")
 
     with meter.stage("ingest"):
         summary["ingest"] = ingest(cfg.sources, p["canonical"], cfg.batch_size)
@@ -127,7 +143,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     tmp = work / ".duckdb_tmp"
     con = duckdb.connect(config={"memory_limit": cfg.memory_limit, "temp_directory": str(tmp)})
     with meter.stage("blocking"):
-        gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con)
+        gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con, rules=rules_by_name(cfg.blocking_rules))
         summary["blocking"] = {"records": gen["records"], "candidate_pairs": gen["candidate_pairs"], "all_pairs": gen["all_pairs"]}
         _drop(con, "rule_pairs", "k", "blocks")
     with meter.stage("scoring"):
@@ -167,7 +183,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         overrides = [{"id": j.id, "field": j.subject["field"], "value": j.subject["value"], "anchors": j.subject["anchors"]}
                      for j in JudgmentStore.open(cfg.judgments_url).active(("field_override",))] if cfg.judgments_url else []
         summary["golden_record"] = build_golden(con, p["std"], p["canonical"], clusters_dir / "clusters.parquet",
-                                                SurvivorshipConfig.load(cfg.survivorship_config), work / "golden", overrides)
+                                                scfg, work / "golden", overrides)
     with meter.stage("review_queue"):
         summary["review_queue"] = build_queue(con, work / "review_queue.parquet", cfg.review_min_probability, cfg.review_cap)
     with meter.stage("households"):
@@ -228,13 +244,14 @@ def main() -> None:
     ap.add_argument("--decision-config", type=Path, default=Path("configs/decision_default.json"))
     ap.add_argument("--survivorship-config", type=Path, default=Path("configs/survivorship_default.json"))
     ap.add_argument("--judgments-url", default=None, help="steward decision store (SQLAlchemy URL); omit to ignore steward decisions")
+    ap.add_argument("--config-store-url", default=None, help="versioned config store (SQLAlchemy URL); its active versions override the config files")
     ap.add_argument("--truth", type=Path, default=None, help="ground-truth folder (dev/synthetic only)")
     ap.add_argument("--cap", type=int, default=50)
     ap.add_argument("--household-threshold", type=float, default=5.0)
     ap.add_argument("--keep-raw-aadhaar", action="store_true", help="do NOT erase raw Aadhaar from the canonical file")
     a = ap.parse_args()
     s = run_pipeline(PipelineConfig(a.sources, a.work, decision_config=a.decision_config, survivorship_config=a.survivorship_config,
-                                    judgments_url=a.judgments_url, truth=a.truth, blocking_cap=a.cap, household_threshold=a.household_threshold,
+                                    judgments_url=a.judgments_url, config_store_url=a.config_store_url, truth=a.truth, blocking_cap=a.cap, household_threshold=a.household_threshold,
                                     redact_aadhaar=not a.keep_raw_aadhaar))
     print(_fmt(s))
 

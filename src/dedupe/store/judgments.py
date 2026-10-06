@@ -126,19 +126,22 @@ def _hash(prev: str, row: dict) -> str:
     return hashlib.sha256((prev + body).encode("utf-8")).hexdigest()
 
 
-def _install_triggers(engine: Engine) -> None:
-    """The database itself refuses to change or delete a judgment (belt and braces next to the application API)."""
+def install_append_only(engine: Engine, table: str = "judgments") -> None:
+    """The database itself refuses to change or delete a row of `table` (belt and braces next to the application API)."""
     with engine.begin() as c:
         if engine.dialect.name == "sqlite":
             for op in ("UPDATE", "DELETE"):
-                c.execute(text(f"CREATE TRIGGER IF NOT EXISTS judgments_no_{op.lower()} BEFORE {op} ON judgments "
-                               f"BEGIN SELECT RAISE(ABORT, 'judgments are append-only'); END"))
+                c.execute(text(f"CREATE TRIGGER IF NOT EXISTS {table}_no_{op.lower()} BEFORE {op} ON {table} "
+                               f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END"))
         elif engine.dialect.name == "postgresql":
-            c.execute(text("CREATE OR REPLACE FUNCTION judgments_append_only() RETURNS trigger AS $$ "
-                           "BEGIN RAISE EXCEPTION 'judgments are append-only'; END; $$ LANGUAGE plpgsql"))
+            c.execute(text(f"CREATE OR REPLACE FUNCTION {table}_append_only() RETURNS trigger AS $$ "
+                           f"BEGIN RAISE EXCEPTION '{table} is append-only'; END; $$ LANGUAGE plpgsql"))
             for op in ("UPDATE", "DELETE"):
-                c.execute(text(f"DROP TRIGGER IF EXISTS judgments_no_{op.lower()} ON judgments"))
-                c.execute(text(f"CREATE TRIGGER judgments_no_{op.lower()} BEFORE {op} ON judgments FOR EACH ROW EXECUTE FUNCTION judgments_append_only()"))
+                c.execute(text(f"DROP TRIGGER IF EXISTS {table}_no_{op.lower()} ON {table}"))
+                c.execute(text(f"CREATE TRIGGER {table}_no_{op.lower()} BEFORE {op} ON {table} FOR EACH ROW EXECUTE FUNCTION {table}_append_only()"))
+
+
+_install_triggers = install_append_only
 
 
 class JudgmentStore:

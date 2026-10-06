@@ -70,7 +70,8 @@ class ReviewService:
         if not p.exists():
             return {}
         s = json.loads(p.read_text(encoding="utf-8"))
-        return {"git_commit": s.get("git_commit"), "identity_run": (s.get("identity") or {}).get("run")}
+        configs = {k: {"version": v.get("version"), "hash": v.get("hash")} for k, v in (s.get("configs") or {}).items() if k != "effective_settings"}
+        return {"git_commit": s.get("git_commit"), "identity_run": (s.get("identity") or {}).get("run"), "configs": configs}
 
     def _members(self, con, person: str) -> list[tuple]:
         rows = con.execute(f"SELECT source_id, source_record_id FROM read_parquet('{self.f['cl']}') WHERE cluster_id = ? ORDER BY source_id, source_record_id",
