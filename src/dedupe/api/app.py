@@ -27,6 +27,7 @@ from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddlewar
 from .roles import ROLES
 from .routes_read import router as read_router
 from .routes_runs import router as runs_router
+from .routes_sources import router as sources_router
 from .routes_ui import router as ui_router
 from .routes_write import router as write_router
 from .seclog import EVENTS, SecurityLog
@@ -158,5 +159,6 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     app.include_router(read_router)
     app.include_router(write_router)
     app.include_router(runs_router)
+    app.include_router(sources_router)
     app.include_router(ui_router)
     return app

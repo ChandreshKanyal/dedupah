@@ -52,6 +52,28 @@ def _rules(old: dict, new: dict) -> list[str]:
     return sorted(out)
 
 
+def _sources(old: dict, new: dict) -> list[str]:
+    a = {s["source_id"]: s for s in old.get("sources", [])}
+    b = {s["source_id"]: s for s in new.get("sources", [])}
+    out = [f"source {sid!r} added ({len(b[sid]['fields'])} fields mapped)" for sid in sorted(b.keys() - a.keys())]
+    out += [f"source {sid!r} removed" for sid in sorted(a.keys() - b.keys())]
+    for sid in sorted(a.keys() & b.keys()):
+        x, y = a[sid], b[sid]
+        what = []
+        if x["connector"] != y["connector"]:
+            what += [f"connector {k} {_show(x['connector'].get(k, '<unset>'))} -> {_show(y['connector'].get(k, '<unset>'))}"
+                     for k in sorted(set(x["connector"]) | set(y["connector"])) if x["connector"].get(k) != y["connector"].get(k)]
+        if x["record_id"] != y["record_id"]:
+            what.append(f"record id column {x['record_id']} -> {y['record_id']}")
+        for f in sorted(set(x["fields"]) | set(y["fields"])):
+            if x["fields"].get(f) != y["fields"].get(f):
+                what.append(f"field {f}: {_show(x['fields'].get(f, '<unmapped>'))} -> {_show(y['fields'].get(f, '<unmapped>'))}")
+        if x["attributes"] != y["attributes"]:
+            what.append("carried-along columns changed")
+        out += [f"source {sid!r}: {w}" for w in what]
+    return out
+
+
 def describe_changes(name: str, old: dict | None, new: dict) -> list[str]:
     """Readable list of differences; `old` None means the first version."""
     if old is None:
@@ -59,4 +81,6 @@ def describe_changes(name: str, old: dict | None, new: dict) -> list[str]:
     if name == "decision":
         out = [f"{k} {old[k]} -> {new[k]}" for k in ("auto_merge_at", "review_at") if old[k] != new[k]]
         return out + _rules(old, new)
+    if name == "sources":
+        return _sources(old, new)
     return _generic(old, new)

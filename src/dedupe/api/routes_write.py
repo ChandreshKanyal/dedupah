@@ -278,6 +278,8 @@ def decline_pending(request: Request, body: DeclineIn, judgment_id: int = Path(g
 # ---- rules and settings: propose -> approve (someone else) -> activate ---------------------------------------------------
 @router.post("/config/{name}/propose")
 def propose(request: Request, name: ConfigName, body: ProposeIn, p: Principal = PROPOSE):
+    if name == "sources":
+        raise HTTPException(422, "Sources are proposed from the Sources screen (they need to be checked against the real source first).")
     store = _configs(request)
     try:
         version = store.propose(name, body.content, p.actor, body.reason)

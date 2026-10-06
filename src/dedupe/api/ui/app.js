@@ -56,7 +56,7 @@ function signOut(msg) {
 // ---- tabs ------------------------------------------------------------------------------------------------------------
 const TABS = [
   ["Review queue", "queue.read", () => viewQueue()], ["People", "person.read", () => viewPeople()], ["Approvals", "judgment.approve", () => viewApprovals()],
-  ["Rules", "config.read", () => viewRules()], ["Runs", "runs.read", () => viewRuns()],
+  ["Sources", "sources.manage", () => viewSources()], ["Rules", "config.read", () => viewRules()], ["Runs", "runs.read", () => viewRuns()],
 ];
 function buildTabs() {
   const nav = $("tabs"); nav.replaceChildren();
@@ -148,7 +148,7 @@ async function viewRules(name) {
   name = name || "decision";
   const versions = await api("GET", "/config/" + name);
   const picker = el("select", { "aria-label": "Which configuration", onchange: () => run(() => viewRules(picker.value)) },
-    ["decision", "survivorship", "settings"].map((n) => el("option", { value: n, selected: n === name }, n)));
+    ["decision", "survivorship", "settings", "sources"].map((n) => el("option", { value: n, selected: n === name }, n)));
   const result = el("pre", {}, "");
   const act = (v, what) => run(async () => {
     const reason = prompt("Reason (required):") || "";
@@ -177,7 +177,7 @@ async function viewRules(name) {
     el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")), el("td", {}, buttons(v))));
   const parts = [el("h2", {}, "Rules and settings"), el("div", { class: "row" }, picker),
     versions.length ? el("table", {}, head(["Version", "Status", "Proposed by", "Reason", "Approved by", ""]), el("tbody", {}, rows)) : el("p", {}, "No versions yet."), result];
-  if (can("config.propose")) {
+  if (can("config.propose") && name !== "sources") {
     const editor = el("textarea", { "aria-label": "Rule content as JSON", spellcheck: "false" });
     const why = el("input", { type: "text", placeholder: "Why this change (at least 10 characters)", maxlength: "300" });
     const propose = () => run(async () => {
@@ -193,6 +193,108 @@ async function viewRules(name) {
     }
   }
   show(...parts);
+}
+
+// ---- sources and mapping ---------------------------------------------------------------------------------------------
+async function viewSources() {
+  const [opts, versions] = await Promise.all([api("GET", "/sources/options"), api("GET", "/config/sources")]);
+  const live = versions.find((v) => v.status === "active");
+  const current = live ? (await api("GET", "/config/sources/versions/" + live.version)).content : { sources: [] };
+  const state = { source: { source_id: "", connector: { type: "csv" }, record_id: null, fields: {}, attributes: [] } };
+  const out = el("div");
+  const json = el("textarea", { "aria-label": "Source as JSON (advanced)", spellcheck: "false" });
+  const sync = () => { json.value = JSON.stringify(state.source, null, 2); };
+  const fromJson = () => {
+    try { state.source = JSON.parse(json.value); return true; } catch (_) { say("The advanced box is not valid JSON.", "bad"); return false; }
+  };
+  const typeSel = el("select", { "aria-label": "Source type" }, Object.keys(opts.connectors).map((t) => el("option", { value: t }, t)));
+  const idIn = el("input", { type: "text", placeholder: "Source id, e.g. bank_crm", maxlength: "40", "aria-label": "Source id" });
+  const settings = el("div", { class: "row" });
+  const mapping = el("div");
+
+  function buildForm() {
+    idIn.value = state.source.source_id || "";
+    typeSel.value = state.source.connector.type in opts.connectors ? state.source.connector.type : "csv";
+    settings.replaceChildren(el("span", { class: "muted" }, opts.connectors[typeSel.value].help));
+    for (const k of opts.connectors[typeSel.value].settings) {
+      const i = el("input", { type: "text", placeholder: k, "aria-label": k, value: state.source.connector[k] || "" });
+      i.addEventListener("input", () => { state.source.connector[k] = i.value; if (!i.value) delete state.source.connector[k]; sync(); });
+      settings.append(i);
+    }
+    mapping.replaceChildren();
+  }
+  typeSel.addEventListener("change", () => { state.source.connector = { type: typeSel.value }; sync(); buildForm(); });
+  idIn.addEventListener("input", () => { state.source.source_id = idIn.value; sync(); });
+  json.addEventListener("change", () => { if (fromJson()) buildForm(); });
+
+  const mappingForm = (info) => {
+    const cols = info.columns;
+    const pick = (value, onchange, label) => {
+      const s = el("select", { "aria-label": label }, el("option", { value: "" }, "(none)"), cols.map((c) => el("option", { value: c, selected: c === value }, c)));
+      s.addEventListener("change", () => { onchange(s.value); sync(); });
+      return s;
+    };
+    const suggested = Object.fromEntries(info.suggestions.map((x) => [x.field, x.column]));
+    if (!Object.keys(state.source.fields).length) for (const [f, c] of Object.entries(suggested)) state.source.fields[f] = c;
+    const rows = opts.canonical_fields.map((f) => {
+      const cur = state.source.fields[f];
+      const simple = typeof cur === "string" || cur === undefined;
+      return el("tr", {}, el("th", {}, f),
+        el("td", {}, simple ? pick(cur || "", (v) => { if (v) state.source.fields[f] = v; else delete state.source.fields[f]; }, f)
+          : el("span", { class: "muted" }, "combined (edit in the advanced box)")),
+        el("td", { class: "muted" }, suggested[f] && suggested[f] === cur ? "suggested" : ""));
+    });
+    const attrs = el("div", { class: "row" }, cols.map((c) => {
+      const cb = el("input", { type: "checkbox", checked: (state.source.attributes || []).includes(c), "aria-label": "carry " + c });
+      cb.addEventListener("change", () => {
+        const set = new Set(state.source.attributes || []);
+        if (cb.checked) set.add(c); else set.delete(c);
+        state.source.attributes = [...set]; sync();
+      });
+      return el("label", {}, cb, " ", c);
+    }));
+    sync();
+    return [el("h3", {}, "Sample (shortened so values are not fully shown)"),
+      el("table", {}, head(cols), el("tbody", {}, info.sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c])))))),
+      el("h3", {}, "Which column holds each field?"), el("table", {}, el("tbody", {}, rows)),
+      el("h3", {}, "Column that identifies a record in the source"), pick(state.source.record_id || "", (v) => { state.source.record_id = v || null; }, "record id"),
+      el("h3", {}, "Other columns to carry along unchanged"), attrs];
+  };
+  const openIt = () => run(async () => {
+    if (!fromJson()) return;
+    const info = await api("POST", "/sources/inspect", { connector: state.source.connector });
+    mapping.replaceChildren(...mappingForm(info));
+  });
+  const previewIt = () => run(async () => {
+    if (!fromJson()) return;
+    const r = await api("POST", "/sources/preview", state.source);
+    const cols = Object.keys(r.rows[0] || {}).filter((c) => c !== "attributes");
+    out.replaceChildren(el("h3", {}, "Preview on " + r.sample_size + " sample rows"),
+      el("p", {}, Object.entries(r.filled).map(([f, n]) => f + " " + n + "/" + r.sample_size).join(" \u00b7 ")),
+      r.rows.length ? el("table", {}, head(cols), el("tbody", {}, r.rows.map((row) => el("tr", {}, cols.map((c) => el("td", {}, row[c] == null ? "" : row[c])))))) : null);
+  });
+  const why = el("input", { type: "text", placeholder: "Why this change (at least 10 characters)", maxlength: "300", "aria-label": "reason" });
+  const proposeIt = () => run(async () => {
+    if (!fromJson()) return;
+    const rest = current.sources.filter((s) => s.source_id !== state.source.source_id);
+    const res = await api("POST", "/sources/propose", { content: { sources: [...rest, state.source] }, reason: why.value });
+    say("Proposed as version " + res.version + ". Someone else must approve it in Rules, then make it live.", "good");
+    await viewSources();
+  });
+  const liveRows = current.sources.map((s) => el("tr", {}, el("td", {}, s.source_id), el("td", {}, s.connector.type), el("td", {}, Object.keys(s.fields).length + " fields"),
+    el("td", {}, el("button", { onclick: () => {
+      state.source = JSON.parse(JSON.stringify(s)); sync(); buildForm();
+      say("Loaded " + s.source_id + ". Open the source again to change its mapping, or edit the advanced box.", "");
+    } }, "Edit"))));
+  buildForm(); sync();
+  show(el("h2", {}, "Sources and field mapping"),
+    el("p", { class: "muted" }, (live ? "Live version " + live.version + ". " : "No live sources yet. ") +
+      "Passwords and tokens never go here: give the NAME of an environment variable that starts with DEDUPE_SRC_. A proposed version needs another person's approval (Rules screen) before a run uses it."),
+    liveRows.length ? el("table", {}, head(["Source", "Type", "Mapped", ""]), el("tbody", {}, liveRows)) : el("p", {}, "No sources yet."),
+    el("h3", {}, "Add or change a source"), el("div", { class: "row" }, idIn, typeSel), settings,
+    el("div", { class: "row" }, el("button", { onclick: openIt }, "Open the source and suggest a mapping")), mapping,
+    el("h3", {}, "Advanced: the source as JSON (combined columns, conditions)"), json,
+    el("div", { class: "row" }, el("button", { onclick: previewIt }, "Preview"), why, el("button", { class: "primary", onclick: proposeIt }, "Propose")), out);
 }
 
 // ---- runs ------------------------------------------------------------------------------------------------------------

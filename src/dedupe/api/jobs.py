@@ -56,8 +56,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def pipeline_command(sources: Path, work: Path) -> list[str]:
-    return [sys.executable, "-m", "dedupe.pipeline", "--sources", str(sources), "--work", str(work), "--database-from-env"]
+def pipeline_command(sources: Path | None, work: Path) -> list[str]:
+    """`sources` None = the run uses the active `sources` version of the configuration store."""
+    return [sys.executable, "-m", "dedupe.pipeline", *(["--sources", str(sources)] if sources else []), "--work", str(work), "--database-from-env"]
 
 
 class RunJobs:
@@ -99,8 +100,8 @@ class RunJobs:
     # ---- start -------------------------------------------------------------------------------------------------------
     def start(self, actor: str, reason: str = "", key: str | None = None) -> tuple[Job, bool]:
         """Returns (job, replayed). Raises JobError when nothing is configured or a run is already active."""
-        if self.sources is None:
-            raise JobError("runs are not configured: the operator must set DEDUPE_PIPELINE_SOURCES")
+        if self.sources is None and not self._store_has_sources():
+            raise JobError("no sources are configured: activate a sources version (Sources screen) or set DEDUPE_PIPELINE_SOURCES")
         with self._lock:
             if key is not None:
                 with self.engine.connect() as c:
@@ -114,6 +115,10 @@ class RunJobs:
                 c.execute(run_jobs.insert().values(id=job_id, created_at=_now(), requested_by=actor, status="queued", idempotency_key=key, reason=reason))
             self._launch(job_id)
         return self.get(job_id), False
+
+    def _store_has_sources(self) -> bool:
+        from dedupe.governance.store import ConfigStore
+        return ConfigStore.open(self.database_url).active("sources") is not None
 
     def _launch(self, job_id: str) -> None:
         self.work.mkdir(parents=True, exist_ok=True)

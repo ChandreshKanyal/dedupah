@@ -22,12 +22,13 @@ from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, cr
 from sqlalchemy.engine import Engine
 
 from dedupe.decision.config import DecisionConfig
+from dedupe.mapping.config import IngestConfig
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
 from dedupe.survivorship.config import SurvivorshipConfig
 
 from .settings import MatchingSettings
 
-MODELS = {"decision": DecisionConfig, "survivorship": SurvivorshipConfig, "settings": MatchingSettings}
+MODELS = {"decision": DecisionConfig, "survivorship": SurvivorshipConfig, "settings": MatchingSettings, "sources": IngestConfig}
 KINDS = ("propose", "approve", "decline", "activate", "rollback")
 
 _meta = MetaData()

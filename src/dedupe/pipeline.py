@@ -29,6 +29,7 @@ from .clustering.judged import audit, constraints_from_store, drop_vetoes_overri
 from .clustering.run import load_inputs, predictions, write_outputs
 from .decision import decide
 from .governance import MatchingSettings, resolve
+from .governance.store import canonical as canonical_config
 from .governance.store import content_hash
 from .households.group import group_households  # noqa: F401  (re-exported for convenience)
 from .households.run import build_households, truth_of_clusters
@@ -44,7 +45,7 @@ from .survivorship import build_golden
 
 @dataclass
 class PipelineConfig:
-    sources: Path
+    sources: Path | None   # the sources file; None when the config store holds an active `sources` version
     work: Path = Path("data/staging")
     decision_config: Path = Path("configs/decision_default.json")
     survivorship_config: Path = Path("configs/survivorship_default.json")
@@ -128,7 +129,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     p = {k: work / v for k, v in {"canonical": "canonical.parquet", "std": "standardised.parquet", "cand": "candidates.parquet",
                                   "scored": "scored_pairs.parquet", "decisions": "decisions.parquet", "model": "../models/fs_model.json"}.items()}
     clusters_dir, hh_dir = work / "clusters", work / "households"
-    summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources),
+    summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources) if cfg.sources else None,
                      "encryption_at_rest": {"enabled": crypto.enabled(), "key_id": crypto.active().key_id if crypto.enabled() else None}}
     res_cfg = resolve(cfg.config_store_url, cfg.decision_config, cfg.survivorship_config)
     dcfg, scfg = res_cfg.decision, res_cfg.survivorship
@@ -142,8 +143,17 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     for n, content in {**res_cfg.contents, "settings": effective}.items():
         (used_dir / f"{n}.json").write_text(json.dumps(content, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    if res_cfg.sources:         # sources managed through the API/UI: the ACTIVE version is what runs, and the exact content is kept with the run
+        sources_path = used_dir / "sources.json"
+        sources_path.write_text(json.dumps(res_cfg.sources, indent=2, ensure_ascii=False), encoding="utf-8")
+    elif cfg.sources:
+        sources_path = cfg.sources
+        file_content = canonical_config("sources", json.loads(Path(cfg.sources).read_text(encoding="utf-8")))
+        summary["configs"]["sources"] = {"source": "file", "version": None, "hash": content_hash(file_content), "path": str(cfg.sources)}
+    else:
+        raise ValueError("no sources configured: pass --sources, or activate a `sources` version in the config store")
     with meter.stage("ingest"):
-        summary["ingest"] = ingest(cfg.sources, p["canonical"], cfg.batch_size)
+        summary["ingest"] = ingest(sources_path, p["canonical"], cfg.batch_size)
     with meter.stage("standardise"):
         summary["standardise"] = standardise(p["canonical"], p["std"], cfg.batch_size)
     if cfg.redact_aadhaar:
@@ -248,7 +258,7 @@ def _fmt(s: dict) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--sources", type=Path, required=True)
+    ap.add_argument("--sources", type=Path, default=None, help="sources file; omit to use the active `sources` version of the config store")
     ap.add_argument("--work", type=Path, default=Path("data/staging"))
     ap.add_argument("--decision-config", type=Path, default=Path("configs/decision_default.json"))
     ap.add_argument("--survivorship-config", type=Path, default=Path("configs/survivorship_default.json"))

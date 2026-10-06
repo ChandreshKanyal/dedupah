@@ -38,6 +38,7 @@ Out of scope for the software (the deployment must cover them): network perimete
 | Connectors (untrusted configuration) | file paths confined to `DEDUPE_DATA_ROOTS` (symbolic links and `..` resolved; required in production); SQL: one read-only statement, forbidden-word screen, plain identifiers, literal database URLs refused in production, PostgreSQL read-only transactions; Google Sheets: id/gid validated, redirects only to Google hosts, token never sent to another host, size cap | API7 SSRF; injection | `test_connector_security.py` |
 | Secrets | credentials only from environment variables; production refuses dev tokens, wildcard hosts, http, sqlite; dev token tool refuses production; gitleaks in CI and pre-commit | ASVS V6/V13 | settings tests |
 | Supply chain | `bandit`, `pip-audit`, SBOM (CycloneDX), gitleaks, Trivy image scan in CI (`.github/workflows/ci.yml`, not yet executed on a real CI), `scripts/security_scan.py` locally; non-root runtime image, read-only filesystem, all capabilities dropped (compose) | supply chain | scan passes locally |
+| Source configuration from screens | connector settings on a per-type allow-list, credentials only as NAMES of environment variables starting `DEDUPE_SRC_`, deep check against the real source before a proposal, four-eyes approval, inspect/preview logged, rate limited and masked, errors without paths/URLs/values | API7 SSRF; injection; ASVS V5 | `test_api_sources.py` |
 | Aadhaar | full numbers erased after cleaning; keyed token; **reference keys from the customer's own vault accepted instead** (`aadhaar_reference_key`) | UIDAI vault guidance | `test_aadhaar_reference.py` |
 
 ## 3. Known gaps (do not claim otherwise)
@@ -68,6 +69,7 @@ Out of scope for the software (the deployment must cover them): network perimete
 | `DEDUPE_MAX_BODY_BYTES`, `DEDUPE_MAX_PAGE_SIZE`, `DEDUPE_RATE_LIMIT_PER_MIN`, `DEDUPE_IP_RATE_LIMIT_PER_MIN`, `DEDUPE_AUTH_FAIL_LIMIT_PER_MIN`, `DEDUPE_MAX_TOKEN_LIFETIME_S` | limits |
 | `DEDUPE_DATABASE_URL` | the logs' database (server database required in production) |
 | `DEDUPE_PIPELINE_SOURCES`, `DEDUPE_WORK_DIR` | the folder a started run reads and where outputs go; callers never choose them |
+| `DEDUPE_SRC_*` | environment variables holding source credentials (e.g. a database URL); the screens only ever store the variable's NAME |
 | `DEDUPE_DATA_ROOTS` | folders file sources may be read from (required in production) |
 | `DEDUPE_DATA_KEY`, `DEDUPE_DATA_KEY_ID` | encryption at rest: 32 random bytes (base64) and a label; production refuses to start without them |
 | `DEDUPE_TOKEN_KEY` | key for Aadhaar tokens (production refuses the development key) |

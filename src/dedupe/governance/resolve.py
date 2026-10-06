@@ -17,6 +17,7 @@ class Resolved:
     settings: MatchingSettings | None       # None = no active settings version: the pipeline's own values apply
     used: dict                              # name -> {"source": "store" | "file", "version": int | None, "hash": str}
     contents: dict                          # name -> canonical content that was used
+    sources: dict | None = None             # the ACTIVE source configuration from the store, if there is one (else the run uses its sources file)
 
 
 def resolve(store_url: str | None, decision_path: Path, survivorship_path: Path) -> Resolved:
@@ -37,4 +38,7 @@ def resolve(store_url: str | None, decision_path: Path, survivorship_path: Path)
     if act:
         settings = MatchingSettings.model_validate(act.content)
         used["settings"], contents["settings"] = {"source": "store", "version": act.version, "hash": act.hash}, act.content
-    return Resolved(models["decision"], models["survivorship"], settings, used, contents)
+    src = store.active("sources") if store else None
+    if src:
+        used["sources"], contents["sources"] = {"source": "store", "version": src.version, "hash": src.hash}, src.content
+    return Resolved(models["decision"], models["survivorship"], settings, used, contents, src.content if src else None)

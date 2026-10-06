@@ -233,6 +233,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-06 (session 1, sources + mapping)** — Sources and field-mapping screen and endpoints: inspect a source (masked sample, suggested mapping), preview, propose with a deep check; `sources` is a versioned, audited, four-eyes configuration and runs use the ACTIVE version; 14 new tests (273 + 1 skipped). Section 42.
 - **2026-10-06 (session 1, encryption at rest)** — `dedupe.crypto`: Parquet modular encryption (AES-GCM-256) for every file the pipeline writes, encrypted DuckDB spill files, key from the environment, wrong/missing/mixed key refused, convert/rekey tools, production refuses to start without a key; 8 new tests. Section 41.
 - **2026-10-06 (session 1, 2.7)** — Thin web screens served by the API (`/ui`): review queue and comparison with decisions, people, approvals, rules with dry run, runs; found and fixed a hole in the authorization-matrix test (it never saw routes added with include_router); 4 UI tests. Section 40.
 - **2026-10-06 (session 1, 2.6d)** — Run jobs: `POST /runs` (202), list/status, one run at a time in a separate process, reads 503 during a run, restart marks orphans interrupted, real end-to-end run test; 7 new tests (247 + 1 skipped). Section 39.
@@ -796,3 +797,17 @@ At 139k records (20,000 households), with age: precision 0.9973, recall 0.8556, 
 - Whole-disk/volume encryption is still required underneath (BitLocker, LUKS, cloud volume keys): this layer protects copied files and backups, not a running, unlocked host.
 
 **Next:** sources + mapping screen and endpoints (`sources.manage`), erasure/retention design, KMS client, then the remaining gates (compliance opinion on Aadhaar, independent penetration test, legal review).
+
+## 42. Sources and field mapping from the screens (completes roadmap 2.7)
+
+**Built (`mapping/check.py`, `api/routes_sources.py`, Sources screen in `api/ui/app.js`, `tests/test_api_sources.py`):**
+- `GET /sources/options`, `POST /sources/inspect` (open a source, list columns, suggest a mapping from names and values, show 5 sample rows with every value shortened), `POST /sources/preview` (apply a mapping to a sample: how many rows fill each canonical field, masked canonical rows), `POST /sources/propose` (checks EVERY source against the real source, then proposes the next `sources` version). All need `sources.manage` (platform admin).
+- `sources` is a fourth versioned configuration beside decision / survivorship / settings: same log, same propose -> approve (a DIFFERENT person with `config.approve`) -> activate, rollback, plain-language diff ("source 'crm': field city: ..."). The generic rules endpoint refuses to propose `sources` so nobody can skip the source checks.
+- A run uses the ACTIVE `sources` version when there is one (its exact content is saved as `<work>/config_used/sources.json` and its version and hash appear in the run summary), otherwise the sources file as before. `POST /runs` works without `DEDUPE_PIPELINE_SOURCES` once a version is live.
+- Source settings are untrusted input: per-connector allow-list (no literal URL, password or token can be stored: only the NAME of an environment variable, and only names starting `DEDUPE_SRC_`, so a typed name can never point at `DEDUPE_DATA_KEY` or other secrets), files stay inside `DEDUPE_DATA_ROOTS`, SQL is one SELECT, source ids are validated, errors are fixed sentences plus column/field names (never a path, URL, password or value; a driver error is reported by its type only).
+- Reading a source is a sensitive act: rate limited (20/min per user), logged (`config_change` / `source_inspect`, who and which type, never a value), and values leave the server only shortened (first 2 and last character).
+- Screen: list of live sources, a form per source (type, settings, id), "Open the source and suggest a mapping" gives a column picker per canonical field (suggestions marked), a record-id picker, carry-along columns, an advanced JSON box for combined columns and conditions, Preview, Propose. Approval and going live happen in the Rules screen (which now also lists `sources`).
+
+**Honest limits:** only the connector types that exist (files, Google Sheets, SQL); no S3; the inspect call runs synchronously (a very large Excel file or slow database blocks that request up to the server timeout); the sample is the first rows only, so a column that is empty at the top of a file can look empty; the mapping picker handles plain column choices (combined columns need the JSON box); `config.read` holders (including viewers) can read source settings (file paths, environment variable NAMES, never secrets); the UI is still unverified in a real browser; a Google Sheets source is untested against live Google.
+
+**Next:** erasure and retention design, a KMS client for the data key, S3 connector, business-unit scoping; then the gates: compliance opinion on Aadhaar, independent penetration test, legal review.
