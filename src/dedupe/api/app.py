@@ -15,10 +15,15 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from dedupe.governance.store import ConfigStore
+from dedupe.review.service import ReviewPolicy, ReviewService
+from dedupe.store import JudgmentStore
+
 from .auth import Principal, TokenVerifier
 from .guards import authenticated, public, require
 from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddleware, SlidingWindow
 from .roles import ROLES
+from .routes_read import router as read_router
 from .seclog import EVENTS, SecurityLog
 from .settings import ApiSettings
 
@@ -31,6 +36,9 @@ class Services:
     verifier: TokenVerifier
     seclog: SecurityLog
     limiter: SlidingWindow
+    review: ReviewService | None = None            # masks identifiers, whatever it is asked
+    review_reveal: ReviewService | None = None     # may unmask: used only after the permission, reason and rate-limit checks
+    configs: ConfigStore | None = None
 
 
 class Me(BaseModel):
@@ -65,11 +73,15 @@ def _error(status: int, code: str, message: str, request: Request, headers: dict
     return JSONResponse({"error": {"code": code, "message": message, "request_id": rid}}, status_code=status, headers=headers)
 
 
-def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier | None = None, seclog: SecurityLog | None = None) -> FastAPI:
+def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier | None = None, seclog: SecurityLog | None = None,
+               judgments: JudgmentStore | None = None, configs: ConfigStore | None = None) -> FastAPI:
     settings = settings or ApiSettings.from_env()
     settings.validate()
-    db = settings.database_url or f"sqlite:///{settings.work}/security.db"
-    sv = Services(settings, verifier or TokenVerifier(settings), seclog or SecurityLog.open(db), SlidingWindow())
+    db = settings.database_url or f"sqlite:///{settings.work}/api.db"
+    store = judgments or JudgmentStore.open(db)
+    sv = Services(settings, verifier or TokenVerifier(settings), seclog or SecurityLog.open(db), SlidingWindow(),
+                  ReviewService(settings.work, store, ReviewPolicy(reveal_sensitive=False)),
+                  ReviewService(settings.work, store, ReviewPolicy(reveal_sensitive=True)), configs or ConfigStore.open(db))
 
     @asynccontextmanager
     async def lifespan(app):
@@ -133,4 +145,5 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     def roles(p: Principal = ANY_USER):
         return {r: sorted(perms) for r, perms in ROLES.items()}
 
+    app.include_router(read_router)
     return app

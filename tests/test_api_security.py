@@ -20,6 +20,8 @@ from dedupe.api.devtoken import issue
 from dedupe.api.guards import public
 from dedupe.api.roles import PERMISSIONS, ROLES, roles_allowed
 from dedupe.api.seclog import scrub
+from dedupe.governance import ConfigStore
+from dedupe.store import JudgmentStore
 
 SECRET = "x" * 40
 ISS, AUD = "https://idp.example.com", "dedupe-api"
@@ -243,7 +245,9 @@ def test_security_headers_request_ids_and_no_server_banner(tmp_path):
 def prod_app(tmp_path, **kw):
     s = ApiSettings(env="production", auth_mode="oidc", oidc_issuer=ISS, oidc_audience=AUD, oidc_jwks_url="https://idp.example.com/jwks",
                     allowed_hosts=("dedupe.bank.example",), require_https=True, trust_proxy=True, database_url="postgresql://u:p@db/dedupe", work=tmp_path, **kw)
-    return create_app(s, verifier=TokenVerifier(s, key_resolver=resolver), seclog=SecurityLog.open(f"sqlite:///{tmp_path / 'sec.db'}")), s
+    local = f"sqlite:///{tmp_path / 'sec.db'}"            # the settings name a server database; the test uses local ones
+    return create_app(s, verifier=TokenVerifier(s, key_resolver=resolver), seclog=SecurityLog.open(local),
+                      judgments=JudgmentStore.open(local), configs=ConfigStore.open(local)), s
 
 
 def test_production_app_requires_https_the_right_host_and_hides_its_docs(tmp_path):
