@@ -24,6 +24,7 @@ from .guards import authenticated, public, require
 from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddleware, SlidingWindow
 from .roles import ROLES
 from .routes_read import router as read_router
+from .routes_write import router as write_router
 from .seclog import EVENTS, SecurityLog
 from .settings import ApiSettings
 
@@ -146,4 +147,5 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
         return {r: sorted(perms) for r, perms in ROLES.items()}
 
     app.include_router(read_router)
+    app.include_router(write_router)
     return app

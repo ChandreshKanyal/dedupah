@@ -43,7 +43,7 @@ Out of scope for the software (the deployment must cover them): network perimete
 ## 3. Known gaps (do not claim otherwise)
 
 1. **Encryption at rest** for staging and output files and the database: not built (gate 1 before real data).
-2. **Business-unit scoping** inside a customer is not built; read endpoints expose names, dates of birth and addresses to every `person.read` holder (identifiers are masked and unmasking is controlled and logged). Write endpoints (2.6c) must repeat the object-level and field-level checks.
+2. **Business-unit scoping** inside a customer is not built; read endpoints expose names, dates of birth and addresses to every `person.read` holder (identifiers are masked and unmasking is controlled and logged). Write endpoints (2.6c, built) use strict bodies, the verified identity as actor, an optional idempotency key, bulk caps, four-eyes by identity, and log every change (without values) to the security log.
 3. **No revocation list** for tokens: rely on short lifetimes and the identity provider's session control.
 4. **Rate limits are in memory, per process**: behind several workers or nodes they must also be applied at the gateway/WAF. Every denial writes one log row, so a flood can grow the log: the limits sit before logging, but a gateway limit is still required.
 5. **Erasure and retention** (DPDP): the append-only logs conflict with erasure; no design yet (idea: crypto-shredding, keep keys not names).

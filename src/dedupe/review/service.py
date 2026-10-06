@@ -250,7 +250,7 @@ class ReviewService:
         for part in parts:
             for k in part:
                 if tuple(k) not in members:
-                    raise ReviewError(f"record {tuple(k)} does not belong to {person_id}")
+                    raise ReviewError("a record in the parts does not belong to this person")
         action_id = action_id or uuid.uuid4().hex[:12]
         ev = {"action_id": action_id, "persons": [person_id], "pipeline": self._run_info()}
         j = self.store.split(parts, actor, reason, ev, requires_approval=self.policy.four_eyes_split)
