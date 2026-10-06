@@ -21,9 +21,11 @@ from dedupe.store import JudgmentStore
 
 from .auth import Principal, TokenVerifier
 from .guards import authenticated, public, require
+from .jobs import RunJobs
 from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddleware, SlidingWindow
 from .roles import ROLES
 from .routes_read import router as read_router
+from .routes_runs import router as runs_router
 from .routes_write import router as write_router
 from .seclog import EVENTS, SecurityLog
 from .settings import ApiSettings
@@ -40,6 +42,7 @@ class Services:
     review: ReviewService | None = None            # masks identifiers, whatever it is asked
     review_reveal: ReviewService | None = None     # may unmask: used only after the permission, reason and rate-limit checks
     configs: ConfigStore | None = None
+    jobs: RunJobs | None = None
 
 
 class Me(BaseModel):
@@ -75,7 +78,7 @@ def _error(status: int, code: str, message: str, request: Request, headers: dict
 
 
 def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier | None = None, seclog: SecurityLog | None = None,
-               judgments: JudgmentStore | None = None, configs: ConfigStore | None = None) -> FastAPI:
+               judgments: JudgmentStore | None = None, configs: ConfigStore | None = None, jobs: RunJobs | None = None) -> FastAPI:
     settings = settings or ApiSettings.from_env()
     settings.validate()
     db = settings.database_url or f"sqlite:///{settings.work}/api.db"
@@ -83,6 +86,9 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     sv = Services(settings, verifier or TokenVerifier(settings), seclog or SecurityLog.open(db), SlidingWindow(),
                   ReviewService(settings.work, store, ReviewPolicy(reveal_sensitive=False)),
                   ReviewService(settings.work, store, ReviewPolicy(reveal_sensitive=True)), configs or ConfigStore.open(db))
+    sv.jobs = RunJobs.open(db, settings.work, settings.pipeline_sources) if jobs is None else jobs
+    sv.jobs.on_finish = lambda job_id, code: sv.seclog.record(
+        "run_finished", status=None, object_ref=job_id, detail={"exit_code": code, "outcome": "succeeded" if code == 0 else "failed"})
 
     @asynccontextmanager
     async def lifespan(app):
@@ -148,4 +154,5 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
 
     app.include_router(read_router)
     app.include_router(write_router)
+    app.include_router(runs_router)
     return app

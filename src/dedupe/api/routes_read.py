@@ -156,8 +156,14 @@ def _not_found() -> HTTPException:
     return HTTPException(404, "Not found.")
 
 
+def _no_run_in_progress(sv) -> None:
+    if sv.jobs is not None and sv.jobs.active() is not None:
+        raise HTTPException(503, "A pipeline run is in progress; try again when it has finished.", headers={"Retry-After": "30"})
+
+
 def _review(request: Request):
     sv = _services(request)
+    _no_run_in_progress(sv)
     if sv.review is None or not (sv.settings.work / "review_queue.parquet").exists():
         raise HTTPException(404, "No pipeline run was found.")
     return sv
@@ -197,7 +203,9 @@ def _person(sv, person_id: str, reveal: bool) -> dict:
 # ---- runs and queue ----------------------------------------------------------------------------------------------------
 @router.get("/runs/latest", response_model=RunSummary)
 def latest_run(request: Request, p: Principal = READ_RUNS):
-    path = _services(request).settings.work / "pipeline_summary.json"
+    sv = _services(request)
+    _no_run_in_progress(sv)
+    path = sv.settings.work / "pipeline_summary.json"
     if not path.exists():
         raise HTTPException(404, "No pipeline run was found.")
     s = json.loads(path.read_text(encoding="utf-8"))

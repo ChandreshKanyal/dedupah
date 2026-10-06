@@ -13,7 +13,7 @@
 0. Accuracy status (section 31): most remaining error is information-poor records (same name, nothing else), which no blocking rule can fix safely; age evidence was added and, after the code-review fixes (section 32), measured at 35k records as +0.6 F1 before review, +0.8 after full review, 72 -> 44 wrong merges, for about 30% more review items. Further gains need NEW SIGNALS or real data: e.g. transliteration-aware name matching, household context as evidence for individuals, document images (Phase 3), or a learned blocker/matcher trained on steward decisions.
 1. Try Docker again (`docker info`; Docker Desktop must show "Engine running"; if stuck, `wsl --shutdown` then reopen, or reboot). If it works, `docker compose run --rm --build app` must pass the tests inside the container; fix the Dockerfile as needed. Portability is a hard requirement, so Phase 0 is not truly done until this passes.
 2. Memory for millions: peak is now 4.6 GB at 694k records (section 23). The remaining big holder is clustering in pure Python (dicts/lists per record, ~2 GB left after it). Linear extrapolation gives ~30 GB at 5M records, too much for one machine: move clustering to array-based union-find (NumPy) or DuckDB before a multi-million test.
-3. Phase 2 (product layer): DONE 2.1-2.5, 2.3, 2.6a, 2.6b, 2.6c. NEXT 2.6d run jobs; 2.7 thin web UI; then encryption at rest (gate before real data) and S3 connector. Postgres persistence of outputs moved to Phase 4. Confirm with the user before starting.
+3. Phase 2 (product layer): DONE 2.1-2.5, 2.3, 2.6a-2.6d (API complete). NEXT 2.7 thin web UI; then encryption at rest (gate before real data) and S3 connector. Postgres persistence of outputs moved to Phase 4. Confirm with the user before starting.
 4. Phase 3 documents (OCR / MRZ / face) and Phase 4 hardening (see roadmap).
 
 **Review queue (sections 19-20):** FIXED. At 694k records the queue went from 246,948 pairs of people (13% real) to 14,543 (87% real) via a Senzing-style minimum-evidence rule (`not_enough_evidence`) and dropping the name+city blocking rule; F1 before review rose 0.906 -> 0.922. Cost: ideal-steward ceiling F1 0.956 -> 0.941 (matches only findable by checking ~232k mostly undecidable name+city pairs).
@@ -233,6 +233,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-06 (session 1, 2.6d)** — Run jobs: `POST /runs` (202), list/status, one run at a time in a separate process, reads 503 during a run, restart marks orphans interrupted, real end-to-end run test; 7 new tests (247 + 1 skipped). Section 39.
 - **2026-10-06 (session 1, 2.6c)** — Write endpoints (decisions, bulk, undo, split, override, four-eyes approvals, config propose/dry-run/approve/decline/activate/rollback) as the verified caller; 11 new tests (240 + 1 skipped). Section 38.
 - **2026-10-06 (session 1, 2.6b)** — Read endpoints (runs, queue, people, comparisons, configuration history) with allow-listed responses, role-enforced masking, logged and rate-limited unmasking; 10 new tests (229 + 1 skipped). Section 37.
 - **2026-10-06 (session 1, 2.6a)** — API security baseline (`dedupe.api`): OIDC/dev token verification, role matrix, security log, request defences, safe errors; connector hardening; Aadhaar reference keys; security scanning (bandit, pip-audit, SBOM, gitleaks/trivy in CI files); non-root runtime image; `docs/SECURITY.md`; 55 new tests (219 + 1 skipped). Section 36.
@@ -747,3 +748,16 @@ At 139k records (20,000 households), with age: precision 0.9973, recall 0.8556, 
 **Honest limits:** replay detection scans the judgment history (fine for thousands of decisions, to be indexed later); bulk approve cannot confirm identifier conflicts (by design); no business-unit scoping; the in-memory rate limit still applies per process; no CSRF concern while auth is a bearer header, revisit if cookies are ever used by the UI.
 
 **Next:** 2.6d run jobs (202 + status, one run at a time, separate worker), then 2.7 thin web UI, then encryption at rest before any real data.
+
+## 39. Run jobs (roadmap 2.6d)
+
+**Built (`api/jobs.py`, `api/routes_runs.py`, `tests/test_api_runs.py`):**
+- `POST /runs` (`runs.start`, platform admin) returns 202 at once; `GET /runs` and `GET /runs/{id}` (`runs.read`) show status, who started it, times, exit code. States: queued, running, succeeded, failed, interrupted.
+- The run is a separate OS process (`python -m dedupe.pipeline --database-from-env`), so a crash or memory spike cannot take the API down. State is in the `run_jobs` table; ONE run at a time is enforced from the database. The caller sends only a reason and an optional `Idempotency-Key` (same key = same job, `replayed: true`); sources, work folder, database and configuration are fixed by the operator (`DEDUPE_PIPELINE_SOURCES`, `DEDUPE_WORK_DIR`, `DEDUPE_DATABASE_URL`). Without `DEDUPE_PIPELINE_SOURCES`, starting a run is refused.
+- The command is a fixed argument list (no shell). The database URL travels in the child's environment, not on the command line; the child does not receive `DEDUPE_DEV_AUTH_SECRET`. The child's output goes to `<work>/jobs/<id>.log`, never served by the API (it can hold record identifiers).
+- Outputs are rewritten in place, so while a run is active the read endpoints answer 503 with Retry-After rather than showing a half-written state. Starting and finishing a run are written to the security log (`run_started`, `run_finished` with exit code only).
+- A restarted API marks jobs it finds `running` as `interrupted` (their supervising thread died with the old process).
+
+**Honest limits:** an interrupted job's child process may still be running (it is not killed on API restart; a real deployment should run the worker under a supervisor/orchestrator and this table becomes its queue); no cancel endpoint yet; no run scheduling; in-place output rewriting means reads are unavailable during a run (a write-to-new-folder-then-switch scheme is the fix when run times grow); the 100-household real run proves the plumbing, not scale.
+
+**Next:** 2.7 thin web UI (sources + mapping, rule editor with dry-run, review screen, golden viewer), then encryption at rest before any real data.

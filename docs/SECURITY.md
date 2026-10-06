@@ -67,6 +67,7 @@ Out of scope for the software (the deployment must cover them): network perimete
 | `DEDUPE_ALLOWED_HOSTS`, `DEDUPE_REQUIRE_HTTPS`, `DEDUPE_TRUST_PROXY`, `DEDUPE_CORS_ORIGINS` | network exposure |
 | `DEDUPE_MAX_BODY_BYTES`, `DEDUPE_MAX_PAGE_SIZE`, `DEDUPE_RATE_LIMIT_PER_MIN`, `DEDUPE_IP_RATE_LIMIT_PER_MIN`, `DEDUPE_AUTH_FAIL_LIMIT_PER_MIN`, `DEDUPE_MAX_TOKEN_LIFETIME_S` | limits |
 | `DEDUPE_DATABASE_URL` | the logs' database (server database required in production) |
+| `DEDUPE_PIPELINE_SOURCES`, `DEDUPE_WORK_DIR` | the folder a started run reads and where outputs go; callers never choose them |
 | `DEDUPE_DATA_ROOTS` | folders file sources may be read from (required in production) |
 | `DEDUPE_TOKEN_KEY` | key for Aadhaar tokens (production refuses the development key) |
 

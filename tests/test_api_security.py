@@ -18,6 +18,7 @@ from dedupe.api import ApiSettings, SecurityLog, SettingsError, TokenVerifier, c
 from dedupe.api.auth import AuthError
 from dedupe.api.devtoken import issue
 from dedupe.api.guards import public
+from dedupe.api.jobs import RunJobs
 from dedupe.api.roles import PERMISSIONS, ROLES, roles_allowed
 from dedupe.api.seclog import scrub
 from dedupe.governance import ConfigStore
@@ -247,7 +248,8 @@ def prod_app(tmp_path, **kw):
                     allowed_hosts=("dedupe.bank.example",), require_https=True, trust_proxy=True, database_url="postgresql://u:p@db/dedupe", work=tmp_path, **kw)
     local = f"sqlite:///{tmp_path / 'sec.db'}"            # the settings name a server database; the test uses local ones
     return create_app(s, verifier=TokenVerifier(s, key_resolver=resolver), seclog=SecurityLog.open(local),
-                      judgments=JudgmentStore.open(local), configs=ConfigStore.open(local)), s
+                      judgments=JudgmentStore.open(local), configs=ConfigStore.open(local),
+                      jobs=RunJobs.open(local, tmp_path, None)), s
 
 
 def test_production_app_requires_https_the_right_host_and_hides_its_docs(tmp_path):

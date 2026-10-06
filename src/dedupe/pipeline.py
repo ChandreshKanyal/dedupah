@@ -9,6 +9,7 @@ last four digits survive downstream). Set DEDUPE_TOKEN_KEY (and DEDUPE_ENV=produ
 import argparse
 import dataclasses
 import json
+import os
 import shutil
 import subprocess  # nosec B404
 import threading
@@ -249,11 +250,18 @@ def main() -> None:
     ap.add_argument("--survivorship-config", type=Path, default=Path("configs/survivorship_default.json"))
     ap.add_argument("--judgments-url", default=None, help="steward decision store (SQLAlchemy URL); omit to ignore steward decisions")
     ap.add_argument("--config-store-url", default=None, help="versioned config store (SQLAlchemy URL); its active versions override the config files")
+    ap.add_argument("--database-from-env", action="store_true",
+                    help="use DEDUPE_DATABASE_URL for BOTH the steward decisions and the config store (keeps credentials off the command line)")
     ap.add_argument("--truth", type=Path, default=None, help="ground-truth folder (dev/synthetic only)")
     ap.add_argument("--cap", type=int, default=50)
     ap.add_argument("--household-threshold", type=float, default=5.0)
     ap.add_argument("--keep-raw-aadhaar", action="store_true", help="do NOT erase raw Aadhaar from the canonical file")
     a = ap.parse_args()
+    if a.database_from_env:
+        url = os.environ.get("DEDUPE_DATABASE_URL")
+        if not url:
+            ap.error("--database-from-env needs DEDUPE_DATABASE_URL")
+        a.judgments_url = a.config_store_url = url
     s = run_pipeline(PipelineConfig(a.sources, a.work, decision_config=a.decision_config, survivorship_config=a.survivorship_config,
                                     judgments_url=a.judgments_url, config_store_url=a.config_store_url, truth=a.truth, blocking_cap=a.cap, household_threshold=a.household_threshold,
                                     redact_aadhaar=not a.keep_raw_aadhaar))

@@ -53,6 +53,7 @@ class ApiSettings:
     enable_docs: bool | None = None                     # /docs and /openapi.json: None = on in dev, off in production; True/False forces it
     database_url: str | None = None
     work: Path = Path("data/staging")
+    pipeline_sources: Path | None = None                # the folder of canonical source files a run reads; fixed by the operator, never by a caller
 
     @property
     def production(self) -> bool:
@@ -85,6 +86,7 @@ class ApiSettings:
             trust_proxy=_bool("DEDUPE_TRUST_PROXY", False), require_https=_bool("DEDUPE_REQUIRE_HTTPS", prod),
             enable_docs=_bool("DEDUPE_API_DOCS", not prod), database_url=os.environ.get("DEDUPE_DATABASE_URL") or None,
             work=Path(os.environ.get("DEDUPE_WORK_DIR", "data/staging")),
+            pipeline_sources=Path(os.environ["DEDUPE_PIPELINE_SOURCES"]) if os.environ.get("DEDUPE_PIPELINE_SOURCES") else None,
         )
         s.validate()
         return s
