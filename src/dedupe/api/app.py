@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from dedupe import crypto
 from dedupe.governance.store import ConfigStore
 from dedupe.review.service import ReviewPolicy, ReviewService
 from dedupe.store import JudgmentStore
@@ -82,6 +83,7 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
                judgments: JudgmentStore | None = None, configs: ConfigStore | None = None, jobs: RunJobs | None = None) -> FastAPI:
     settings = settings or ApiSettings.from_env()
     settings.validate()
+    crypto.bind_work(settings.work, write=False)      # a missing or wrong key stops the API at start-up, not on the first request
     db = settings.database_url or f"sqlite:///{settings.work}/api.db"
     store = judgments or JudgmentStore.open(db)
     sv = Services(settings, verifier or TokenVerifier(settings), seclog or SecurityLog.open(db), SlidingWindow(),

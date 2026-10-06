@@ -6,6 +6,8 @@ phone count the same as two. Weights are transparent defaults, editable later by
 """
 import duckdb
 
+from dedupe import crypto
+
 WEIGHTS = {
     "policy_member": 5.0,        # insured on the same (floater) policy as another person
     "policy_nominee": 3.0,       # nominee on the same policy
@@ -26,9 +28,9 @@ def build(con: duckdb.DuckDBPyConnection, std: str, clusters: str, canonical: st
     """Creates tables `rc` (records with cluster) and `evidence(ca, cb, ev, w)`. Returns evidence row count."""
     con.execute(f"""CREATE OR REPLACE TABLE rc AS
         SELECT s.*, c.cluster_id, json_extract_string(k.attributes, '$.policy_no') AS policy_no
-        FROM read_parquet('{std}') s
-        JOIN read_parquet('{clusters}') c USING (source_id, source_record_id)
-        JOIN read_parquet('{canonical}') k USING (source_id, source_record_id)""")
+        FROM {crypto.rp(std)} s
+        JOIN {crypto.rp(clusters)} c USING (source_id, source_record_id)
+        JOIN {crypto.rp(canonical)} k USING (source_id, source_record_id)""")
     con.execute("CREATE OR REPLACE TEMP TABLE pin_n AS SELECT address_pin, count(*) n FROM rc WHERE address_pin IS NOT NULL GROUP BY 1")
     parts = []
     w = WEIGHTS

@@ -11,7 +11,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import pyarrow as pa
-import pyarrow.parquet as pq
+
+from dedupe import crypto
 
 from . import dates
 from . import identifiers as ids
@@ -90,11 +91,10 @@ def standardise_row(r: dict) -> dict:
 
 def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    pf = pq.ParquetFile(in_path)
     seen, filled = Counter(), defaultdict(Counter)
     raw_present = defaultdict(Counter)
-    with pq.ParquetWriter(out_path, SCHEMA) as w:
-        for batch in pf.iter_batches(batch_size=batch_size):
+    with crypto.open_writer(out_path, SCHEMA) as w:
+        for batch in crypto.iter_batches(in_path, batch_size):
             # a canonical file without some fields (older files, other producers) is treated as having them all empty
             cols = {c: batch.column(c).to_pylist() if c in batch.schema.names else [None] * batch.num_rows for c in _RAW_FIELDS}
             rows = []

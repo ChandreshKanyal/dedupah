@@ -5,6 +5,8 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
+from dedupe import crypto
+
 from .comparisons import COMPARISONS
 
 THRESHOLDS = (0.5, 0.8, 0.9, 0.95, 0.99, 0.999)
@@ -22,7 +24,7 @@ def evaluate(con: duckdb.DuckDBPyConnection, scored: Path, data_dir: Path, repor
     con.execute(f"""CREATE OR REPLACE TABLE sp AS
         SELECT s.*, ta.person_id AS pa, tb.person_id AS pb, (ta.person_id = tb.person_id) AS is_true,
                (ta.household_id = tb.household_id) AS same_hh
-        FROM read_parquet('{scored}') s JOIN truth ta ON ta.rid = s.l_rid JOIN truth tb ON tb.rid = s.r_rid""")
+        FROM {crypto.rp(scored)} s JOIN truth ta ON ta.rid = s.l_rid JOIN truth tb ON tb.rid = s.r_rid""")
     prob, is_true = [np.array(x) for x in zip(*con.execute("SELECT probability, is_true FROM sp").fetchall(), strict=True)]
     in_cand = int(is_true.sum())
     out = {"true_pairs_total": true_total, "true_pairs_in_candidates": in_cand, "candidate_pairs": len(prob), "table": []}

@@ -8,9 +8,9 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import duckdb
 import pyarrow as pa
 
+from dedupe import crypto
 from dedupe.evaluation.metrics import pairwise_scores
 
 from . import evidence as ev
@@ -79,10 +79,10 @@ def build_households(con, std, clusters, canonical, out_dir: Path, threshold: fl
     out_dir.mkdir(parents=True, exist_ok=True)
     con.register("hm", pa.table({"cluster_id": list(hh), "household_id": [f"hh_{hh[c]}" for c in hh]}))
     con.execute(f"COPY (SELECT m.cluster_id, m.household_id, count(*) OVER (PARTITION BY m.household_id) AS household_size FROM hm m ORDER BY 2, 1) "
-                f"TO '{out_dir / 'household_members.parquet'}' (FORMAT PARQUET)")
+                f"TO '{out_dir / 'household_members.parquet'}' ({crypto.fmt()})")
     con.register("rel", pa.table({"person_a": [e[0] for e in scores], "person_b": [e[1] for e in scores],
                                   "score": [e[2] for e in scores], "evidence": [e[3] for e in scores]}))
-    con.execute(f"COPY rel TO '{out_dir / 'relationships.parquet'}' (FORMAT PARQUET)")
+    con.execute(f"COPY rel TO '{out_dir / 'relationships.parquet'}' ({crypto.fmt()})")
     return people, scores, hh, info, n_ev
 
 
@@ -97,7 +97,7 @@ def main() -> None:
     ap.add_argument("--max-size", type=int, default=10)
     a = ap.parse_args()
 
-    con = duckdb.connect()
+    con = crypto.connect()
     people, scores, hh, info, n_ev = build_households(con, a.std, a.clusters, a.canonical, a.out, a.threshold, a.max_size)
     edges = [(x, y, s) for x, y, s, _ in scores]
     edge_ev = {(x, y): e for x, y, _, e in scores}

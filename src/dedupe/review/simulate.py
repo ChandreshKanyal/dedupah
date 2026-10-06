@@ -14,8 +14,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-import duckdb
-
+from dedupe import crypto
 from dedupe.clustering import ClusterConfig, cluster
 from dedupe.clustering.judged import STEWARD_WEIGHT
 from dedupe.clustering.run import load_inputs
@@ -50,15 +49,15 @@ class Run:
 
 
 def load_run(work: Path, truth_dir: Path, decision_config: Path = Path("configs/decision_default.json")) -> Run:
-    con = duckdb.connect()
+    con = crypto.connect()
     nodes, edges, vetoes, ids = load_inputs(con, work / "standardised.parquet", work / "candidates.parquet", work / "decisions.parquet",
                                             DecisionConfig.load(decision_config))
     keys = {rid: record_key(s, r) for rid, s, r in con.execute("SELECT rid, source_id, source_record_id FROM records").fetchall()}
     truth, hh, traps = load_truth(truth_dir)
     rows = con.execute(f"""
         SELECT q.cluster_l, q.cluster_r, q.top_probability, q.priority, q.size_l, q.size_r, p.l_rid, p.r_rid, p.probability
-        FROM read_parquet('{work / 'review_queue.parquet'}') q
-        JOIN read_parquet('{work / 'clusters' / 'possible_matches.parquet'}') p
+        FROM {crypto.rp(work / 'review_queue.parquet')} q
+        JOIN {crypto.rp(work / 'clusters' / 'possible_matches.parquet')} p
           ON least(p.cluster_l, p.cluster_r) = q.cluster_l AND greatest(p.cluster_l, p.cluster_r) = q.cluster_r
         ORDER BY q.cluster_l, q.cluster_r, p.probability DESC""").fetchall()
     items: dict = {}

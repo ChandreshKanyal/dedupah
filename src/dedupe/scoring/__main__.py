@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-import duckdb
+from dedupe import crypto
 
 from .evaluate import evaluate, render
 from .predict import score
@@ -15,8 +15,8 @@ from .train import train
 def load_tables(con, std: Path, cand: Path) -> None:
     index = cand.with_suffix(".index.parquet")
     con.execute(f"""CREATE OR REPLACE TABLE records AS
-        SELECT i.rid, s.* FROM read_parquet('{std}') s JOIN read_parquet('{index}') i USING (source_id, source_record_id)""")
-    con.execute(f"CREATE OR REPLACE TABLE candidates AS SELECT l_rid, r_rid, rules FROM read_parquet('{cand}')")
+        SELECT i.rid, s.* FROM {crypto.rp(std)} s JOIN {crypto.rp(index)} i USING (source_id, source_record_id)""")
+    con.execute(f"CREATE OR REPLACE TABLE candidates AS SELECT l_rid, r_rid, rules FROM {crypto.rp(cand)}")
 
 
 def main() -> None:
@@ -28,7 +28,7 @@ def main() -> None:
     ap.add_argument("--data", type=Path, default=Path("data/synthetic"), help="ground truth for evaluation (dev only)")
     ap.add_argument("--threshold", type=float, default=0.9)
     a = ap.parse_args()
-    con = duckdb.connect()
+    con = crypto.connect()
     load_tables(con, a.std, a.cand)
     model = train(con)
     model.save(a.model)

@@ -7,8 +7,7 @@ the decisions but are not re-run here; a settings change that alters blocking or
 import tempfile
 from pathlib import Path
 
-import duckdb
-
+from dedupe import crypto
 from dedupe.decision.apply import decide
 from dedupe.decision.config import DecisionConfig
 
@@ -21,15 +20,15 @@ def dry_run(work: Path, candidate: DecisionConfig, samples: int = 5) -> dict:
     for f in (std, index, scored, before):
         if not f.exists():
             raise FileNotFoundError(f"{f} not found: a dry run compares against the last pipeline run in {work}")
-    con = duckdb.connect()
-    con.execute(f"""CREATE TABLE records AS SELECT i.rid, s.* FROM read_parquet('{std}') s
-                    JOIN read_parquet('{index}') i USING (source_id, source_record_id)""")
+    con = crypto.connect()
+    con.execute(f"""CREATE TABLE records AS SELECT i.rid, s.* FROM {crypto.rp(std)} s
+                    JOIN {crypto.rp(index)} i USING (source_id, source_record_id)""")
     with tempfile.TemporaryDirectory() as tmp:
         after = Path(tmp) / "decisions.parquet"
         decide(con, scored, candidate, after)
         con.execute(f"""CREATE TABLE cmp AS SELECT a.l_rid, a.r_rid, a.probability, b.decision AS before, a.decision AS after,
                         b.decided_by AS before_by, a.decided_by AS after_by
-                        FROM read_parquet('{before}') b JOIN read_parquet('{after}') a USING (l_rid, r_rid)""")
+                        FROM {crypto.rp(before)} b JOIN {crypto.rp(after)} a USING (l_rid, r_rid)""")
         n = con.execute("SELECT count(*) FROM cmp").fetchone()[0]
         zone = {w: dict(con.execute(f"SELECT {w}, count(*) FROM cmp GROUP BY 1").fetchall()) for w in ("before", "after")}
         moves = con.execute("SELECT before, after, count(*) FROM cmp WHERE before <> after GROUP BY 1, 2 ORDER BY 3 DESC").fetchall()

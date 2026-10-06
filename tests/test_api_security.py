@@ -31,6 +31,15 @@ _KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 _OTHER = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
+@pytest.fixture(autouse=True)
+def _data_key():
+    """Production settings need encryption at rest; these tests are about access control, so any valid key will do."""
+    from dedupe import crypto
+    crypto.configure(crypto.parse_key(base64.b64encode(b"k" * 32).decode()))
+    yield
+    crypto.configure()
+
+
 def oidc_settings(**kw):
     base = dict(env="dev", auth_mode="oidc", oidc_issuer=ISS, oidc_audience=AUD, oidc_jwks_url="https://idp.example.com/jwks")
     return ApiSettings(**(base | kw))

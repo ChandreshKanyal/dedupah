@@ -3,6 +3,8 @@ from pathlib import Path
 
 import duckdb
 
+from dedupe import crypto
+
 from .rules import DEFAULT_RULES, Rule
 
 
@@ -15,10 +17,10 @@ def generate(std_path: Path, out_path: Path, rules: list[Rule] | None = None, ca
     Returns per-rule stats. The connection keeps `records` and `rule_pairs` for reporting.
     """
     rules = rules or DEFAULT_RULES
-    con = con or duckdb.connect()
+    con = con or crypto.connect()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     con.execute(f"""CREATE OR REPLACE TABLE records AS
-        SELECT row_number() OVER (ORDER BY source_id, source_record_id) - 1 AS rid, * FROM read_parquet('{std_path}')""")
+        SELECT row_number() OVER (ORDER BY source_id, source_record_id) - 1 AS rid, * FROM {crypto.rp(std_path)}""")
     con.execute("CREATE OR REPLACE TABLE rule_pairs (rule VARCHAR, l BIGINT, r BIGINT)")
     stats = {}
     for rule in rules:
@@ -36,8 +38,8 @@ def generate(std_path: Path, out_path: Path, rules: list[Rule] | None = None, ca
         stats[rule.name] = {"blocks": con.execute("SELECT count(*) FROM blocks").fetchone()[0],
                             "capped_blocks": capped[0], "records_in_capped_blocks": int(capped[1])}
     con.execute(f"""COPY (SELECT l AS l_rid, r AS r_rid, list(DISTINCT rule ORDER BY rule) AS rules
-                    FROM rule_pairs GROUP BY l, r) TO '{out_path}' (FORMAT PARQUET)""")
-    con.execute(f"COPY (SELECT rid, source_id, source_record_id FROM records) TO '{out_path.with_suffix('.index.parquet')}' (FORMAT PARQUET)")
+                    FROM rule_pairs GROUP BY l, r) TO '{out_path}' ({crypto.fmt()})""")
+    con.execute(f"COPY (SELECT rid, source_id, source_record_id FROM records) TO '{out_path.with_suffix('.index.parquet')}' ({crypto.fmt()})")
     n = con.execute("SELECT count(*) FROM records").fetchone()[0]
-    pairs = con.execute(f"SELECT count(*) FROM read_parquet('{out_path}')").fetchone()[0]
+    pairs = con.execute(f"SELECT count(*) FROM {crypto.rp(out_path)}").fetchone()[0]
     return {"records": n, "candidate_pairs": pairs, "all_pairs": n * (n - 1) // 2, "cap": cap, "rules": stats}

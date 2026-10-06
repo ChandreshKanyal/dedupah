@@ -7,7 +7,7 @@ Uses ground truth, so synthetic/dev data only.
 import argparse
 from pathlib import Path
 
-import duckdb
+from dedupe import crypto
 
 # (label, raw expression on canonical `c`, standardised expression on `s`)
 FIELDS = [
@@ -33,9 +33,9 @@ def _pairs_query(expr_col: str) -> str:
 
 
 def field_report(canonical: Path, standardised: Path, data_dir: Path) -> list[dict]:
-    con = duckdb.connect()
-    con.execute(f"CREATE VIEW canon AS SELECT * FROM read_parquet('{canonical}')")
-    con.execute(f"CREATE VIEW std AS SELECT * FROM read_parquet('{standardised}')")
+    con = crypto.connect()
+    con.execute(f"CREATE VIEW canon AS SELECT * FROM {crypto.rp(canonical)}")
+    con.execute(f"CREATE VIEW std AS SELECT * FROM {crypto.rp(standardised)}")
     con.execute(f"CREATE VIEW truth AS SELECT * FROM read_csv_auto('{data_dir / 'ground_truth' / 'record_truth.csv'}', all_varchar=true) "
                 "WHERE role <> 'Co-applicant'")
     out = []

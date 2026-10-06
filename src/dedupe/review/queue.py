@@ -9,6 +9,8 @@ from pathlib import Path
 
 import duckdb
 
+from dedupe import crypto
+
 SIZE_WEIGHT = 0.05  # damped value of merging bigger people; 0.2 was best at 35k records but worse than 0 at 139k (dedupe.review.simulate), 0.05 is neutral-to-better at both
 
 
@@ -33,7 +35,7 @@ def build_queue(con: duckdb.DuckDBPyConnection, out: Path, min_probability: floa
         WHERE top_probability >= {min_probability}""")
     limit = f"LIMIT {int(cap)}" if cap else ""
     out.parent.mkdir(parents=True, exist_ok=True)
-    con.execute(f"COPY (SELECT * FROM _queue ORDER BY priority DESC, cluster_l, cluster_r {limit}) TO '{out}' (FORMAT PARQUET)")
+    con.execute(f"COPY (SELECT * FROM _queue ORDER BY priority DESC, cluster_l, cluster_r {limit}) TO '{out}' ({crypto.fmt()})")
     total_pairs = con.execute("SELECT count(*) FROM decisions WHERE decision = 'review'").fetchone()[0]
     queue_all = con.execute("SELECT count(*) FROM _queue").fetchone()[0]
     return {"review_record_pairs": total_pairs, "queue_items": min(queue_all, cap) if cap else queue_all}

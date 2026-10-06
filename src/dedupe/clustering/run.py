@@ -6,9 +6,9 @@ import argparse
 import json
 from pathlib import Path
 
-import duckdb
 import pyarrow as pa
 
+from dedupe import crypto
 from dedupe.decision.config import DecisionConfig
 from dedupe.evaluation.loaders import load_truth, record_key, write_predictions
 from dedupe.evaluation.metrics import evaluate, render
@@ -19,9 +19,9 @@ from .graph import ClusterConfig, cluster
 
 def load_inputs(con, std: Path, cand: Path, decisions: Path, decision_cfg: DecisionConfig):
     index = cand.with_suffix(".index.parquet")
-    con.execute(f"""CREATE OR REPLACE TABLE records AS SELECT i.rid, s.* FROM read_parquet('{std}') s
-                    JOIN read_parquet('{index}') i USING (source_id, source_record_id)""")
-    con.execute(f"CREATE OR REPLACE TABLE decisions AS SELECT * FROM read_parquet('{decisions}')")
+    con.execute(f"""CREATE OR REPLACE TABLE records AS SELECT i.rid, s.* FROM {crypto.rp(std)} s
+                    JOIN {crypto.rp(index)} i USING (source_id, source_record_id)""")
+    con.execute(f"CREATE OR REPLACE TABLE decisions AS SELECT * FROM {crypto.rp(decisions)}")
     veto_ids = [r.id for r in decision_cfg.rules if r.type == "never_merge" and r.enabled]
     nodes = [r[0] for r in con.execute("SELECT rid FROM records ORDER BY rid").fetchall()]
     edges = con.execute("SELECT l_rid, r_rid, probability FROM decisions WHERE decision = 'auto_merge'").fetchall()
@@ -48,11 +48,11 @@ def write_outputs(con, res, out_dir: Path, registry_dir: Path | None = None, sco
     con.execute("CREATE OR REPLACE TABLE cluster_flags AS SELECT * FROM cluster_flags_src")
     ident = assign_person_ids(con, registry_dir) if registry_dir else None
     con.execute(f"""COPY (SELECT r.rid, r.source_id, r.source_record_id, m.cluster_id FROM records r JOIN cluster_map m USING (rid) ORDER BY rid)
-                    TO '{out_dir / 'clusters.parquet'}' (FORMAT PARQUET)""")
+                    TO '{out_dir / 'clusters.parquet'}' ({crypto.fmt()})""")
     con.execute(f"""COPY (SELECT m.cluster_id, count(*) AS size, count(DISTINCT r.source_id) AS sources, f.flags
                           FROM cluster_map m JOIN records r USING (rid) LEFT JOIN cluster_flags f USING (cluster_id)
-                          GROUP BY m.cluster_id, f.flags ORDER BY size DESC) TO '{out_dir / 'cluster_stats.parquet'}' (FORMAT PARQUET)""")
-    ev_join = (f"JOIN read_parquet('{scored}') s ON s.l_rid = d.l_rid AND s.r_rid = d.r_rid" if scored else "")
+                          GROUP BY m.cluster_id, f.flags ORDER BY size DESC) TO '{out_dir / 'cluster_stats.parquet'}' ({crypto.fmt()})""")
+    ev_join = (f"JOIN {crypto.rp(scored)} s ON s.l_rid = d.l_rid AND s.r_rid = d.r_rid" if scored else "")
     ev_cols = ", s.match_weight, s.* EXCLUDE (l_rid, r_rid, rules, probability, match_weight)" if scored else ""
     con.execute(f"""COPY (SELECT a.cluster_id AS cluster_l, b.cluster_id AS cluster_r, d.l_rid, d.r_rid, d.probability, d.decided_by, d.reason,
                                  rl.source_id AS l_source_id, rl.source_record_id AS l_source_record_id,
@@ -61,7 +61,7 @@ def write_outputs(con, res, out_dir: Path, registry_dir: Path | None = None, sco
                           JOIN records rl ON rl.rid = d.l_rid JOIN records rr ON rr.rid = d.r_rid {ev_join}
                           WHERE d.decision = 'review' AND a.cluster_id <> b.cluster_id
                           ORDER BY least(a.cluster_id, b.cluster_id), greatest(a.cluster_id, b.cluster_id), d.probability DESC)
-                    TO '{out_dir / 'possible_matches.parquet'}' (FORMAT PARQUET)""")
+                    TO '{out_dir / 'possible_matches.parquet'}' ({crypto.fmt()})""")
     (out_dir / "removed_edges.json").write_text(json.dumps(
         [{"l_rid": a, "r_rid": b, "probability": p, "reason": why} for a, b, p, why in res.removed_edges], indent=1), encoding="utf-8")
     return ident
@@ -83,7 +83,7 @@ def main() -> None:
     ap.add_argument("--max-size", type=int, default=15)
     a = ap.parse_args()
 
-    con = duckdb.connect()
+    con = crypto.connect()
     nodes, edges, cannot, ids = load_inputs(con, a.std, a.cand, a.decisions, DecisionConfig.load(a.decision_config))
     cfg = ClusterConfig(max_cluster_size=a.max_size)
     guarded = cluster(nodes, edges, ids, cannot, cfg, guard=True)

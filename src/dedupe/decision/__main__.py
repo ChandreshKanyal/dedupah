@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-import duckdb
+from dedupe import crypto
 
 from .apply import decide
 from .config import DecisionConfig
@@ -22,10 +22,10 @@ def main() -> None:
     ap.add_argument("--data", type=Path, default=Path("data/synthetic"), help="ground truth for the impact report (dev only)")
     a = ap.parse_args()
     cfg = DecisionConfig.load(a.config)
-    con = duckdb.connect()
+    con = crypto.connect()
     index = a.cand.with_suffix(".index.parquet")
-    con.execute(f"""CREATE TABLE records AS SELECT i.rid, s.* FROM read_parquet('{a.std}') s
-                    JOIN read_parquet('{index}') i USING (source_id, source_record_id)""")
+    con.execute(f"""CREATE TABLE records AS SELECT i.rid, s.* FROM {crypto.rp(a.std)} s
+                    JOIN {crypto.rp(index)} i USING (source_id, source_record_id)""")
     summary = decide(con, a.scored, cfg, a.out)
     rep = impact(con, a.data, cfg)
     a.out.with_suffix(".report.json").write_text(json.dumps({"summary": summary, **rep}, indent=2), encoding="utf-8")

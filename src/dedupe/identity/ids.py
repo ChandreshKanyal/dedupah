@@ -15,21 +15,19 @@ ID of the previous group it overlaps most (by source records), and everything el
 IDs are P + 9 digits, handed out in increasing order and never given to a different person: a retired ID only ever returns to
 the group of records it had when it was retired (Jaccard overlap of at least one half). The registry is four small parquet files in `registry_dir` (records, persons, events, retired_members); keep that folder between runs.
 """
-import os
 from pathlib import Path
 
 import duckdb
 import pyarrow as pa
+
+from dedupe import crypto
 
 PREFIX = "P"
 _SEP = "\x1f"
 
 
 def _write(table: pa.Table, path: Path) -> None:
-    import pyarrow.parquet as pq
-    tmp = path.with_suffix(".tmp")
-    pq.write_table(table, tmp)
-    os.replace(tmp, path)  # atomic: a crash never leaves a half-written registry
+    crypto.write_table(table, path)  # atomic (temp file + replace): a crash never leaves a half-written registry; encrypted when a key is set
 
 
 def _num(pid: str) -> int:
@@ -47,15 +45,15 @@ def assign_person_ids(con: duckdb.DuckDBPyConnection, registry_dir: Path) -> dic
     con.execute("""CREATE OR REPLACE TEMP TABLE _nc AS SELECT m.cluster_id AS label, r.source_id, r.source_record_id
                    FROM cluster_map m JOIN records r USING (rid)""")
     if have_old:
-        con.execute(f"CREATE OR REPLACE TEMP TABLE _old AS SELECT person_id, source_id, source_record_id FROM read_parquet('{f_rec}')")
-        persons = con.execute(f"SELECT person_id, status, created_run, last_run FROM read_parquet('{f_per}')").fetchall()
-        persons_full = con.execute(f"SELECT person_id, status, created_run, last_run, retired_run, successor FROM read_parquet('{f_per}')").fetchall()
+        con.execute(f"CREATE OR REPLACE TEMP TABLE _old AS SELECT person_id, source_id, source_record_id FROM {crypto.rp(f_rec)}")
+        persons = con.execute(f"SELECT person_id, status, created_run, last_run FROM {crypto.rp(f_per)}").fetchall()
+        persons_full = con.execute(f"SELECT person_id, status, created_run, last_run, retired_run, successor FROM {crypto.rp(f_per)}").fetchall()
     else:
         con.execute("CREATE OR REPLACE TEMP TABLE _old (person_id VARCHAR, source_id VARCHAR, source_record_id VARCHAR)")
         persons = persons_full = []
     run = 1 + max([max(p[2], p[3] or 0) for p in persons], default=0)
     if f_ret.exists():
-        con.execute(f"CREATE OR REPLACE TEMP TABLE _ret AS SELECT person_id, source_id, source_record_id FROM read_parquet('{f_ret}')")
+        con.execute(f"CREATE OR REPLACE TEMP TABLE _ret AS SELECT person_id, source_id, source_record_id FROM {crypto.rp(f_ret)}")
     else:
         con.execute("CREATE OR REPLACE TEMP TABLE _ret (person_id VARCHAR, source_id VARCHAR, source_record_id VARCHAR)")
 
@@ -140,7 +138,7 @@ def assign_person_ids(con: duckdb.DuckDBPyConnection, registry_dir: Path) -> dic
                      for i, c in enumerate(cols)}), f_per)
     recs = con.execute("SELECT label, source_id, source_record_id FROM _nc ORDER BY source_id, source_record_id").fetchall()
     _write(pa.table({"person_id": [assigned[r[0]] for r in recs], "source_id": [r[1] for r in recs], "source_record_id": [r[2] for r in recs]}), f_rec)
-    old_events = con.execute(f"SELECT * FROM read_parquet('{f_evt}')").fetchall() if f_evt.exists() else []
+    old_events = con.execute(f"SELECT * FROM {crypto.rp(f_evt)}").fetchall() if f_evt.exists() else []
     allev = old_events + events
     _write(pa.table({"run": pa.array([e[0] for e in allev], pa.int32()), "person_id": [e[1] for e in allev], "event": [e[2] for e in allev],
                      "related_person_id": pa.array([e[3] for e in allev], pa.string()), "n_records": pa.array([e[4] for e in allev], pa.int32())}), f_evt)

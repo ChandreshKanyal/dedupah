@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dedupe import crypto
+
 
 class SettingsError(ValueError):
     pass
@@ -94,6 +96,8 @@ class ApiSettings:
     def validate(self) -> None:
         """Raise SettingsError listing everything that is unsafe or incomplete."""
         problems = []
+        if self.production and not crypto.enabled():
+            problems.append("production needs encryption at rest: set DEDUPE_DATA_KEY")
         if self.env not in ("dev", "production"):
             problems.append("DEDUPE_ENV must be 'dev' or 'production'")
         if self.auth_mode not in ("dev", "oidc"):

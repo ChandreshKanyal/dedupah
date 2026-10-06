@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 
-import duckdb
+from dedupe import crypto
 
 from . import SurvivorshipConfig, build_golden
 
@@ -12,7 +12,7 @@ def main() -> None:
     ap.add_argument("--work", type=Path, default=Path("data/staging"))
     ap.add_argument("--config", type=Path, default=Path("configs/survivorship_default.json"))
     a = ap.parse_args()
-    info = build_golden(duckdb.connect(), a.work / "standardised.parquet", a.work / "canonical.parquet",
+    info = build_golden(crypto.connect(), a.work / "standardised.parquet", a.work / "canonical.parquet",
                         a.work / "clusters" / "clusters.parquet", SurvivorshipConfig.load(a.config), a.work / "golden")
     print(info)
 

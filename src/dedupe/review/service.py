@@ -19,8 +19,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-import duckdb
-
+from dedupe import crypto
 from dedupe.scoring.comparisons import COMPARISONS
 from dedupe.store import JudgmentError, JudgmentStore
 from dedupe.survivorship.config import GOLDEN_FIELDS
@@ -63,7 +62,7 @@ class ReviewService:
 
     # ---- helpers -------------------------------------------------------------------------------------------------
     def _con(self):
-        return duckdb.connect()
+        return crypto.connect()
 
     def _run_info(self) -> dict:
         p = self.work / "pipeline_summary.json"
@@ -74,7 +73,7 @@ class ReviewService:
         return {"git_commit": s.get("git_commit"), "identity_run": (s.get("identity") or {}).get("run"), "configs": configs}
 
     def _members(self, con, person: str) -> list[tuple]:
-        rows = con.execute(f"SELECT source_id, source_record_id FROM read_parquet('{self.f['cl']}') WHERE cluster_id = ? ORDER BY source_id, source_record_id",
+        rows = con.execute(f"SELECT source_id, source_record_id FROM {crypto.rp(self.f['cl'])} WHERE cluster_id = ? ORDER BY source_id, source_record_id",
                            [person]).fetchall()
         if not rows:
             raise ReviewError(f"unknown person {person!r}")
@@ -83,7 +82,7 @@ class ReviewService:
     def _pairs_between(self, con, a: str, b: str) -> list[dict]:
         """Review record pairs between two people, best first, each with its stored evidence (when the run kept it)."""
         lo, hi = sorted([a, b])
-        cur = con.execute(f"""SELECT * FROM read_parquet('{self.f['pm']}')
+        cur = con.execute(f"""SELECT * FROM {crypto.rp(self.f['pm'])}
                               WHERE least(cluster_l, cluster_r) = ? AND greatest(cluster_l, cluster_r) = ? ORDER BY probability DESC, l_rid, r_rid""", [lo, hi])
         cols = [d[0] for d in cur.description]
         out = []
@@ -99,7 +98,7 @@ class ReviewService:
             sets = []
             for person in (a, b):
                 sets.append({r[0] for r in con.execute(
-                    f"SELECT s.{col} FROM read_parquet('{self.f['std']}') s JOIN read_parquet('{self.f['cl']}') c USING (source_id, source_record_id) "
+                    f"SELECT s.{col} FROM {crypto.rp(self.f['std'])} s JOIN {crypto.rp(self.f['cl'])} c USING (source_id, source_record_id) "
                     f"WHERE c.cluster_id = ? AND s.{col} IS NOT NULL", [person]).fetchall()})
             if sets[0] and sets[1] and not (sets[0] & sets[1]):
                 out.append(label)
@@ -108,7 +107,7 @@ class ReviewService:
     def _evidence_for(self, con, pair: dict) -> dict:
         rec = pair
         if "match_weight" not in pair:   # run produced without stored evidence: fall back to scanning the scored pairs
-            row = con.execute(f"SELECT * FROM read_parquet('{self.f['scored']}') WHERE l_rid = ? AND r_rid = ?", [pair["l_rid"], pair["r_rid"]]).fetchone()
+            row = con.execute(f"SELECT * FROM {crypto.rp(self.f['scored'])} WHERE l_rid = ? AND r_rid = ?", [pair["l_rid"], pair["r_rid"]]).fetchone()
             if row is None:
                 return {"probability": pair["probability"], "contributions": [], "decided_by": pair["decided_by"], "reason": pair["reason"]}
             rec = dict(zip([d[0] for d in con.description], row, strict=True))
@@ -132,7 +131,7 @@ class ReviewService:
                    if j.status in ("active", "pending_approval")}
         out, skipped, batch, pos = [], 0, 500, 0
         while len(out) < limit:
-            rows = con.execute(f"SELECT * FROM read_parquet('{self.f['queue']}') WHERE top_probability >= ? ORDER BY priority DESC, cluster_l, cluster_r LIMIT ? OFFSET ?",
+            rows = con.execute(f"SELECT * FROM {crypto.rp(self.f['queue'])} WHERE top_probability >= ? ORDER BY priority DESC, cluster_l, cluster_r LIMIT ? OFFSET ?",
                                [min_probability, batch, pos]).fetchall()
             if not rows:
                 break
@@ -159,7 +158,7 @@ class ReviewService:
         import pyarrow as pa
         con.register("page_items", pa.table({"cl": [i["cluster_l"] for i in items], "cr": [i["cluster_r"] for i in items]}))
         rows = con.execute(f"""SELECT least(cluster_l, cluster_r), greatest(cluster_l, cluster_r), l_source_id, l_source_record_id, r_source_id, r_source_record_id
-            FROM read_parquet('{self.f['pm']}') WHERE (least(cluster_l, cluster_r), greatest(cluster_l, cluster_r)) IN (SELECT cl, cr FROM page_items)""").fetchall()
+            FROM {crypto.rp(self.f['pm'])} WHERE (least(cluster_l, cluster_r), greatest(cluster_l, cluster_r)) IN (SELECT cl, cr FROM page_items)""").fetchall()
         out: dict = {}
         for cl, cr, ls, lr, rs, rr in rows:
             k = decided.get(frozenset(((ls, lr), (rs, rr))))
@@ -171,14 +170,14 @@ class ReviewService:
         con = self._con()
         self._members(con, person_id)
         reveal = reveal and self.policy.reveal_sensitive
-        g = con.execute(f"SELECT * FROM read_parquet('{self.f['gold']}') WHERE cluster_id = ?", [person_id]).fetchone()
+        g = con.execute(f"SELECT * FROM {crypto.rp(self.f['gold'])} WHERE cluster_id = ?", [person_id]).fetchone()
         gcols = [d[0] for d in con.description]
         golden = {k: (v if reveal else _mask(k, v)) for k, v in zip(gcols, g, strict=True) if k in GOLDEN_FIELDS and v is not None} if g else {}
         meta = dict(zip(gcols, g, strict=True)) if g else {}
         recs = con.execute(f"""SELECT c.source_id, c.source_record_id, k.full_name, s.name_clean, s.dob, s.gender, s.mobile, s.email, k.address, s.city,
                                       s.address_pin, s.pan, s.aadhaar_last4, s.passport_no, s.dl_no, s.voter_id
-            FROM read_parquet('{self.f['cl']}') c JOIN read_parquet('{self.f['std']}') s USING (source_id, source_record_id)
-            JOIN read_parquet('{self.f['canon']}') k USING (source_id, source_record_id) WHERE c.cluster_id = ? ORDER BY 1, 2 LIMIT 50""", [person_id]).fetchall()
+            FROM {crypto.rp(self.f['cl'])} c JOIN {crypto.rp(self.f['std'])} s USING (source_id, source_record_id)
+            JOIN {crypto.rp(self.f['canon'])} k USING (source_id, source_record_id) WHERE c.cluster_id = ? ORDER BY 1, 2 LIMIT 50""", [person_id]).fetchall()
         rcols = ["source_id", "source_record_id", "name_as_written", "name_clean", "dob", "gender", "mobile", "email", "address", "city", "pincode",
                  "pan", "aadhaar_last4", "passport_no", "dl_no", "voter_id"]
         records = [{k: (v if reveal else _mask(k, v)) for k, v in zip(rcols, r, strict=True)} for r in recs]
@@ -303,7 +302,7 @@ class ReviewService:
 
     def summary(self) -> dict:
         con = self._con()
-        total = con.execute(f"SELECT count(*) FROM read_parquet('{self.f['queue']}')").fetchone()[0] if self.f["queue"].exists() else 0
+        total = con.execute(f"SELECT count(*) FROM {crypto.rp(self.f['queue'])}").fetchone()[0] if self.f["queue"].exists() else 0
         hist = self.store.history(("same_person", "different_person", "unsure", "split", "field_override"))
         by_kind: dict = {}
         for j in hist:

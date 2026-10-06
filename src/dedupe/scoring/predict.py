@@ -3,7 +3,8 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pyarrow as pa
-import pyarrow.parquet as pq
+
+from dedupe import crypto
 
 from .comparisons import COMPARISONS
 from .levels import level_matrix, tf_matrix
@@ -26,5 +27,5 @@ def score(con: duckdb.DuckDBPyConnection, model: Model, out_path: Path) -> dict:
         cols[f"lv_{c.name}"] = pa.array(L[:, j].astype(np.int8))
         cols[f"w_{c.name}"] = pa.array(W[:, j].astype(np.float32))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.table(cols), out_path)
+    crypto.write_table(pa.table(cols), out_path)
     return {"pairs": int(len(prob)), "prior_bits": prior_bits}

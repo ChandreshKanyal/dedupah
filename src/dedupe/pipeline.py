@@ -17,9 +17,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import duckdb
 import psutil
 import pyarrow as pa
+
+from dedupe import crypto
 
 from .blocking import DEFAULT_RULES, rules_by_name
 from .blocking import generate as block
@@ -103,7 +104,7 @@ class _Meter:
 def redact_aadhaar(canonical: Path) -> None:
     """Erase raw Aadhaar numbers from the canonical file (data minimisation). Irreversible: re-ingest to recover."""
     tmp = canonical.with_suffix(".redacted.parquet")
-    duckdb.sql(f"COPY (SELECT * REPLACE (NULL::VARCHAR AS aadhaar) FROM read_parquet('{canonical}')) TO '{tmp}' (FORMAT PARQUET)")
+    crypto.connect().execute(f"COPY (SELECT * REPLACE (NULL::VARCHAR AS aadhaar) FROM {crypto.rp(canonical)}) TO '{tmp}' ({crypto.fmt()})")
     tmp.replace(canonical)
 
 
@@ -121,11 +122,14 @@ def _git_commit() -> str | None:
 def run_pipeline(cfg: PipelineConfig) -> dict:
     meter = _Meter()
     work = cfg.work
+    crypto.require_in_production(os.environ.get("DEDUPE_ENV", "dev").strip().lower())
     work.mkdir(parents=True, exist_ok=True)
+    crypto.bind_work(work)       # refuses a missing, wrong or mixed key before anything is written
     p = {k: work / v for k, v in {"canonical": "canonical.parquet", "std": "standardised.parquet", "cand": "candidates.parquet",
                                   "scored": "scored_pairs.parquet", "decisions": "decisions.parquet", "model": "../models/fs_model.json"}.items()}
     clusters_dir, hh_dir = work / "clusters", work / "households"
-    summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources)}
+    summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources),
+                     "encryption_at_rest": {"enabled": crypto.enabled(), "key_id": crypto.active().key_id if crypto.enabled() else None}}
     res_cfg = resolve(cfg.config_store_url, cfg.decision_config, cfg.survivorship_config)
     dcfg, scfg = res_cfg.decision, res_cfg.survivorship
     if res_cfg.settings:   # an active settings version in the store wins over the values passed in
@@ -146,7 +150,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         with meter.stage("redact_aadhaar"):
             redact_aadhaar(p["canonical"])
     tmp = work / ".duckdb_tmp"
-    con = duckdb.connect(config={"memory_limit": cfg.memory_limit, "temp_directory": str(tmp)})
+    con = crypto.connect({"memory_limit": cfg.memory_limit, "temp_directory": str(tmp)})
     with meter.stage("blocking"):
         gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con, rules=rules_by_name(cfg.blocking_rules))
         summary["blocking"] = {"records": gen["records"], "candidate_pairs": gen["candidate_pairs"], "all_pairs": gen["all_pairs"]}

@@ -6,9 +6,9 @@ import argparse
 import json
 from pathlib import Path
 
-import duckdb
 import pyarrow as pa
-import pyarrow.parquet as pq
+
+from dedupe import crypto
 
 from .connectors import create
 from .mapping import OUTPUT_COLUMNS, IngestConfig, compile_select
@@ -29,8 +29,8 @@ def ingest(config_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
         plans.append((src, conn))
 
     stats: dict = {}
-    con = duckdb.connect()
-    with pq.ParquetWriter(out_path, SCHEMA) as writer:
+    con = crypto.connect()
+    with crypto.open_writer(out_path, SCHEMA) as writer:
         for src, conn in plans:
             offset = 0
             for batch in conn.read_batches(batch_size):
@@ -42,7 +42,7 @@ def ingest(config_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
             stats[src.source_id] = offset
 
     dupes = con.execute(
-        "SELECT source_id, count(*) - count(DISTINCT source_record_id) AS d FROM read_parquet(?) "
+        f"SELECT source_id, count(*) - count(DISTINCT source_record_id) AS d FROM {crypto.rp_param()} "
         "GROUP BY 1 HAVING d > 0", [str(out_path)]).fetchall()
     return {"records": stats, "total": sum(stats.values()), "duplicate_source_record_ids": dict(dupes),
             "output": str(out_path)}

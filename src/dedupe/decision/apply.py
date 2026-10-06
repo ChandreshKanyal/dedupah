@@ -3,6 +3,7 @@ from pathlib import Path
 
 import duckdb
 
+from dedupe import crypto
 from dedupe.scoring.comparisons import pairs_view_sql
 
 from .conditions import compile_condition
@@ -15,7 +16,7 @@ ZONE_REASON = {"auto_merge": "score at or above the auto-merge threshold", "revi
 def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, out: Path) -> dict:
     """Needs `records` (rid + standardised columns) in `con`. Writes `out` with, per pair:
     l_rid, r_rid, probability, decision, decided_by ('score' or a rule id), reason, fired (ids of every rule that matched)."""
-    con.execute(f"CREATE OR REPLACE TABLE scored AS SELECT * FROM read_parquet('{scored}')")
+    con.execute(f"CREATE OR REPLACE TABLE scored AS SELECT * FROM {crypto.rp(scored)}")
     con.execute(f"CREATE OR REPLACE TEMP TABLE wide AS {pairs_view_sql('scored')}")
     rules = [r for r in cfg.rules if r.enabled]
     fire = {r.id: compile_condition(r.when) for r in rules}
@@ -42,7 +43,7 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
                     WHEN decision = 'review' THEN {_q(ZONE_REASON['review'])} ELSE {_q(ZONE_REASON['reject'])} END AS reason, fired
         FROM (SELECT *, {dec} AS decision, {who} AS decided_by, {fired} AS fired FROM flagged)""")
     out.parent.mkdir(parents=True, exist_ok=True)
-    con.execute(f"COPY decisions TO '{out}' (FORMAT PARQUET)")
+    con.execute(f"COPY decisions TO '{out}' ({crypto.fmt()})")
     counts = dict(con.execute("SELECT decision, count(*) FROM decisions GROUP BY 1").fetchall())
     return {"pairs": sum(counts.values()), **{k: counts.get(k, 0) for k in ("auto_merge", "review", "reject")}}
 

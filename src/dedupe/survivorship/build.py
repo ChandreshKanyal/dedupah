@@ -9,6 +9,8 @@ from pathlib import Path
 
 import duckdb
 
+from dedupe import crypto
+
 from .config import GOLDEN_FIELDS, SurvivorshipConfig
 
 _SEP = "\x1f"
@@ -47,9 +49,9 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
     cols = ", ".join(f"({GOLDEN_FIELDS[f]})::VARCHAR AS {f}" for f in GOLDEN_FIELDS)
     con.execute(f"""CREATE OR REPLACE TABLE g_src AS
         SELECT c.cluster_id, s.source_id, s.source_record_id, {_trust_sql(cfg)} AS trust_rank, {_rec_date_sql(cfg)} AS rec_date, {cols}
-        FROM read_parquet('{std}') s
-        JOIN read_parquet('{clusters}') c USING (source_id, source_record_id)
-        JOIN read_parquet('{canonical}') k USING (source_id, source_record_id)""")
+        FROM {crypto.rp(std)} s
+        JOIN {crypto.rp(clusters)} c USING (source_id, source_record_id)
+        JOIN {crypto.rp(canonical)} k USING (source_id, source_record_id)""")
     con.execute("DROP TABLE IF EXISTS g_values")
     first = True
     for _unit, members, strategy in cfg.units():
@@ -83,13 +85,13 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
             con.execute("INSERT INTO g_values VALUES (?, ?, ?, 'steward', ?, 'steward_override', 1, 1, NULL)",
                         [cid, o["field"], o["value"], str(o["id"])])
         applied += 1
-    con.execute(f"COPY (SELECT * EXCLUDE (rec_date) FROM g_values ORDER BY cluster_id, field) TO '{out_dir / 'golden_values.parquet'}' (FORMAT PARQUET)")
+    con.execute(f"COPY (SELECT * EXCLUDE (rec_date) FROM g_values ORDER BY cluster_id, field) TO '{out_dir / 'golden_values.parquet'}' ({crypto.fmt()})")
     fields = ", ".join(f"max(value) FILTER (WHERE field = '{f}') AS {f}" for f in GOLDEN_FIELDS)
     con.execute(f"""COPY (
         WITH w AS (SELECT cluster_id, {fields}, list(field ORDER BY field) FILTER (WHERE n_distinct > 1) AS conflict_fields FROM g_values GROUP BY 1),
              m AS (SELECT cluster_id, count(*) AS record_count, list(DISTINCT source_id ORDER BY source_id) AS sources FROM g_src GROUP BY 1)
         SELECT m.cluster_id, m.record_count, m.sources, w.* EXCLUDE (cluster_id, conflict_fields), coalesce(w.conflict_fields, []::VARCHAR[]) AS conflict_fields
-        FROM m LEFT JOIN w USING (cluster_id) ORDER BY 1) TO '{out_dir / 'golden_records.parquet'}' (FORMAT PARQUET)""")
+        FROM m LEFT JOIN w USING (cluster_id) ORDER BY 1) TO '{out_dir / 'golden_records.parquet'}' ({crypto.fmt()})""")
     n = con.execute("SELECT count(DISTINCT cluster_id) FROM g_src").fetchone()[0]
     nv = con.execute("SELECT count(*) FROM g_values").fetchone()[0]
     nc = con.execute("SELECT count(*) FROM g_values WHERE n_distinct > 1").fetchone()[0]
