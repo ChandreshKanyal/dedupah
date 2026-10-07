@@ -9,7 +9,7 @@ Connection settings are untrusted input (see `dedupe.mapping.check`): per-type a
 variable starting with DEDUPE_SRC_, files inside DEDUPE_DATA_ROOTS or uploaded to this project, SQL as one SELECT. Looking inside a source reads
 real customer data: it is rate limited, logged (never a value), and values leave the server only shortened.
 """
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -301,8 +301,38 @@ async def upload(request: Request, project_id: str = PID, filename: str = Query(
 
 @router.get("/projects/{project_id}/uploads")
 def list_uploads(request: Request, project_id: str = PID, p: Principal = MANAGE):
-    project_scope(request, project_id)
-    return _services(request).uploads.list(project_id)
+    """The project's uploaded files, each with the connections that use it (a file no connection uses can be deleted)."""
+    ps = project_scope(request, project_id)
+    used = _upload_users(ps.configs)
+    return [{**u, "used_by": sorted(used.get(u["upload_id"], set()))} for u in _services(request).uploads.list(project_id)]
+
+
+def _upload_users(configs) -> dict[str, set]:
+    """upload id -> connections whose live or waiting version reads it (declined and replaced versions do not count)."""
+    out: dict[str, set] = {}
+    for name in configs.names("connection/"):
+        for v in configs.versions(name):
+            if v.status in ("active", "approved", "proposed"):
+                uid = ((configs.get(name, v.version) or {}).get("connector") or {}).get("upload_id")
+                if uid:
+                    out.setdefault(uid, set()).add(name.split("/", 1)[1])
+    return out
+
+
+@router.delete("/projects/{project_id}/uploads/{upload_id}", status_code=204)
+def delete_upload(request: Request, project_id: str = PID, upload_id: str = Path(pattern=r"^U[0-9a-f]{12}$"), p: Principal = MANAGE):
+    """Erase an uploaded file of this project that no live or waiting connection uses (for example one left behind by an abandoned wizard)."""
+    ps = project_scope(request, project_id)
+    sv = _services(request)
+    if sv.uploads.project_of(upload_id) != project_id:
+        raise HTTPException(404, "Not found.")
+    users = _upload_users(ps.configs).get(upload_id)
+    if users:
+        raise HTTPException(409, "Connections still use this file: " + ", ".join(sorted(users)) + ". Change them to another file first.")
+    sv.uploads.delete(upload_id)
+    sv.seclog.record("data_deleted", actor=p.actor, roles=p.roles, status=204, object_ref=f"{project_id}/{upload_id}", detail={"action": "delete_upload"},
+                     **_context(request))
+    return Response(status_code=204)
 
 
 __all__ = ["router", "mask_cell"]

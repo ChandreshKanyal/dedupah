@@ -1,5 +1,6 @@
 """Projects and where their data lives."""
 import re
+import shutil
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -154,6 +155,37 @@ class Workspace:
         with self.engine.begin() as c:
             c.execute(update(projects).where(projects.c.id == pid).values(second_approval=int(bool(value))))
         self._settings[pid] = bool(value)
+
+    def update(self, pid: str, name: str | None = None, description: str | None = None) -> Project:
+        values = {}
+        if name is not None:
+            name = name.strip()
+            if not name or len(name) > 120:
+                raise WorkspaceError("a project needs a name of up to 120 characters")
+            values["name"] = name
+        if description is not None:
+            values["description"] = description.strip()[:500]
+        if values:
+            with self.engine.begin() as c:
+                c.execute(update(projects).where(projects.c.id == pid).values(**values))
+        return self.get(pid)
+
+    def delete(self, pid: str) -> None:
+        """Erase a project: its folder (runs, person IDs, its own database with decisions and rules) and its rows here. Runs, uploads, schedules
+        and connection checks are removed by their owners first (see the API). On a shared database server the project's database is the
+        operator's to drop, so deleting is refused there rather than done halfway."""
+        if self.template:
+            raise WorkspaceError("projects that keep their database on a shared server are removed by the operator")
+        with self._lock:
+            pair = self._stores.pop(pid, None)
+        if pair:
+            for store in pair:
+                store.engine.dispose()
+        with self.engine.begin() as c:
+            c.execute(project_grants.delete().where(project_grants.c.project_id == pid))
+            c.execute(projects.delete().where(projects.c.id == pid))
+        self._settings.pop(pid, None)
+        shutil.rmtree(self.project_dir(pid), ignore_errors=True)
 
     def is_owner(self, pid: str, subject: str) -> bool:
         return "owner" in self.roles_for(pid, subject)

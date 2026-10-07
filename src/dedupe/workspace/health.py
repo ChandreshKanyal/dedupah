@@ -72,6 +72,10 @@ class ConnectionHealth:
                              .order_by(checks.c.id.desc()).limit(limit))
             return [self._view(r) for r in rows]
 
+    def delete_for_project(self, project_id: str) -> int:
+        with self.engine.begin() as c:
+            return c.execute(checks.delete().where(checks.c.project_id == project_id)).rowcount
+
     def latest(self, project_id: str) -> dict[str, dict]:
         """The newest check of each connection in a project (for the connection list)."""
         out: dict[str, dict] = {}

@@ -37,8 +37,13 @@ def test_nothing_in_the_page_or_script_can_inject_markup_or_leak_the_token():
     js = chr(10).join(x for x in lines if not x.lstrip().startswith("//"))      # code only, not comments
     assert re.findall(r"<script\b(?![^>]*\bsrc=)", html) == [] and not re.search(r"\son[a-z]+\s*=|style\s*=", html)          # no inline code or styles
     for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "sessionStorage", "document.cookie",
-                   "location.hash", "location.search"):
+                   "location.search", "location.href", "history.pushState"):
         assert banned not in js, banned
+    # the address bar holds which screen is open (so Back, reload and links work); it is read and written in exactly two small functions,
+    # and every part is checked against a fixed pattern before use
+    assert js.count("location.hash") == 2
+    assert "function readAddress() { return window.location.hash" in js and "window.location.hash = path;" in js
+    assert 'const PART = /^[A-Za-z0-9_.-]{1,64}$/;' in js and "parts.every((x) => PART.test(x))" in js
     # browser storage holds the colour theme and nothing else (never the token)
     assert re.findall(r"localStorage\.(\w+)\(([^,)]*)", js) == [("setItem", "THEME_KEY"), ("getItem", "THEME_KEY")]
     assert 'const THEME_KEY = "dedupe-theme";' in js

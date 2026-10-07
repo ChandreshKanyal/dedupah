@@ -12,7 +12,7 @@ router = APIRouter()
 UI = Path(__file__).parent / "ui"
 FILES = {"": ("index.html", "text/html; charset=utf-8"), "app.js": ("app.js", "text/javascript; charset=utf-8"),
          "style.css": ("style.css", "text/css; charset=utf-8"),
-         **{n: (n, "image/png") for n in ("logo-light.png", "logo-dark.png", "wordmark-light.png", "wordmark-dark.png")}}
+         **{n: (n, "image/png") for n in ("logo-light.png", "logo-dark.png", "wordmark-light.png", "wordmark-dark.png", "favicon.png")}}
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
        "frame-ancestors 'none'")
 _cache: dict[str, bytes] = {}

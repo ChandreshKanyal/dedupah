@@ -230,6 +230,18 @@ class Uploads:
             return [{"upload_id": r.id, "filename": r.filename, "kind": r.kind, "rows": r.rows, "columns": json.loads(r.columns), "uploaded_by": r.uploaded_by,
                      "created_at": r.created_at} for r in c.execute(q)]
 
+    def delete(self, upload_id: str) -> bool:
+        """Erase an uploaded file (encrypted Parquet) and its row."""
+        self.path(upload_id).unlink(missing_ok=True)
+        with self.engine.begin() as c:
+            return c.execute(uploads.delete().where(uploads.c.id == upload_id)).rowcount > 0
+
+    def delete_for_project(self, project_id: str) -> int:
+        ids = [u["upload_id"] for u in self.list(project_id, limit=100_000)]
+        for uid in ids:
+            self.delete(uid)
+        return len(ids)
+
     def project_of(self, upload_id: str) -> str | None:
         """The project that owns this upload (None when it is unknown or was uploaded before projects owned files)."""
         with self.engine.connect() as c:

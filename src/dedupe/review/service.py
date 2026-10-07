@@ -121,7 +121,7 @@ class ReviewService:
                 "contributions": contrib, "decided_by": pair["decided_by"], "reason": pair["reason"]}
 
     # ---- reading -------------------------------------------------------------------------------------------------
-    def queue(self, limit: int = 50, offset: int = 0, status: str = "open", min_probability: float = 0.0) -> list[dict]:
+    def queue(self, limit: int = 50, offset: int = 0, status: str = "open", min_probability: float = 0.0, max_probability: float = 1.0) -> list[dict]:
         """Ranked person pairs. status: 'open' (nothing decided yet), 'unsure' (snoozed), 'all'. A pair is hidden once a steward decided any of its
         record pairs, even before the next pipeline run (the next run applies the decision and rebuilds the queue)."""
         if status not in ("open", "unsure", "all"):
@@ -131,8 +131,8 @@ class ReviewService:
                    if j.status in ("active", "pending_approval")}
         out, skipped, batch, pos = [], 0, 500, 0
         while len(out) < limit:
-            rows = con.execute(f"SELECT * FROM {crypto.rp(self.f['queue'])} WHERE top_probability >= ? ORDER BY priority DESC, cluster_l, cluster_r LIMIT ? OFFSET ?",
-                               [min_probability, batch, pos]).fetchall()
+            rows = con.execute(f"SELECT * FROM {crypto.rp(self.f['queue'])} WHERE top_probability >= ? AND top_probability <= ? "
+                               "ORDER BY priority DESC, cluster_l, cluster_r LIMIT ? OFFSET ?", [min_probability, max_probability, batch, pos]).fetchall()
             if not rows:
                 break
             cols = [d[0] for d in con.description]
@@ -203,7 +203,7 @@ class ReviewService:
     # ---- acting --------------------------------------------------------------------------------------------------
     def _evidence(self, con, pair, extra) -> dict:
         ev = self._evidence_for(con, pair)
-        return {"action_id": extra["action_id"], "persons": extra["persons"], "probability": ev["probability"],
+        return {"action_id": extra["action_id"], "persons": extra["persons"], "probability": ev["probability"], "run_id": self.work.name,
                 "top_evidence": ev["contributions"][:4], "decided_by": ev["decided_by"], "pipeline": self._run_info()}
 
     def approve_match(self, person_l: str, person_r: str, actor: str, reason: str = "", confirm_id_conflict: bool = False,
@@ -214,7 +214,8 @@ class ReviewService:
             raise ReviewError("no record pair links these two people in the queue; they may already be merged or never were candidates")
         conflicts = self._hard_conflicts(con, person_l, person_r)
         if conflicts and not confirm_id_conflict:
-            raise ReviewError(f"these people carry conflicting identifiers ({', '.join(conflicts)}); merge only with confirm_id_conflict=True and a reason")
+            raise ReviewError(f"These two people have conflicting identifiers ({', '.join(c.replace('_', ' ') for c in conflicts)}). "
+                              "Tick 'I confirm they are one person' and give a reason to merge them anyway.")
         size = len(self._members(con, person_l)) + len(self._members(con, person_r))
         approval = bool(conflicts and self.policy.four_eyes_id_conflict) or (
             self.policy.four_eyes_merge_min_records is not None and size >= self.policy.four_eyes_merge_min_records)
@@ -251,7 +252,7 @@ class ReviewService:
                 if tuple(k) not in members:
                     raise ReviewError("a record in the parts does not belong to this person")
         action_id = action_id or uuid.uuid4().hex[:12]
-        ev = {"action_id": action_id, "persons": [person_id], "pipeline": self._run_info()}
+        ev = {"action_id": action_id, "persons": [person_id], "run_id": self.work.name, "pipeline": self._run_info()}
         j = self.store.split(parts, actor, reason, ev, requires_approval=self.policy.four_eyes_split)
         return {"action_id": action_id, "judgment_ids": [j], "pending_approval": self.policy.four_eyes_split}
 
@@ -260,8 +261,8 @@ class ReviewService:
         anchors = self._members(con, person_id)[:5]
         action_id = action_id or uuid.uuid4().hex[:12]
         approval = field in self.policy.four_eyes_override_fields
-        j = self.store.override_field(field, value, anchors, actor, reason, {"action_id": action_id, "persons": [person_id], "pipeline": self._run_info()},
-                                      requires_approval=approval)
+        j = self.store.override_field(field, value, anchors, actor, reason, {"action_id": action_id, "persons": [person_id], "run_id": self.work.name,
+                                                                         "pipeline": self._run_info()}, requires_approval=approval)
         return {"action_id": action_id, "judgment_ids": [j], "pending_approval": approval}
 
     def undo_action(self, action_id: str, actor: str, reason: str = "") -> dict:

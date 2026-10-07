@@ -15,7 +15,7 @@ from .auth import Principal
 from .guards import _context, _services, authenticated, require, require_or_owner
 from .routes_read import CONFIG_NAMES, PID, RID
 from .routes_write import _key
-from .scope import can_see, project_scope
+from .scope import can_see, project_scope, run_scope
 from .seclog import scrub_text
 
 router = APIRouter()
@@ -24,8 +24,9 @@ SEE_RUNS = Depends(require("runs.read"))
 START = Depends(require("runs.start"))
 MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's owner manages its members and settings
 CREATE = Depends(require("projects.create"))
+DELETE_DATA = Depends(require("data.delete"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
-SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source", "scoring")
+SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments")
 
 
 class Strict(BaseModel):
@@ -40,7 +41,17 @@ class ProjectIn(Strict):
 
 
 class SettingsIn(Strict):
-    second_approval: bool
+    second_approval: bool | None = None
+    name: str | None = Field(None, min_length=1, max_length=120)
+    description: str | None = Field(None, max_length=500)
+
+
+class DeleteIn(Strict):
+    reason: str = Field(min_length=10, max_length=300)
+
+
+class DeleteProjectIn(DeleteIn):
+    confirm: str = Field(min_length=1, max_length=40)        # the project's id, typed again: deleting a project cannot be undone
 
 
 class GrantIn(Strict):
@@ -113,14 +124,25 @@ def home(request: Request, p: Principal = ANY):
     if "runs.read" in p.permissions:
         out["recent_runs"] = [_run_view(r, sv=sv) for r in sv.jobs.recent(limit=50) if can_see(sv, p, r.project_id)][:8]
     if "queue.read" in p.permissions:
-        latest = [sv.jobs.latest_succeeded(x.id) for x in projects]
-        out["open_review_items"] = sum((r.summary.get("review_items") or 0) for r in latest if r)
+        out["open_review_items"] = sum(open_items(request, x.id) or 0 for x in projects)
     if "judgment.approve" in p.permissions or "config.approve" in p.permissions:
         decisions = sum(len(sv.workspace.stores(x.id)[0].pending_approval()) for x in projects) if "judgment.approve" in p.permissions else 0
-        connections = sum(1 for x in projects for n in sv.workspace.stores(x.id)[1].names("connection/")
-                          if sv.workspace.stores(x.id)[1].versions(n)[-1].status == "proposed") if "config.approve" in p.permissions else 0
-        out["pending_approvals"] = decisions + connections
+        changes = sum(1 for x in projects for n in sv.workspace.stores(x.id)[1].names()
+                      if sv.workspace.stores(x.id)[1].versions(n)[-1].status in ("proposed", "approved")) if "config.approve" in p.permissions else 0
+        out["pending_approvals"] = decisions + changes
     return out
+
+
+def open_items(request: Request, project_id: str) -> int | None:
+    """Pairs still waiting for a person in the project's latest finished run (decisions already made are not counted)."""
+    sv = _services(request)
+    run = sv.jobs.latest_succeeded(project_id)
+    if run is None:
+        return None
+    try:
+        return run_scope(request, project_id, run.id).review.summary().get("open_now")
+    except HTTPException:
+        return None
 
 
 # ---- projects ----------------------------------------------------------------------------------------------------------
@@ -207,9 +229,11 @@ def run_detail(request: Request, project_id: str = PID, run_id: str = RID, p: Pr
     project_scope(request, project_id)
     sv = _services(request)
     run = sv.jobs.get(project_id, run_id)
-    if run is None:
+    if run is None or run.status == "deleted":
         raise HTTPException(404, "Not found.")
     out = _run_view(run, sv=sv).model_dump()
+    latest = sv.jobs.latest_succeeded(project_id)
+    out["latest_run_id"] = latest.id if latest else None            # a newer finished run means this run's review queue is out of date
     summ = sv.workspace.run_dir(project_id, run_id) / "pipeline_summary.json"
     if run.status == "succeeded" and summ.exists():
         s = json.loads(summ.read_text(encoding="utf-8"))
@@ -293,14 +317,68 @@ def project_settings(request: Request, body: SettingsIn, project_id: str = PID, 
     """Whether this project needs a second person to approve connection and rule changes (and sensitive decisions)."""
     ps = project_scope(request, project_id)
     sv = _services(request)
-    if body.second_approval == ps.project.second_approval:
-        return _project_view(sv, ps.project, p)
-    if body.second_approval and len({g.subject for g in sv.workspace.members(project_id)}) < 2:
-        raise HTTPException(409, "Add at least one more person to the project first: a second approver is needed.")
-    sv.workspace.set_second_approval(project_id, body.second_approval)
-    sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=200, object_ref=project_id,
-                     detail={"action": "set_second_approval", "second_approval": body.second_approval}, **_context(request))
+    if body.name is not None or body.description is not None:
+        try:
+            sv.workspace.update(project_id, body.name, body.description)
+        except WorkspaceError as e:
+            raise HTTPException(422, str(e)) from None
+        sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=200, object_ref=project_id,
+                         detail={"action": "rename_project"}, **_context(request))
+    if body.second_approval is not None and body.second_approval != ps.project.second_approval:
+        if body.second_approval and len({g.subject for g in sv.workspace.members(project_id)}) < 2:
+            raise HTTPException(409, "Add at least one more person to the project first: a second approver is needed.")
+        sv.workspace.set_second_approval(project_id, body.second_approval)
+        sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=200, object_ref=project_id,
+                         detail={"action": "set_second_approval", "second_approval": body.second_approval}, **_context(request))
     return _project_view(sv, sv.workspace.get(project_id), p)
+
+
+# ---- deleting (personal data must be erasable; the audit trail keeps who deleted what, when and why) -------------------------------
+def _forget_cached(sv, project_id: str, run_id: str | None = None) -> None:
+    for k in [k for k in sv.reviews if k[0] == project_id and (run_id is None or k[1] == run_id)]:
+        sv.reviews.pop(k, None)
+
+
+@router.post("/projects/{project_id}/runs/{run_id}/delete", response_model=RunView)
+def delete_run(request: Request, body: DeleteIn, project_id: str = PID, run_id: str = RID, p: Principal = DELETE_DATA):
+    """Erase a finished run's results. Decisions made while reviewing it belong to the project and stay in force."""
+    project_scope(request, project_id)
+    sv = _services(request)
+    try:
+        run = sv.jobs.delete(project_id, run_id)
+    except RunError as e:
+        raise HTTPException(404 if "no such" in str(e) else 409, "Not found." if "no such" in str(e) else str(e)) from None
+    _forget_cached(sv, project_id, run_id)
+    sv.seclog.record("data_deleted", actor=p.actor, roles=p.roles, status=200, object_ref=f"{project_id}/{run_id}",
+                     detail={"action": "delete_run", "reason": body.reason}, **_context(request))
+    return _run_view(run, sv=sv)
+
+
+@router.post("/projects/{project_id}/delete", status_code=200)
+def delete_project(request: Request, body: DeleteProjectIn, project_id: str = PID, p: Principal = DELETE_DATA):
+    """Erase a whole project: runs, uploaded files, person IDs, decisions, rules, connections, schedules. Cannot be undone. Once the project has
+    members only its owner (or administration) may do it, and the id must be typed again."""
+    ps = project_scope(request, project_id)
+    sv = _services(request)
+    if sv.workspace.members(project_id) and not (sv.workspace.is_owner(project_id, p.sub) or "projects.all" in p.permissions):
+        raise HTTPException(403, "Only the project's owner can delete it.")
+    if body.confirm != ps.project.id:
+        raise HTTPException(422, "Type the project's id exactly to confirm.")
+    try:
+        runs_removed = sv.jobs.forget_project(project_id)
+    except RunError as e:
+        raise HTTPException(409, str(e)) from None
+    files = sv.uploads.delete_for_project(project_id)
+    sv.schedules.delete_for_project(project_id)
+    sv.health.delete_for_project(project_id)
+    _forget_cached(sv, project_id)
+    try:
+        sv.workspace.delete(project_id)
+    except WorkspaceError as e:
+        raise HTTPException(409, str(e)) from None
+    sv.seclog.record("data_deleted", actor=p.actor, roles=p.roles, status=200, object_ref=project_id,
+                     detail={"action": "delete_project", "reason": body.reason, "runs": runs_removed, "uploads": files}, **_context(request))
+    return {"deleted": project_id, "runs": runs_removed, "uploads": files}
 
 
 @router.get("/projects/{project_id}/activity")

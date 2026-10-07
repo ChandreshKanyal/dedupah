@@ -5,6 +5,8 @@ client until someone lists it here. Identifiers (PAN, phone, email, document num
 `pii.unmask` AND gives a reason; each such view is written to the security log (who, which person, which fields, why) and is rate limited.
 Names, dates of birth and addresses are shown to everyone who may read people: that is a policy choice stewards need, not a masking guarantee.
 """
+import json
+from pathlib import Path as Path_
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -167,9 +169,11 @@ def _log_unmask(request: Request, p: Principal, object_ref: str, reason: str, wh
 # ---- queue -------------------------------------------------------------------------------------------------------------
 @router.get(RUN + "/queue", response_model=list[QueueItem])
 def queue(request: Request, project_id: str = PID, run_id: str = RID, limit: int = Query(50, ge=1), offset: int = Query(0, ge=0, le=100_000),
-          status: Literal["open", "unsure", "all"] = "open", min_probability: float = Query(0.0, ge=0.0, le=1.0), p: Principal = READ_QUEUE):
+          status: Literal["open", "unsure", "all"] = "open", min_probability: float = Query(0.0, ge=0.0, le=1.0),
+          max_probability: float = Query(1.0, ge=0.0, le=1.0), p: Principal = READ_QUEUE):
     rs = run_scope(request, project_id, run_id)
-    rows = rs.review.queue(limit=min(limit, _services(request).settings.max_page_size), offset=offset, status=status, min_probability=min_probability)
+    rows = rs.review.queue(limit=min(limit, _services(request).settings.max_page_size), offset=offset, status=status, min_probability=min_probability,
+                           max_probability=max_probability)
     return [QueueItem(person_l=r["cluster_l"], person_r=r["cluster_r"], **{k: r[k] for k in (
         "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state")}) for r in rows]
 
@@ -228,6 +232,28 @@ def config_version(request: Request, name: ConfigName, project_id: str = PID, ve
         return {"name": name, "version": version, "content": project_scope(request, project_id).configs.get(name, version)}
     except ConfigError:
         raise _not_found() from None
+
+
+DEFAULT_FILES = {"decision": "decision_default.json", "survivorship": "survivorship_default.json"}
+
+
+def _default_content(name: str) -> dict:
+    """What a run uses when the project has no live version: the shipped file (decision, survivorship) or the settings' own defaults."""
+    if name == "settings":
+        from dedupe.governance.settings import MatchingSettings
+        return MatchingSettings().model_dump(mode="json")
+    for base in (Path_.cwd(), Path_(__file__).resolve().parents[3]):
+        f = base / "configs" / DEFAULT_FILES[name]
+        if f.exists():
+            return json.loads(f.read_text(encoding="utf-8"))
+    raise _not_found()
+
+
+@router.get(PROJ + "/config/{name}/default")
+def config_default(request: Request, name: ConfigName, project_id: str = PID, p: Principal = READ_CONFIG):
+    """The built-in content, as a starting point for a project's first version."""
+    project_scope(request, project_id)
+    return {"name": name, "content": _default_content(name)}
 
 
 @router.get(PROJ + "/config/{name}/diff", response_model=list[str])

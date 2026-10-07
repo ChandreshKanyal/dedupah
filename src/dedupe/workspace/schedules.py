@@ -164,6 +164,10 @@ class Schedules:
         with self.engine.begin() as c:
             return c.execute(schedules.delete().where(schedules.c.id == sid, schedules.c.project_id == project_id)).rowcount > 0
 
+    def delete_for_project(self, project_id: str) -> int:
+        with self.engine.begin() as c:
+            return c.execute(schedules.delete().where(schedules.c.project_id == project_id)).rowcount
+
     # ---- firing -------------------------------------------------------------------------------------------------------------
     def tick(self) -> "list[dict]":
         """Start every schedule that is due. Returns what happened, one item per due schedule: {"id", "outcome", "run_id"}."""

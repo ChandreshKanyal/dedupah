@@ -27,7 +27,7 @@ from .scope import RUN_ID, project_scope, run_scope
 router = APIRouter()
 WRITE = Depends(require("judgment.write"))
 APPROVE = Depends(require("judgment.approve"))
-SEE_PENDING = Depends(require("judgment.approve"))
+SEE_PENDING = Depends(require("queue.read"))
 PROPOSE = Depends(require("config.propose"))
 APPROVE_CFG = Depends(require("config.approve"))
 ACTIVATE_CFG = Depends(require("config.activate"))
@@ -117,6 +117,12 @@ class PendingRow(BaseModel):
     reason: str
     persons: list[str] | None = None
     created_at: str
+    run_id: str | None = None                 # the run the decision was made in (open its comparison there)
+    probability: float | None = None
+    top_evidence: list[dict] = []
+    field: str | None = None                  # field overrides: which field (never the value: that is personal data)
+    yours: bool = False                       # made by the caller: they cannot approve it themselves
+    action_id: str | None = None
 
 
 # ---- helpers ---------------------------------------------------------------------------------------------------------
@@ -253,8 +259,12 @@ def undo(request: Request, body: UndoIn, project_id: str = PID, action_id: str =
 # ---- four eyes on decisions --------------------------------------------------------------------------------------------
 @router.get(PROJ + "/approvals", response_model=list[PendingRow])
 def pending(request: Request, project_id: str = PID, p: Principal = SEE_PENDING):
-    return [{"id": j.id, "kind": j.kind, "actor": j.actor, "reason": j.reason, "persons": j.evidence.get("persons"), "created_at": j.created_at}
-            for j in project_scope(request, project_id).judgments.pending_approval()]
+    """Decisions waiting for a second person. Approvers see all of them; others see only their own (so they know what is waiting)."""
+    approver = "judgment.approve" in p.permissions
+    return [{"id": j.id, "kind": j.kind, "actor": j.actor, "reason": j.reason, "persons": j.evidence.get("persons"), "created_at": j.created_at,
+             "run_id": j.evidence.get("run_id"), "probability": j.evidence.get("probability"), "top_evidence": (j.evidence.get("top_evidence") or [])[:4],
+             "field": j.subject.get("field") if j.kind == "field_override" else None, "yours": j.actor == p.actor, "action_id": j.evidence.get("action_id")}
+            for j in project_scope(request, project_id).judgments.pending_approval() if approver or j.actor == p.actor]
 
 
 @router.post(PROJ + "/approvals/{judgment_id}/approve")

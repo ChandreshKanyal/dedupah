@@ -24,7 +24,7 @@ from dedupe.schema import create_and_upgrade
 from .projects import Workspace
 
 RUN_ID = r"^R[0-9a-f]{12}$"
-STATES = ("queued", "running", "succeeded", "failed", "interrupted", "cancelled")
+STATES = ("queued", "running", "succeeded", "failed", "interrupted", "cancelled", "deleted")
 ACTIVE = ("queued", "running")
 
 _meta = MetaData()
@@ -86,7 +86,9 @@ def headline(work: Path) -> dict:
             "candidate_pairs": (s.get("blocking") or {}).get("candidate_pairs"), "auto_merged_pairs": dec.get("auto_merge"),
             "review_pairs": dec.get("review"), "people": (s.get("clustering") or {}).get("clusters"),
             "review_items": (s.get("review_queue") or {}).get("queue_items"), "households": (s.get("households") or {}).get("households"),
-            "seconds": s.get("total_seconds"), "records_by_source": (s.get("ingest") or {}).get("records") or {}}
+            "seconds": s.get("total_seconds"), "records_by_source": (s.get("ingest") or {}).get("records") or {},
+            "scoring": {k: (s.get("scoring") or {}).get(k) for k in ("mode", "mode_reason")} if s.get("scoring") else None,
+            "judgments": s.get("judgments")}
 
 
 class RunJobs:
@@ -126,7 +128,7 @@ class RunJobs:
         return self._run(r) if r else None
 
     def recent(self, project_id: str | None = None, limit: int = 20) -> list[Run]:
-        q = select(runs).order_by(runs.c.created_at.desc(), runs.c.id.desc()).limit(limit)
+        q = select(runs).where(runs.c.status != "deleted").order_by(runs.c.created_at.desc(), runs.c.id.desc()).limit(limit)
         if project_id:
             q = q.where(runs.c.project_id == project_id)
         with self.engine.connect() as c:
@@ -268,6 +270,29 @@ class RunJobs:
         except subprocess.TimeoutExpired:
             proc.kill()
         return self.wait(project_id, run_id, timeout=15) or self.get(project_id, run_id)
+
+    def delete(self, project_id: str, run_id: str) -> Run:
+        """Erase a finished run's folder (its results hold personal data). The run's row stays, marked 'deleted', so the history and the audit
+        trail still show that it existed, who started it and when. Decisions stewards made while looking at it belong to the project and stay."""
+        with self._lock:
+            run = self.get(project_id, run_id)
+            if run is None or run.status == "deleted":
+                raise RunError("no such run")
+            if run.status in ACTIVE:
+                raise RunError("this run has not finished: cancel it first")
+            shutil.rmtree(self.ws.run_dir(project_id, run_id), ignore_errors=True)
+            with self.engine.begin() as c:
+                c.execute(update(runs).where(runs.c.id == run_id).values(status="deleted"))
+        return self.get(project_id, run_id)
+
+    def forget_project(self, project_id: str) -> int:
+        """Remove every run row of a project that is being deleted (its folder goes with the project's folder)."""
+        with self._lock:
+            with self.engine.connect() as c:
+                if c.execute(select(func.count()).select_from(runs).where(runs.c.project_id == project_id, runs.c.status.in_(ACTIVE))).scalar():
+                    raise RunError("this project has a run that is queued or going: cancel it first")
+            with self.engine.begin() as c:
+                return c.execute(runs.delete().where(runs.c.project_id == project_id)).rowcount
 
     # ---- bring in results made elsewhere ---------------------------------------------------------------------------------
     def import_results(self, project_id: str, folder: Path, actor: str, reason: str = "imported") -> Run:

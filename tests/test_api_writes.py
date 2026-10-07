@@ -97,7 +97,9 @@ def test_a_sensitive_override_waits_for_a_second_person(api, output):
     r = c.post(f"{run}/people/{person}/override", json={"field": "pan", "value": NEW_PAN, "reason": WHY}, headers=hdr(s, "steward", "u-sam"))
     assert r.status_code == 200 and r.json()["pending_approval"] is True
     jid = r.json()["judgment_ids"][0]
-    assert c.get(P + "/approvals", headers=hdr(s, "steward", "u-sam")).status_code == 403
+    own = c.get(P + "/approvals", headers=hdr(s, "steward", "u-sam")).json()          # the steward sees their own waiting decision, cannot approve it
+    assert [(x["id"], x["yours"], x["field"]) for x in own] == [(jid, True, "pan")] and NEW_PAN not in json.dumps(own)
+    assert c.get(P + "/approvals", headers=hdr(s, "steward", "u-other")).json() == []     # somebody else's waiting decisions stay with the approvers
     approver = hdr(s, "approver", "u-lee")
     assert [x["id"] for x in c.get(P + "/approvals", headers=approver).json()] == [jid]
     assert c.post(f"{P}/approvals/{jid}/approve", json={}, headers=hdr(s, ["steward", "approver"], "u-sam")).status_code == 409

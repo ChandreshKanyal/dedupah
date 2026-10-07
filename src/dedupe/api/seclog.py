@@ -20,7 +20,7 @@ from dedupe.schema import create_and_upgrade
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
 
 EVENTS = ("auth_failed", "login", "permission_denied", "rate_limited", "request_rejected", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "export", "config_change",
-          "judgment_change", "server_error", "startup")
+          "judgment_change", "data_deleted", "server_error", "startup")
 
 _meta = MetaData()
 security_log = Table(
@@ -118,8 +118,14 @@ class SecurityLog:
         log.info(_json({k: row[k] for k in _HASHED} | ({"project_id": row["project_id"]} if row["project_id"] else {})))      # same line for the customer's log shipper / SIEM
         return new_id
 
-    def events(self, after_id: int = 0, limit: int = 100, event_name: str | None = None) -> list[dict]:
-        q = select(security_log).where(security_log.c.id > after_id).order_by(security_log.c.id).limit(limit)
+    def events(self, after_id: int = 0, limit: int = 100, event_name: str | None = None, newest_first: bool = False, before_id: int | None = None) -> list[dict]:
+        """Oldest first after `after_id` (for a log shipper), or newest first before `before_id` (for a person reading the log)."""
+        if newest_first:
+            q = select(security_log).order_by(security_log.c.id.desc()).limit(limit)
+            if before_id:
+                q = q.where(security_log.c.id < before_id)
+        else:
+            q = select(security_log).where(security_log.c.id > after_id).order_by(security_log.c.id).limit(limit)
         if event_name:
             q = q.where(security_log.c.event == event_name)
         with self.engine.connect() as conn:

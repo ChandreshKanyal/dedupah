@@ -3,10 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aurionpro</title>
+<title>Aurionpro Dedupe</title>
+<link rel="icon" type="image/png" href="/ui/favicon.png">
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
+<a id="skip" href="#content">Skip to content</a>
 <div id="login">
   <form id="login-form" autocomplete="off">
     <img class="logo logo-on-dark" src="/ui/logo-dark.png" alt="Aurionpro - Lead the next">
@@ -35,9 +37,10 @@
   <header id="topbar">
     <div id="brand"><img class="logo-on-dark" src="/ui/wordmark-dark.png" alt="Aurionpro"><img class="logo-on-light" src="/ui/wordmark-light.png" alt="Aurionpro"></div>
     <div id="search-wrap">
-      <input id="search" type="search" placeholder="Search projects and runs" aria-label="Search" autocomplete="off">
-      <span id="search-hint">Ctrl + K</span>
-      <div id="search-results" role="listbox" hidden></div>
+      <input id="search" type="search" placeholder="Search projects and runs" aria-label="Search" autocomplete="off"
+             role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list">
+      <span id="search-hint" aria-hidden="true">Ctrl + K</span>
+      <div id="search-results" role="listbox" aria-label="Search results" hidden></div>
     </div>
     <div id="account">
       <button id="theme" class="ghost" aria-label="Switch between dark and light"></button>
@@ -48,8 +51,9 @@
     </div>
   </header>
   <nav id="nav" aria-label="Main"></nav>
-  <main id="content">
-    <div id="banner" role="status" hidden></div>
+  <main id="content" tabindex="-1">
+    <div id="loading" role="status" aria-live="polite"></div>
+    <div id="banner" role="status" aria-live="polite" hidden></div>
     <div id="view"></div>
   </main>
 </div>

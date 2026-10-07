@@ -29,6 +29,7 @@ from .routes_connections import router as connections_router
 from .routes_projects import router as projects_router
 from .routes_read import router as read_router
 from .routes_results import router as results_router
+from .routes_review import router as review_router
 from .routes_schedules import router as schedules_router
 from .routes_ui import router as ui_router
 from .routes_write import router as write_router
@@ -179,10 +180,10 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
 
     @app.get("/security/events", response_model=list[SecurityEvent])
     def security_events(after_id: int = Query(0, ge=0), limit: int = Query(100, ge=1), event: str | None = Query(None, pattern=r"^[a-z_]{1,30}$"),
-                        p: Principal = READ_LOGS):
+                        newest_first: bool = False, before_id: int | None = Query(None, ge=1), p: Principal = READ_LOGS):
         if event is not None and event not in EVENTS:
             return []
-        return sv.seclog.events(after_id, min(limit, settings.max_page_size), event)
+        return sv.seclog.events(after_id, min(limit, settings.max_page_size), event, newest_first, before_id)
 
     @app.get("/security/verify")
     def security_verify(p: Principal = READ_LOGS):
@@ -194,6 +195,7 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     app.include_router(write_router)
     app.include_router(connections_router)
     app.include_router(results_router)
+    app.include_router(review_router)
     app.include_router(schedules_router)
     app.include_router(ui_router)
     return app
