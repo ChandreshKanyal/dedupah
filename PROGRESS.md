@@ -1283,3 +1283,14 @@ suggestion. Every later Phase A step (and images later) starts from knowing what
 - Names vs short category words are separated by how repetitive the column is.
 - PIN codes vs 6-digit amounts are told apart by trailing zeros.
 - Only Latin script.
+
+**Code-review fixes (same day):** three bugs, all fixed with tests.
+1. A second-phone column (`alt_mobile`, `mobile2`) was no longer suggested as the second phone. Its phone values halved its name score.
+   - Fix: `ALSO_FITS` / `fits()` in `detect.py` list the other fields a type can rightly fill (phone → second phone, address → second
+     address, names → father/related name, token → Aadhaar reference key, ...). A name is distrusted only when the values cannot fill
+     that field.
+2. Row numbers 1..N were classed as ages in files of up to about 120 rows.
+   - Fix: whole numbers that are all different and either run almost without gaps, or number 30 or more, are row ids. Real ages repeat.
+3. The screen warned on correct mappings (phone → second phone, token → reference key), and at 80% where the suggestions use 90%.
+   - Fix: the server now sends `contradicts` per column, using the same rule as the suggestions (`contradicts()` in `suggest.py`). The
+     screen only shows those.

@@ -3,7 +3,7 @@ import re
 
 import pyarrow as pa
 
-from .detect import profile
+from .detect import fits, profile
 
 _NAME_RULES: dict[str, tuple[list[str], list[str]]] = {
     # field: (synonyms, words that disqualify a column)
@@ -77,7 +77,7 @@ def suggest(sample: pa.Table, threshold: float = 0.6, profiles: dict[str, dict] 
         strong_other = det.get("type") in STRONG_TYPES and det.get("share", 0) >= 0.9
         for field in set(_NAME_RULES) | ({det["field"]} if det.get("field") else set()):
             ns = _name_score(field, col) if field in _NAME_RULES else 0.0
-            if ns and strong_other and det.get("field") != field:
+            if ns and strong_other and field not in fits(det):
                 ns /= 2                        # named "pan" but the values are clearly something else (phones, GST numbers ...)
             vs = _value_score(field, col, det)
             s = max(ns, vs) + (0.1 if ns and vs else 0.0)
@@ -93,12 +93,17 @@ def suggest(sample: pa.Table, threshold: float = 0.6, profiles: dict[str, dict] 
     return sorted(out, key=lambda d: d["field"])
 
 
+def contradicts(field: str, det: dict) -> bool:
+    """The values prove (strong type, at least 90% of them) that the column holds something that cannot fill this field."""
+    return det.get("type") in STRONG_TYPES and det.get("share", 0) >= 0.9 and field not in fits(det)
+
+
 def warnings_for(mapping: dict[str, str], profiles: dict[str, dict]) -> list[dict]:
     """Mapped columns whose values clearly look like something else: [{field, column, looks_like}] (no values, only the detected type)."""
     out = []
     for field, col in mapping.items():
         det = profiles.get(col) if isinstance(col, str) else None
-        if det and det.get("type") in STRONG_TYPES and det.get("share", 0) >= 0.9 and det.get("field") != field:
+        if det and contradicts(field, det):
             out.append({"field": field, "column": col, "looks_like": det["description"]})
     return out
 

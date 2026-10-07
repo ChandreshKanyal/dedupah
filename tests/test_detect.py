@@ -83,6 +83,33 @@ def test_a_column_named_pan_holding_phones_is_not_mapped_as_pan_and_is_flagged()
     assert warnings_for({"mobile": "pan"}, profile(t)) == []
 
 
+def test_a_second_phone_column_is_still_suggested_as_the_second_phone():
+    a = ["98111 22222", "+91 9822233333", "7012345678", "6000000001", "9123456789", "8888812345"]
+    for alt in ("alt_mobile", "mobile2"):
+        t = pa.table({"mobile": a, alt: list(reversed(a))})
+        got = {s["field"]: s["column"] for s in suggest(t)}
+        assert got == {"mobile": "mobile", "mobile_alt": alt}
+        assert warnings_for(got, profile(t)) == []
+
+
+def test_row_numbers_are_row_ids_not_ages_even_in_a_small_file():
+    for n in (6, 25, 100):
+        d = detect_values([str(i) for i in range(1, n + 1)])
+        assert d["type"] == "row_id", n
+    t = pa.table({"id": [str(i) for i in range(1, 101)]})
+    assert "age" not in {s["field"] for s in suggest(t)} and record_id_column(t, profile(t)) == "id"
+    assert kind(["35", "42", "28", "61", "35", "50", "47", "33", "29", "42"]) == "age"     # real ages repeat and do not run 1, 2, 3
+
+
+def test_compatible_mappings_are_not_flagged():
+    from dedupe.mapping.suggest import contradicts
+    assert not contradicts("mobile_alt", detect_values(["9811122222", "9822233333", "7012345678", "6000000001", "9123456789"]))
+    token = detect_values(["%032x" % (i * 7919) for i in range(1, 8)])
+    assert token["type"] == "token" and not contradicts("aadhaar_reference_key", token)
+    almost = detect_values(["9811122222", "9822233333", "7012345678", "6000000001", "9123456789", "x1", "x2"])  # 5 of 7 = 71%
+    assert not contradicts("pan", almost)                                    # not sure enough to call the mapping wrong
+
+
 def test_names_still_rule_out_people_who_are_not_the_customer():
     names = ["Rahul Sharma", "Anita Rao", "Priya Nair", "Mohan Das", "Irfan Khan", "Asha Rani"]
     t = pa.table({"nominee_name": names, "applicant_name": list(reversed(names))})

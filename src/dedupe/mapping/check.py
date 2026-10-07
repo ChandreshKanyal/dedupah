@@ -15,8 +15,8 @@ from dedupe.connectors.guard import ConnectorConfigError
 
 from .canonical import CANONICAL_FIELDS
 from .config import IngestConfig, MappingError, SourceConfig, compile_select
-from .detect import profile
-from .suggest import STRONG_TYPES, record_id_column, suggest
+from .detect import fits, profile
+from .suggest import contradicts, record_id_column, suggest
 
 ENV_PREFIX = "DEDUPE_SRC_"
 _ENV_NAME = re.compile(r"^DEDUPE_SRC_[A-Z0-9_]{1,60}$")
@@ -87,7 +87,7 @@ def inspect_source(conf: dict, sample_rows: int = 200) -> dict:
         return {"columns": cols, "sample": sample, "suggestions": [], "types": {}, "record_id": None}
     types = profile(sample)
     return {"columns": cols, "sample": sample, "suggestions": suggest(sample, profiles=types), "record_id": record_id_column(sample, types),
-            "types": {c: {**d, "strong": d["type"] in STRONG_TYPES} for c, d in types.items()}}
+            "types": {c: {**d, "fits": sorted(fits(d)), "contradicts": sorted(f for f in CANONICAL_FIELDS if contradicts(f, d))} for c, d in types.items()}}
 
 
 def probe_source(src: SourceConfig, sample_rows: int = 200) -> dict:

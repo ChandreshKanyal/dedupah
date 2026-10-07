@@ -1512,7 +1512,7 @@ async function connectionWizard(pid, type, preset, startStep) {
     const looksLike = (c, f) => {
       const t = c && types[c];
       if (!t || !t.type) return null;
-      return t.strong && f && t.field !== f ? el("div", {}, tag("Values look like: " + t.description, "warn"))
+      return f && (t.contradicts || []).includes(f) ? el("div", {}, tag("Values look like: " + t.description, "warn"))
         : el("div", { class: "muted small" }, "Values look like: " + t.description + " (" + Math.round(t.share * 100) + "%)");
     };
     const exampleCell = (c, f) => el("span", {}, el("span", { class: "examples" }, examples(c).map((v) => el("span", { class: "ex" }, String(v)))), looksLike(c, f));

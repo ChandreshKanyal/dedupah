@@ -82,6 +82,22 @@ TYPES: dict[str, tuple[str | None, str]] = {
 }
 
 
+# Other fields a type can rightly fill besides its main one (a phone column can be the second phone): mapping a column to one of these is
+# not a contradiction. Suggestions from the values still go to the main field only.
+ALSO_FITS: dict[str, set[str]] = {
+    "mobile": {"mobile_alt"}, "address": {"address_alt"}, "person_name": {"father_name", "related_name"},
+    "token": {"aadhaar_reference_key", "aadhaar"}, "aadhaar_masked": {"aadhaar_last4"}, "four_digits": {"aadhaar_last4"},
+    "row_id": {"customer_number", "passport_no", "dl_no", "voter_id", "pan", "aadhaar_reference_key"}, "mixed_ids": {"passport_no", "dl_no", "voter_id", "pan"},
+    "date": {"dob", "record_date"}, "dob": {"record_date"}, "record_date": {"dob"}, "category": {"gender", "marital_status", "occupation",
+    "party_role", "relation_to_proposer", "state", "city"}, "amount": {"annual_income", "age"}, "text": {"address", "address_alt"},
+}
+
+
+def fits(det: dict) -> set[str]:
+    """Every canonical field this detected type can fill."""
+    return ({det["field"]} if det.get("field") else set()) | ALSO_FITS.get(det.get("type") or "", set())
+
+
 def _clean(values) -> list[str]:
     return [s for s in (str(v).strip() for v in values if v is not None) if s and s.lower() not in ("nan", "null", "none", "na", "n/a", "-")]
 
@@ -179,7 +195,18 @@ def _dates(vals: list[str]) -> tuple[str, float] | None:
     return "date", share
 
 
+def _counter(vals: list[str], distinct: float) -> bool:
+    """Row numbers: whole numbers, all different, and either a near-unbroken run (1, 2, 3 ...) or too many different values to be ages
+    (people's ages repeat once there are a few dozen rows)."""
+    if distinct < 0.99 or not all(re.fullmatch(r"\d{1,12}", v) for v in vals):
+        return False
+    ints = sorted(int(v) for v in vals)
+    return len(vals) >= 30 or ints[-1] - ints[0] + 1 <= len(ints) * 1.2
+
+
 def _numeric(vals: list[str], distinct: float) -> tuple[str, float] | None:
+    if _counter(vals, distinct):
+        return "row_id", 1.0
     ages = [parse_age(v) for v in vals]
     age_share = sum(a is not None for a in ages) / len(vals)
     fractions = sum(bool(re.search(r"\.\d*[1-9]", v)) for v in vals) / len(vals)
