@@ -349,12 +349,14 @@ async function viewProject(pid, tab) {
   await refreshCache();
   const manage = can("project.access") || p.you_own;
   const actions = can("runs.start") ? [btn("New run", () => go("Projects", () => newRun(pid)), "primary", "play")] : [];
-  const tabList = [["overview", "Overview"], ["connections", "Connections"], ["runs", "Runs"], ["rules", "Rules"], ...(can("judgment.approve") ? [["approvals", "Approvals"]] : []),
+  const tabList = [["overview", "Overview"], ["connections", "Connections"], ["runs", "Runs"], ...(can("results.export") ? [["results", "Results"]] : []), ["rules", "Rules"],
+    ...(can("judgment.approve") ? [["approvals", "Approvals"]] : []),
     ["activity", "Activity"], ...(manage ? [["access", "Access"], ["settings", "Settings"]] : [])];
   let body;
   if (tab === "overview") body = projectOverview(p, runs, connections);
   else if (tab === "connections") body = projectConnections(p, connections);
   else if (tab === "runs") body = runsTable(runs, false, pid);
+  else if (tab === "results") body = await resultsPanel(p, runs);
   else if (tab === "rules") body = await rulesPanel(pid);
   else if (tab === "activity") body = await activityPanel(pid);
   else if (tab === "access") body = await accessPanel(pid);
@@ -375,6 +377,7 @@ function projectOverview(p, runs, connections) {
       can("config.activate") || can("config.approve")],
     ["Run the match", "Find the records that are the same person and group households.", !!finished || !!going, "runs", can("runs.start")],
     ["Review the uncertain matches", toReview == null ? "Appears after the first run." : num(toReview) + " pairs need a person to decide.", !!finished && toReview === 0, "runs", can("queue.read")],
+    ["Take the results out", "Download the golden records as Excel, CSV or Parquet, or write them into a database.", false, "results", can("results.export") && !!finished],
   ];
   const next = todo.findIndex((t) => !t[2]);
   const list = el("div", { class: "todo" }, todo.map(([title, text, done, tab, allowed], i) => el("div", { class: "todo-row" + (i === next ? " next" : "") },
@@ -896,11 +899,118 @@ async function connectionWizard(pid, type, preset) {
   render();
 }
 
+// ---- results: take a run's output out as a file or into a database ------------------------------------------------------------
+async function resultsPanel(p, runs) {
+  const done = runs.filter((r) => r.status === "succeeded");
+  if (!done.length) return empty("Results appear here after a run has finished. Start a run first.", can("runs.start") ? btn("New run", () => go("Projects", () => newRun(p.id)), "primary", "play") : null);
+  const pick = el("select", { "aria-label": "Run" }, done.map((r) => el("option", { value: r.id }, r.id + ", " + when(r.finished_at || r.created_at) + " (" + num(r.summary.people) + " people)")));
+  const box = el("div");
+  const load = () => run(async () => box.replaceChildren(...(await datasetCards(p, pick.value))));
+  pick.addEventListener("change", load);
+  const wrap = el("div", {}, el("p", { class: "hint" }, "Results contain personal data. Every download or database write asks for a reason and is recorded in the project's activity."),
+    el("div", { class: "row" }, field("Results of run", pick)), box, await destinationsPanel(p));
+  await load();
+  return wrap;
+}
+async function datasetCards(p, rid) {
+  const info = await api("GET", "/projects/" + p.id + "/runs/" + rid + "/datasets");
+  return info.datasets.map((d) => el("div", { class: "panel" }, el("h3", {}, d.title + " (" + num(d.rows) + " rows)"),
+    el("div", { class: "body" }, el("p", {}, d.description), el("p", { class: "muted" }, "Columns: " + d.columns.join(", ")),
+      el("div", { class: "row" }, ...["xlsx", "csv", "parquet"].map((f) => btn(info.formats[f], () => run(() => downloadResults(p.id, rid, d.name, f)), "small", "upload")),
+        can("sources.manage") || can("results.export") ? btn("Write to a database", () => run(() => databaseDialog(p, rid, d)), "small", "database") : null))));
+}
+async function downloadResults(pid, rid, dataset, format) {
+  const why = await askReason("Take out these results", "Why do you need this file? It is recorded.", 10, "Download");
+  if (why === null) return;
+  const r = await fetch("/projects/" + pid + "/runs/" + rid + "/export", { method: "POST", credentials: "omit", cache: "no-store",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ dataset, format, reason: why, safe_for_spreadsheets: true }) });
+  if (!r.ok) {
+    let msg = "The download failed.";
+    try { msg = ((await r.json()).error || {}).message || msg; } catch (_) { /* no body */ }
+    throw new Error(msg);
+  }
+  const name = ((r.headers.get("content-disposition") || "").match(/filename="?([^";]+)"?/) || [])[1] || (dataset + "." + format);
+  const url = URL.createObjectURL(await r.blob());
+  const a = el("a", { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  say("Downloaded " + name + ".", "good");
+}
+async function databaseDialog(p, rid, dataset) {
+  const dests = (await api("GET", "/projects/" + p.id + "/destinations")).filter((d) => d.live_version);
+  if (!dests.length) { say("This project has no live database destination yet. Add one below, then make it live.", "bad"); return; }
+  const dest = el("select", { "aria-label": "Destination" }, dests.map((d) => el("option", { value: d.id }, d.id + (d.schema_name ? " (schema " + d.schema_name + ")" : ""))));
+  const table = el("input", { type: "text", maxlength: "63", "aria-label": "Table name", placeholder: "for example dedupe_" + dataset.name });
+  const mode = el("select", { "aria-label": "What to do" }, [["create", "Create a new table"], ["append", "Add rows to an existing table"], ["replace", "Replace the rows of an existing table"]]
+    .map(([v, t]) => el("option", { value: v }, t)));
+  const schema = el("input", { type: "text", maxlength: "63", "aria-label": "Schema", placeholder: "leave empty for the destination's default" });
+  const confirm = el("input", { type: "checkbox" });
+  const confirmRow = el("label", { class: "check", hidden: true }, confirm, el("span", {}, "I understand this deletes the rows the table has now"));
+  const why = el("input", { type: "text", maxlength: "300", "aria-label": "Reason", placeholder: "Why? At least 10 characters. It is recorded." });
+  const err = el("p", { class: "bad", hidden: true });
+  mode.addEventListener("change", () => { confirmRow.hidden = mode.value !== "replace"; });
+  const result = await dialog("Write " + dataset.title.toLowerCase() + " to a database", el("div", {}, el("p", { class: "hint" }, num(dataset.rows) + " rows. All of it is written, or none: a refused row leaves the table as it was."),
+    field("Destination", dest), field("Table name", table), field("What to do", mode), confirmRow, field("Schema (optional)", schema), field("Reason", why), err), "Write", async () => {
+    try {
+      return await api("POST", "/projects/" + p.id + "/runs/" + rid + "/export/database", { destination: dest.value, dataset: dataset.name, table: table.value.trim(), mode: mode.value,
+        schema_name: schema.value.trim() || null, confirm_replace: confirm.checked, reason: why.value.trim() });
+    } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
+  if (result) say("Wrote " + num(result.rows) + " rows to " + (result.schema ? result.schema + "." : "") + result.table + ".", "good");
+}
+async function destinationsPanel(p) {
+  const list = await api("GET", "/projects/" + p.id + "/destinations");
+  const second = p.second_approval;
+  const detail = async (d) => (d.latest_status === "proposed" ? api("GET", "/projects/" + p.id + "/destinations/" + d.id) : null);
+  const details = await Promise.all(list.map(detail));
+  const act = (d, v, what, title, minLength, prompt, danger) => run(async () => {
+    const reason = await askReason(title, prompt, minLength, title.split(" ")[0], danger);
+    if (reason === null) return;
+    await api("POST", "/projects/" + p.id + "/destinations/" + d.id + "/versions/" + v.version + "/" + what, { reason });
+    await viewProject(p.id, "results");
+    say(title + ": done.", "good");
+  });
+  const rows = list.map((d, i) => {
+    const v = details[i] ? details[i].versions[details[i].versions.length - 1] : null;
+    const buttons = v ? [
+      second && can("config.approve") ? btn("Approve", () => act(d, v, "approve", "Approve version " + v.version, 0, "Note"), "small") : null,
+      can("config.approve") ? btn("Decline", () => act(d, v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger") : null,
+      can("config.activate") && (!second || v.approved_by.length) ? btn("Make live", () => act(d, v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary") : null,
+    ].filter(Boolean) : [];
+    return el("tr", {}, el("td", {}, d.id), el("td", { class: "mono" }, d.url_env), el("td", {}, d.schema_name || ""), el("td", {}, d.live_version ? "Version " + d.live_version : el("span", { class: "muted" }, "Not live")),
+      el("td", {}, d.latest_status === "active" ? "" : statusTag(d.latest_status)), el("td", { class: "actions-cell" }, buttons,
+        can("sources.manage") ? btn("Test", () => run(async () => {
+          const t = await api("POST", "/projects/" + p.id + "/destinations/" + d.id + "/test");
+          say(t.ok ? "The database can be reached." : "The database could not be reached: " + t.error, t.ok ? "good" : "bad");
+        }), "small") : null));
+  });
+  return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Database destinations"),
+    can("sources.manage") ? btn("Add a destination", () => run(() => destinationDialog(p)), "", "plus") : null),
+  el("p", { class: "hint" }, "A destination is the name of an environment variable (starting with DEDUPE_DST_) that holds a database address. The address and password are set on the server by whoever runs it, never typed here."),
+  rows.length ? table(["Destination", "Environment variable", "Schema", "Live", "Pending", ""], rows) : empty("No destinations yet. Add one to write results into a database."));
+}
+async function destinationDialog(p) {
+  const id = el("input", { type: "text", maxlength: "40", "aria-label": "Destination id", placeholder: "for example warehouse" });
+  const env = el("input", { type: "text", maxlength: "70", "aria-label": "Environment variable", placeholder: "DEDUPE_DST_WAREHOUSE" });
+  const schema = el("input", { type: "text", maxlength: "63", "aria-label": "Default schema" });
+  const why = el("input", { type: "text", maxlength: "300", "aria-label": "Reason", placeholder: "Why? At least 10 characters." });
+  const err = el("p", { class: "bad", hidden: true });
+  const res = await dialog("Add a database destination", el("div", {}, field("Destination id (letters, digits, - and _)", id), field("Environment variable that holds the database address", env),
+    field("Default schema (optional)", schema), field("Reason", why), err), "Save", async () => {
+    try {
+      return await api("POST", "/projects/" + p.id + "/destinations", { destination: { destination_id: id.value.trim(), url_env: env.value.trim().toUpperCase(), schema_name: schema.value.trim() || null }, reason: why.value.trim() });
+    } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
+  if (res) { await viewProject(p.id, "results"); say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it, then it can be made live." : "Make it live to use it."), "good"); }
+}
+
 // ---- audit log ------------------------------------------------------------------------------------------------------------
 async function viewAudit(event) {
   const rows = await api("GET", "/security/events?limit=200" + (event ? "&event=" + event : ""));
   const filter = el("select", { "aria-label": "Event", onchange: () => run(() => viewAudit(filter.value)) }, el("option", { value: "" }, "All events"),
-    ["auth_failed", "login", "permission_denied", "rate_limited", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "config_change", "judgment_change", "server_error", "startup"]
+    ["auth_failed", "login", "permission_denied", "rate_limited", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "export", "config_change", "judgment_change", "server_error", "startup"]
       .map((e) => el("option", { value: e, selected: e === event }, label(e))));
   const verify = () => run(async () => {
     const v = await api("GET", "/security/verify");

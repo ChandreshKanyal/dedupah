@@ -61,6 +61,7 @@ class ApiSettings:
     project_database_url: str | None = None             # template with {project}: one server database per project (production)
     max_concurrent_runs: int = 1                        # runs going at once; the rest wait in the queue (a big run needs the machine's memory)
     max_queued_runs: int = 20                           # runs allowed to wait
+    export_limit_per_min: int = 6                       # file downloads and database writes of results per person per minute
 
     @property
     def production(self) -> bool:
@@ -96,6 +97,7 @@ class ApiSettings:
             work=Path(os.environ.get("DEDUPE_WORK_DIR", "data/staging")),
             upload_max_bytes=_int("DEDUPE_UPLOAD_MAX_BYTES", 50_000_000), project_database_url=os.environ.get("DEDUPE_PROJECT_DATABASE_URL") or None,
             max_concurrent_runs=_int("DEDUPE_MAX_CONCURRENT_RUNS", 1), max_queued_runs=_int("DEDUPE_MAX_QUEUED_RUNS", 20),
+            export_limit_per_min=_int("DEDUPE_EXPORT_LIMIT_PER_MIN", 6),
         )
         s.validate()
         return s

@@ -27,6 +27,7 @@ from .routes_admin import router as admin_router
 from .routes_connections import router as connections_router
 from .routes_projects import router as projects_router
 from .routes_read import router as read_router
+from .routes_results import router as results_router
 from .routes_ui import router as ui_router
 from .routes_write import router as write_router
 from .seclog import EVENTS, SecurityLog
@@ -172,5 +173,6 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     app.include_router(read_router)
     app.include_router(write_router)
     app.include_router(connections_router)
+    app.include_router(results_router)
     app.include_router(ui_router)
     return app

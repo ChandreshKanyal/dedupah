@@ -19,7 +19,7 @@ from sqlalchemy.engine import Engine
 from dedupe.schema import create_and_upgrade
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
 
-EVENTS = ("auth_failed", "login", "permission_denied", "rate_limited", "request_rejected", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "config_change",
+EVENTS = ("auth_failed", "login", "permission_denied", "rate_limited", "request_rejected", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "export", "config_change",
           "judgment_change", "server_error", "startup")
 
 _meta = MetaData()

@@ -24,12 +24,13 @@ from sqlalchemy.engine import Engine
 
 from dedupe.decision.config import DecisionConfig
 from dedupe.mapping.config import IngestConfig, SourceConfig
+from dedupe.results.config import DestinationConfig
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
 from dedupe.survivorship.config import SurvivorshipConfig
 
 from .settings import MatchingSettings
 
-MODELS = {"decision": DecisionConfig, "survivorship": SurvivorshipConfig, "settings": MatchingSettings, "sources": IngestConfig, "connection": SourceConfig}
+MODELS = {"decision": DecisionConfig, "survivorship": SurvivorshipConfig, "settings": MatchingSettings, "sources": IngestConfig, "connection": SourceConfig, "destination": DestinationConfig}
 KINDS = ("propose", "approve", "decline", "activate", "rollback")
 
 _meta = MetaData()
@@ -56,13 +57,13 @@ class ConfigError(ValueError):
     pass
 
 
-NAME = re.compile(r"^(decision|survivorship|settings|sources)$|^connection/[A-Za-z0-9_-]{1,40}$")
+NAME = re.compile(r"^(decision|survivorship|settings|sources)$|^(connection|destination)/[A-Za-z0-9_-]{1,40}$")
 
 
 def model_for(name: str):
-    """The model of a configuration name: a fixed name, or `connection/<id>` (a saved source and its mapping)."""
+    """The model of a configuration name: a fixed name, or `connection/<id>` (a saved source and its mapping) or `destination/<id>` (a database results may be written to)."""
     if not NAME.match(name or ""):
-        raise ConfigError(f"unknown config {name!r}; valid: {sorted(MODELS)} or connection/<id>")
+        raise ConfigError(f"unknown config {name!r}; valid: {sorted(MODELS)} or connection/<id> or destination/<id>")
     return MODELS[name.split("/", 1)[0]]
 
 
