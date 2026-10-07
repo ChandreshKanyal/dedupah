@@ -4,6 +4,7 @@ Needs a running portal on http://127.0.0.1:8765 (local sign-in, the demo workspa
 (dev tool only, not a project dependency): .venv\Scripts\python -m pip install playwright. Uses the installed Microsoft Edge.
 The portal allows 10 sign-ins a minute per address: wait a minute between runs of the two scripts.
 Second pass: dialogs and keyboard, rules, connections, schedules, dark theme."""
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +31,9 @@ def bad(page, where):
     b = page.locator("#banner")
     if b.is_visible() and "bad" in (b.get_attribute("class") or ""):
         note("error message", where + ": " + b.locator(".msg").inner_text())
+    txt = page.locator("#view").inner_text() + " " + (b.inner_text() if b.is_visible() else "")
+    for x in re.findall(r"\[object \w+\]|undefined|null|NaN", txt):       # an object, a null or a failed number put on screen
+        note("stray text", f"{where}: {x!r} on the screen")
 
 
 with sync_playwright() as pw:
@@ -90,6 +94,9 @@ with sync_playwright() as pw:
     page.screenshot(path=str(OUT / "13_person_dark.png"), full_page=True)
 
     # approvals and decisions
+    for tab in ("Matching rules", "Golden record", "Run settings"):
+        page.goto(BASE + "#/projects/customer-master/rules"); wait(page)
+        page.get_by_role("tab", name=tab).click(); wait(page); bad(page, "rules/" + tab)
     for path in ["#/approvals", "#/review/decisions", "#/projects/trial/results", "#/audit"]:
         page.goto(BASE + path); wait(page); bad(page, path)
         print(path, "->", page.locator("#view h1").inner_text())

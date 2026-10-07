@@ -4,6 +4,7 @@ Needs a running portal on http://127.0.0.1:8765 (local sign-in, the demo workspa
 (dev tool only, not a project dependency): .venv\Scripts\python -m pip install playwright. Uses the installed Microsoft Edge.
 The portal allows 10 sign-ins a minute per address: wait a minute between runs of the two scripts.
 Click through the live portal in Edge and report every console error, failed request and error message shown."""
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -28,10 +29,18 @@ def banner(page):
     return None
 
 
+def leaks(page, where):
+    """Text that only appears when code put an object, a null or a failed number on the screen."""
+    txt = page.locator("#view").inner_text() + " " + (page.locator("#banner").inner_text() if page.locator("#banner").is_visible() else "")
+    for bad in re.findall(r"\[object \w+\]|undefined|null|NaN", txt):
+        note("stray text", f"{where}: {bad!r} on the screen")
+
+
 def check(page, where):
     b = banner(page)
     if b and "bad" in b[0]:
         note("error message", f"{where}: {b[1]}")
+    leaks(page, where)
     h1 = page.locator("#view h1").first.inner_text() if page.locator("#view h1").count() else "(no h1)"
     print(f"{where}: h1={h1!r} url={page.url.split('/ui')[1]} title={page.title()!r}")
     return h1

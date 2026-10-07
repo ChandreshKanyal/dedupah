@@ -1148,3 +1148,14 @@ only the first person; scientific-notation phones with fewer than 9 digits are d
 order, per-field trust and value quality, set from a form; customers' own columns reach the golden record; matching without identifiers is
 measured correctly (recall ~0.89, precision ~0.99); every run reports per-source data quality and unusual data; repeat runs reuse unchanged
 records' work (about 2x faster at 10k records, more as data grows); awkward data shapes are handled instead of silently lost.
+
+## 54. User review round 2 (2026-10-07): connections, results preview, deletes, no-code rules
+The user's review found: (1) no way to edit a connection from the project's list; (2) run results show only download buttons, no look
+at the golden records; (3) the connection wizard's steps cannot be clicked; (4) the column-mapping page is hard to follow, does not show
+which field comes from which source, does not ask which columns identify a person, and there is no no-code way to add business rules;
+(5) deleting projects and runs is hard to find; (6) the Matching rules tab showed "[object HTMLParagraphElement],..." instead of the editor.
+**Fix 1 (done): the empty rules page.** A regression from section 53 step 2 (an array handed to DOM append, which prints it as text);
+the live check then only opened the Golden record tab. Same class of bug fixed in the review-queue and decisions panels (a stray "null"
+when the viewer cannot decide). New helpers `fill()`/`add()` drop empty parts; both click-through scripts now fail on "[object ...]",
+"undefined", "null" or "NaN" anywhere on screen, and the second one opens all three Rules tabs. Pitfall: the portal reads app.js once at
+start-up, so UI changes need a portal restart before a live check.

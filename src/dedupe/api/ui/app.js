@@ -104,6 +104,7 @@ function initTheme() {
 // One message at a time, fixed to the corner so it is seen wherever the page is scrolled. It may carry one action (for example Undo).
 // replaceChildren prints a null or false as text: fill() leaves them out, like el() does
 const fill = (node, ...kids) => node.replaceChildren(...kids.flat(3).filter((k) => k != null && k !== false));
+const add = (node, ...kids) => node.append(...kids.flat(3).filter((k) => k != null && k !== false));
 function say(msg, kind, action) {
   const b = $("banner");
   b.hidden = !msg;
@@ -951,7 +952,7 @@ async function rulesPanel(p, name) {
         say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready."), "good");
       }), el("details", { class: "advanced" }, el("summary", {}, "Advanced: edit the rules as JSON"), jsonPart));
     } else {
-      wrap.append(el("h3", { class: "section" }, "Propose a new version"), jsonPart);
+      add(wrap, el("h3", { class: "section" }, "Propose a new version"), jsonPart);
       src.then((v) => { editor.value = JSON.stringify(v.content, null, 2); }).catch(() => {});
     }
   }
@@ -1542,7 +1543,7 @@ async function reviewQueue(pid, rid, ctx) {
   const pager = el("div", { class: "pager" }, "Showing " + (items.length ? (ctx.offset + 1) + " to " + (ctx.offset + items.length) : "none"),
     btn("Previous", () => reload({ offset: Math.max(0, ctx.offset - QUEUE_PAGE) }), "small", "prev", { disabled: ctx.offset === 0 }),
     btn("Next", () => reload({ offset: ctx.offset + QUEUE_PAGE }), "small", "next", { disabled: items.length < QUEUE_PAGE }));
-  box.append(
+  add(box,
     el("div", { class: "row" }, field("Show", status), field("Match score", band), first),
     el("p", { class: "hint" }, (summary.open_now == null ? "Many" : num(summary.open_now)) + " pairs are open in this run. " + plural(summary.pending_approval, "decision waits", "decisions wait") +
       " for a second person. Decisions take effect at the project's next run."),
@@ -1749,7 +1750,7 @@ async function decisionsPanel(projects, opts, state) {
     el("td", {}, (KIND_LABEL[d.kind] || label(d.kind)) + (d.field ? ": " + label(d.field) : "")), el("td", {}, who(d)), el("td", {}, d.yours ? tag("You", "info") : d.actor),
     el("td", {}, d.reason || el("span", { class: "muted" }, "none")), el("td", {}, statusTag(d.status)),
     el("td", { class: "actions-cell" }, can("judgment.write") && d.action_id && ["in_force", "waiting_for_run", "pending_approval"].includes(d.status) ? btn("Undo", () => undo(d), "small", "undo") : null)));
-  box.append(el("div", { class: "row" }, el("label", { class: "check" }, mine, "Only my decisions"), field("Status", status)),
+  add(box, el("div", { class: "row" }, el("label", { class: "check" }, mine, "Only my decisions"), field("Status", status)),
     lines.length ? table(["When", ...(opts.project ? [] : ["Project"]), "Decision", "People", "By", "Reason", "Status", ""], lines)
       : empty(state.mine || state.status ? "No decisions match." : "No decisions yet. They appear here as soon as someone decides a pair.",
         can("queue.read") ? btn("Open the review inbox", link("/review"), "primary", "inbox") : null));
