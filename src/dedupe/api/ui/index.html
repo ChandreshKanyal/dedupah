@@ -3,13 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dedupe</title>
+<title>Aurionpro</title>
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
 <div id="login">
   <form id="login-form" autocomplete="off">
-    <h1>Sign in to Dedupe</h1>
+    <img class="logo logo-on-dark" src="/ui/logo-dark.png" alt="Aurionpro - Lead the next">
+    <img class="logo logo-on-light" src="/ui/logo-light.png" alt="Aurionpro - Lead the next">
+    <h1>Sign in</h1>
     <p id="login-help">Paste your access token. It is kept in this page's memory only and is gone when you close or reload the tab.</p>
     <p id="login-error" class="bad" role="alert" hidden></p>
     <div id="token-fields" class="field">
@@ -31,7 +33,7 @@
 </div>
 <div id="app" hidden>
   <header id="topbar">
-    <div id="brand"><span class="mark">D</span>Dedupe</div>
+    <div id="brand"><img class="logo-on-dark" src="/ui/wordmark-dark.png" alt="Aurionpro"><img class="logo-on-light" src="/ui/wordmark-light.png" alt="Aurionpro"></div>
     <div id="search-wrap">
       <input id="search" type="search" placeholder="Search projects and runs" aria-label="Search" autocomplete="off">
       <span id="search-hint">Ctrl + K</span>

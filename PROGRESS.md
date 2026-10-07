@@ -977,3 +977,6 @@ Design choice: the grant's role is recorded and shown, but membership alone deci
 - Only exercised with the injected clock and fast stand-in runs here, and a real scheduler thread for its start/stop and error handling; not left running for days.
 
 **Tests:** `tests/test_schedules.py` (9): next-run arithmetic (zones, strictly after, weekly, hourly, daylight saving), validation, one run exactly once and claiming, one catch-up run, no pile-up, three failures pause and resume, not-live connection and gone creator, permissions and access, the background loop surviving an error and stopping. The role matrix covers the new routes.
+
+### 2026-10-07 - Company branding
+The portal shows the Aurionpro logo (sign-in page: logo with tagline; top bar: name only) instead of the "Dedupe" text. Four transparent PNGs in `src/dedupe/api/ui/` (`logo-*`, `wordmark-*`; light/dark theme variants, cut from the supplied artwork), served from a whitelist route in `routes_ui.py` (CSP unchanged: images from this origin). Page title is "Aurionpro". The accent colour is still blue; the logo's teal could replace it if wanted.

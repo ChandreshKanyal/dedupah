@@ -3,7 +3,7 @@ data; every call the page makes to the API is authenticated like any other. The 
 only scripts and styles from this origin, no inline code, no framing, requests to this origin only."""
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from .guards import public
@@ -11,7 +11,8 @@ from .guards import public
 router = APIRouter()
 UI = Path(__file__).parent / "ui"
 FILES = {"": ("index.html", "text/html; charset=utf-8"), "app.js": ("app.js", "text/javascript; charset=utf-8"),
-         "style.css": ("style.css", "text/css; charset=utf-8")}
+         "style.css": ("style.css", "text/css; charset=utf-8"),
+         **{n: (n, "image/png") for n in ("logo-light.png", "logo-dark.png", "wordmark-light.png", "wordmark-dark.png")}}
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
        "frame-ancestors 'none'")
 _cache: dict[str, bytes] = {}
@@ -32,6 +33,13 @@ def ui_index():
 @router.get("/ui/app.js", dependencies=[Depends(public())], include_in_schema=False)
 def ui_script():
     return _serve("app.js")
+
+
+@router.get("/ui/{name}.png", dependencies=[Depends(public())], include_in_schema=False)
+def ui_image(name: str):
+    if name + ".png" not in FILES:
+        raise HTTPException(404, "Not found")
+    return _serve(name + ".png")
 
 
 @router.get("/ui/style.css", dependencies=[Depends(public())], include_in_schema=False)
