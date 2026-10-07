@@ -19,6 +19,7 @@ from sqlalchemy import Column, Integer, MetaData, String, Table, Text, select
 
 from dedupe import crypto
 from dedupe.connectors.base import to_string_table
+from dedupe.schema import create_and_upgrade
 
 UPLOAD_ID = r"^U[0-9a-f]{12}$"
 KINDS = {".csv": "csv", ".tsv": "tsv", ".txt": "csv", ".xlsx": "xlsx"}
@@ -40,6 +41,7 @@ uploads = Table(
     Column("sha256", String(64), nullable=False),
     Column("uploaded_by", String(200), nullable=False),
     Column("created_at", String(40), nullable=False),
+    Column("project_id", String(40)),                  # the project that owns the file: only its connections may use it
 )
 
 
@@ -166,7 +168,7 @@ def _now() -> str:
 class Uploads:
     def __init__(self, engine, folder: Path):
         self.engine, self.folder = engine, Path(folder)
-        _meta.create_all(engine)
+        create_and_upgrade(engine, _meta)
 
     def path(self, upload_id: str) -> Path:
         return self.folder / f"{upload_id}.parquet"
@@ -177,7 +179,7 @@ class Uploads:
         d.mkdir(parents=True, exist_ok=True)
         return d / uuid.uuid4().hex
 
-    def store(self, raw: Path, filename: str, actor: str) -> dict:
+    def store(self, raw: Path, filename: str, actor: str, project_id: str | None = None) -> dict:
         raw = Path(raw)
         try:
             name = safe_name(filename)
@@ -215,15 +217,24 @@ class Uploads:
                 raise UploadError("the file has a header but no rows")
             with self.engine.begin() as c:
                 c.execute(uploads.insert().values(id=uid, filename=name, kind=kind, rows=rows, columns=json.dumps(names), sha256=digest.hexdigest(),
-                                                  uploaded_by=actor, created_at=_now()))
+                                                  uploaded_by=actor, created_at=_now(), project_id=project_id))
             return {"upload_id": uid, "filename": name, "kind": kind, "rows": rows, "columns": names}
         finally:
             raw.unlink(missing_ok=True)                    # the original bytes never stay on disk
 
-    def list(self, limit: int = 100) -> list[dict]:
+    def list(self, project_id: str | None = None, limit: int = 100) -> list[dict]:
+        q = select(uploads).order_by(uploads.c.created_at.desc()).limit(limit)
+        if project_id is not None:
+            q = q.where(uploads.c.project_id == project_id)
         with self.engine.connect() as c:
             return [{"upload_id": r.id, "filename": r.filename, "kind": r.kind, "rows": r.rows, "columns": json.loads(r.columns), "uploaded_by": r.uploaded_by,
-                     "created_at": r.created_at} for r in c.execute(select(uploads).order_by(uploads.c.created_at.desc()).limit(limit))]
+                     "created_at": r.created_at} for r in c.execute(q)]
+
+    def project_of(self, upload_id: str) -> str | None:
+        """The project that owns this upload (None when it is unknown or was uploaded before projects owned files)."""
+        with self.engine.connect() as c:
+            r = c.execute(select(uploads.c.project_id).where(uploads.c.id == upload_id)).first()
+        return r.project_id if r else None
 
 
 __all__ = ["Uploads", "UploadError", "UPLOAD_ID", "safe_name"]

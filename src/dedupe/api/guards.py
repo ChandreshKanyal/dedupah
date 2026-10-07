@@ -7,6 +7,8 @@
 Authentication and authorization happen here, before the route's own code runs. A guard returns the verified `Principal`;
 routes use it as the `actor` of everything they write, so identities in the audit logs are verified, not typed.
 """
+import re
+
 from fastapi import HTTPException, Request
 
 from .auth import AuthError, Principal
@@ -19,9 +21,15 @@ def _services(request: Request):
     return request.app.state.services
 
 
+_PROJECT = re.compile(r"^[a-z0-9][a-z0-9-]{1,39}$")
+
+
 def _context(request: Request) -> dict:
+    """What every security-log row carries about the request; `project_id` is taken from the address (only when it is a well-formed id)."""
+    pid = (request.scope.get("path_params") or {}).get("project_id")
     return {"method": request.method, "route": getattr(request.scope.get("route"), "path", "") or "",
-            "request_id": request.scope["state"].get("request_id", ""), "client_ip": request.scope["state"].get("client_ip", "")}
+            "request_id": request.scope["state"].get("request_id", ""), "client_ip": request.scope["state"].get("client_ip", ""),
+            "project_id": pid if isinstance(pid, str) and _PROJECT.match(pid) else None}
 
 
 def authenticate(request: Request) -> Principal:
@@ -75,6 +83,23 @@ def require(permission: str):
                                              detail={"needs": permission}, **_context(request))
             raise HTTPException(403, "You do not have permission to do this.")
         return principal
+    guard.access = ("permission", permission)
+    return guard
+
+
+def require_or_owner(permission: str):
+    """Holders of the permission, or the owner of the project named in the address (whoever created it)."""
+    if permission not in PERMISSIONS:
+        raise ValueError(f"unknown permission {permission!r}")
+
+    def guard(request: Request) -> Principal:
+        principal = authenticate(request)
+        pid = (request.scope.get("path_params") or {}).get("project_id")
+        if permission in principal.permissions or (isinstance(pid, str) and _services(request).workspace.is_owner(pid, principal.sub)):
+            return principal
+        _services(request).seclog.record("permission_denied", actor=principal.actor, roles=principal.roles, status=403,
+                                         detail={"needs": permission + " or owner"}, **_context(request))
+        raise HTTPException(403, "You do not have permission to do this.")
     guard.access = ("permission", permission)
     return guard
 

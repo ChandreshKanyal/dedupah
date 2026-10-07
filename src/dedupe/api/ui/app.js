@@ -6,7 +6,7 @@ let token = null;
 let me = null;
 let timer = null;
 let mode = "token";                // how people sign in: "token" (identity provider or test token) or "local" (username and password)
-const cache = { projects: [], connections: [], runs: [] };
+const cache = { projects: [], runs: [] };
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
 const THEME_KEY = "dedupe-theme";
@@ -187,14 +187,13 @@ function signOut(msg) {
 
 // ---- navigation --------------------------------------------------------------------------------------------------------
 const NAV = [
-  ["", [["Home", "any", "home", () => viewHome()], ["Projects", "any", "folder", () => viewProjects()], ["Runs", "runs.read", "play", () => viewRuns()],
-    ["Connections", "config.read", "database", () => viewConnections()]]],
+  ["", [["Home", "any", "home", () => viewHome()], ["Projects", "any", "folder", () => viewProjects()], ["Runs", "runs.read", "play", () => viewRuns()]]],
   ["Governance", [["Approvals", "config.approve", "check", () => viewApprovals()], ["Audit log", "logs.read", "shield", () => viewAudit()]]],
   ["Administration", [["Users", "users.manage", "users", () => viewUsers()], ["Roles", "roles.manage", "sliders", () => viewRoles()]]],
 ];
 const NEW_MENU = [
-  ["New project", "runs.start", "folder", () => newProject(), "Projects"], ["New run", "runs.start", "play", () => newRun(), "Runs"],
-  ["Add a connection", "sources.manage", "database", () => viewConnections(), "Connections"], ["Upload a file", "sources.manage", "upload", () => connectionWizard("upload"), "Connections"],
+  ["New project", "projects.create", "folder", () => newProject(), "Projects"], ["New run", "runs.start", "play", () => newRun(), "Runs"],
+  ["Add data", "sources.manage", "database", () => pickProject("Add data", "Choose the project this data belongs to.", (pid) => go("Projects", () => viewProject(pid, "connections"))), "Projects"],
 ];
 function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
 function go(name, fn) {
@@ -251,9 +250,8 @@ function tabs(list, current, pick) {
     el("button", { role: "tab", "aria-selected": key === current ? "true" : "false", onclick: () => run(() => pick(key)) }, text)));
 }
 async function refreshCache() {
-  const [projects, connections, runs] = await Promise.all([api("GET", "/projects"), can("config.read") ? api("GET", "/connections") : [],
-    can("runs.read") ? api("GET", "/runs?limit=50") : []]);
-  Object.assign(cache, { projects, connections, runs });
+  const [projects, runs] = await Promise.all([api("GET", "/projects"), can("runs.read") ? api("GET", "/runs?limit=50") : []]);
+  Object.assign(cache, { projects, runs });
 }
 const projectName = (pid) => (cache.projects.find((p) => p.id === pid) || { name: pid }).name;
 
@@ -269,7 +267,6 @@ function initSearch() {
     const hits = [
       ...cache.projects.filter((p) => (p.name + " " + p.id).toLowerCase().includes(q)).map((p) => ["folder", p.name, "Project", () => viewProject(p.id)]),
       ...cache.runs.filter((r) => (r.id + " " + r.project_id).toLowerCase().includes(q)).map((r) => ["play", r.id + " in " + projectName(r.project_id), "Run", () => viewRun(r.project_id, r.id)]),
-      ...cache.connections.filter((c) => c.id.toLowerCase().includes(q)).map((c) => ["database", c.id, "Connection", () => viewConnection(c.id)]),
     ].slice(0, 12);
     out.replaceChildren(...(hits.length ? hits.map(([ic, text, kind, fn]) => el("button", { role: "option", onclick: () => { box.value = ""; go(kind + "s", fn); } }, icon(ic), text, el("span", { class: "kind" }, kind)))
       : [el("div", { class: "empty" }, "No matches")]));
@@ -284,12 +281,12 @@ function initSearch() {
 async function viewHome() {
   const [h] = await Promise.all([api("GET", "/home"), refreshCache()]);
   const latest = h.recent_runs.find((r) => r.status === "succeeded");
-  const stats = [stat("Projects", num(h.projects), () => go("Projects", viewProjects)), stat("Connections", num(h.connections), can("config.read") ? () => go("Connections", viewConnections) : null)];
+  const stats = [stat("Projects", num(h.projects), () => go("Projects", viewProjects)), stat("Connections", num(h.connections))];
   if (h.open_review_items != null) stats.push(stat("Items to review", num(h.open_review_items), latest ? () => go("Runs", () => viewRun(latest.project_id, latest.id, "review")) : null));
   if (h.pending_approvals != null) stats.push(stat("Waiting for approval", num(h.pending_approvals), () => go("Approvals", viewApprovals)));
   const start = [];
-  if (can("runs.start")) start.push(tile("folder", "Create a project", "A project keeps its own decisions, person IDs and rules.", () => go("Projects", newProject)));
-  if (can("sources.manage")) start.push(tile("database", "Add data", "Connect a file, sheet or database, or upload a file.", () => go("Connections", viewConnections)));
+  if (can("projects.create")) start.push(tile("folder", "Create a project", "A project has its own data connections, decisions, person IDs and rules.", () => go("Projects", newProject)));
+  if (can("sources.manage")) start.push(tile("database", "Add data", "Connect a file, sheet or database, or upload a file, inside a project.", () => pickProject("Add data", "Choose the project this data belongs to.", (pid) => go("Projects", () => viewProject(pid, "connections")))));
   if (can("runs.start")) start.push(tile("play", "Start a run", "Match and merge the records of chosen connections.", () => go("Runs", () => newRun())));
   if (latest && can("queue.read")) start.push(tile("users", "Review matches", "Open the review queue of the latest finished run.", () => go("Runs", () => viewRun(latest.project_id, latest.id, "review"))));
   show(page("Welcome, " + me.username, "Find duplicate customers across your sources, review them and keep one golden record per person."),
@@ -298,8 +295,8 @@ async function viewHome() {
     can("runs.read") ? el("h2", { class: "section" }, "Recent runs") : null,
     can("runs.read") ? runsTable(h.recent_runs, true) : null);
 }
-function runsTable(runs, withProject) {
-  if (!runs.length) return empty("No runs yet.", can("runs.start") ? btn("Start a run", () => go("Runs", () => newRun()), "primary", "play") : null);
+function runsTable(runs, withProject, pid) {
+  if (!runs.length) return empty("No runs yet.", can("runs.start") ? btn("Start a run", () => go("Runs", () => newRun(pid)), "primary", "play") : null);
   const cols = [...(withProject ? ["Project"] : []), "Run", "Status", "Connections", ["Records"], ["People"], ["To review"], "Started", "By"];
   return table(cols, runs.map((r) => el("tr", { class: "click", onclick: () => go("Runs", () => viewRun(r.project_id, r.id)) },
     withProject ? el("td", {}, projectName(r.project_id)) : null, el("td", { class: "mono" }, r.id), el("td", {}, statusTag(r.status)),
@@ -315,58 +312,121 @@ async function viewProjects() {
     el("td", {}, el("strong", {}, p.name), el("div", { class: "muted" }, p.description || p.id)), el("td", { class: "num" }, num(p.runs)),
     el("td", {}, p.latest_run ? statusTag(p.latest_run.status) : el("span", { class: "muted" }, "no runs")),
     el("td", {}, p.latest_run ? when(p.latest_run.started_at || p.latest_run.created_at) : ""), el("td", {}, p.created_by)));
-  const create = can("runs.start") ? btn("New project", () => run(newProject), "primary", "plus") : null;
-  show(page("Projects", "Each project keeps its own steward decisions, person IDs and rules.", [create]),
+  const create = can("projects.create") ? btn("New project", () => run(newProject), "primary", "plus") : null;
+  show(page("Projects", "A project is one piece of dedupe work with its own data connections, runs, decisions and rules. You see the projects you created or were added to.", [create]),
     rows.length ? table(["Project", ["Runs"], "Latest run", "Last activity", "Created by"], rows) : empty("No projects yet.", create));
 }
 async function newProject() {
   const name = el("input", { type: "text", maxlength: "120", "aria-label": "Project name" });
   const id = el("input", { type: "text", maxlength: "40", "aria-label": "Project id" });
   const desc = el("textarea", { class: "plain", maxlength: "500", "aria-label": "Description" });
+  const second = el("input", { type: "checkbox" });
   let touched = false;
   name.addEventListener("input", () => { if (!touched) id.value = name.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40); });
   id.addEventListener("input", () => { touched = true; });
   const err = el("p", { class: "bad", hidden: true });
-  const created = await dialog("New project", el("div", {}, field("Name", name), field("Id (used in addresses: lower-case letters, digits and -)", id), field("Description (optional)", desc), err),
-    "Create project", async () => {
-      try { return await api("POST", "/projects", { id: id.value.trim(), name: name.value.trim(), description: desc.value.trim() }); } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
-    });
+  const created = await dialog("New project", el("div", {}, field("Name", name), field("Id (used in addresses: lower-case letters, digits and -)", id), field("Description (optional)", desc),
+    el("label", { class: "check" }, second, el("span", {}, "Require a second person to approve changes", el("span", { class: "muted" }, "Leave this off while you work alone. Turn it on in the project's settings once others join.")))
+    , err),
+  "Create project", async () => {
+    try { return await api("POST", "/projects", { id: id.value.trim(), name: name.value.trim(), description: desc.value.trim(), second_approval: second.checked }); } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
   if (created) { await refreshCache(); go("Projects", () => viewProject(created.id)); }
 }
-async function viewProject(pid, tab) {
-  tab = tab || "runs";
-  const [p, runs] = await Promise.all([api("GET", "/projects/" + pid), can("runs.read") ? api("GET", "/projects/" + pid + "/runs") : []]);
+async function pickProject(title, text, then) {
   await refreshCache();
-  const actions = can("runs.start") ? [p.latest_run && p.latest_run.connections.length ? btn("Run again", () => run(() => startRun(pid, [], p.latest_run.id)), "", "refresh") : null,
-    btn("New run", () => go("Runs", () => newRun(pid)), "primary", "play")] : [];
-  const tabList = [["runs", "Runs"], ["rules", "Rules and settings"], ...(can("judgment.approve") ? [["approvals", "Approvals"]] : []),
-    ...(can("project.access") ? [["access", "Access"]] : [])];
-  let body;
-  if (tab === "runs") body = runsTable(runs, false);
-  else if (tab === "rules") body = await rulesPanel(pid);
-  else if (tab === "access") body = await accessPanel(pid);
-  else body = await decisionApprovals(pid, () => viewProject(pid, "approvals"));
-  show(page(p.name, p.description || "Project " + p.id, actions, crumbs(crumb("Projects", () => go("Projects", viewProjects)), p.name)),
-    tabs(tabList, tab, (t) => viewProject(pid, t)), body);
+  if (!cache.projects.length) { go("Projects", viewProjects); say("Create a project first.", "bad"); return; }
+  if (cache.projects.length === 1) { then(cache.projects[0].id); return; }
+  const sel = el("select", { "aria-label": "Project" }, cache.projects.map((p) => el("option", { value: p.id }, p.name)));
+  const chosen = await dialog(title, el("div", {}, el("p", { class: "hint" }, text), field("Project", sel)), "Continue", async () => sel.value);
+  if (chosen) then(chosen);
 }
-
-const GRANT_ROLES = ["viewer", "steward", "approver", "rule_admin", "auditor", "platform_admin"];
+async function viewProject(pid, tab) {
+  tab = tab || "overview";
+  const [p, runs, connections] = await Promise.all([api("GET", "/projects/" + pid), can("runs.read") ? api("GET", "/projects/" + pid + "/runs") : [],
+    can("config.read") ? api("GET", "/projects/" + pid + "/connections") : []]);
+  await refreshCache();
+  const manage = can("project.access") || p.you_own;
+  const actions = can("runs.start") ? [btn("New run", () => go("Projects", () => newRun(pid)), "primary", "play")] : [];
+  const tabList = [["overview", "Overview"], ["connections", "Connections"], ["runs", "Runs"], ["rules", "Rules"], ...(can("judgment.approve") ? [["approvals", "Approvals"]] : []),
+    ["activity", "Activity"], ...(manage ? [["access", "Access"], ["settings", "Settings"]] : [])];
+  let body;
+  if (tab === "overview") body = projectOverview(p, runs, connections);
+  else if (tab === "connections") body = projectConnections(p, connections);
+  else if (tab === "runs") body = runsTable(runs, false, pid);
+  else if (tab === "rules") body = await rulesPanel(pid);
+  else if (tab === "activity") body = await activityPanel(pid);
+  else if (tab === "access") body = await accessPanel(pid);
+  else if (tab === "settings") body = settingsPanel(p);
+  else body = await decisionApprovals(pid, () => viewProject(pid, "approvals"));
+  show(page(p.name, p.description || "Project " + p.id, actions, crumbs(crumb("Projects", () => go("Projects", viewProjects)), p.name),
+    p.second_approval ? tag("Second approval on") : null),
+  tabs(tabList, tab, (t) => viewProject(pid, t)), body);
+}
+function projectOverview(p, runs, connections) {
+  const live = connections.filter((c) => c.live_version);
+  const finished = runs.find((r) => r.status === "succeeded");
+  const going = runs.find((r) => r.status === "running" || r.status === "queued");
+  const toReview = finished ? finished.summary.review_items : null;
+  const todo = [
+    ["Add your data", "Connect a file, spreadsheet or database, or upload a file, then map its columns.", connections.length > 0, "connections", can("sources.manage")],
+    ["Make the data ready to use", p.second_approval ? "A second person approves each connection, then it is made live." : "Make the connection live so runs can read it.", live.length > 0, "connections",
+      can("config.activate") || can("config.approve")],
+    ["Run the match", "Find the records that are the same person and group households.", !!finished || !!going, "runs", can("runs.start")],
+    ["Review the uncertain matches", toReview == null ? "Appears after the first run." : num(toReview) + " pairs need a person to decide.", !!finished && toReview === 0, "runs", can("queue.read")],
+  ];
+  const next = todo.findIndex((t) => !t[2]);
+  const list = el("div", { class: "todo" }, todo.map(([title, text, done, tab, allowed], i) => el("div", { class: "todo-row" + (i === next ? " next" : "") },
+    el("span", { class: "todo-mark" }, done ? icon("check") : String(i + 1)), el("div", {}, el("strong", {}, title), el("div", { class: "muted" }, text)),
+    allowed && !done ? btn(i === next ? "Go" : "Open", () => run(() => viewProject(p.id, tab)), i === next ? "primary small" : "small") : null)));
+  return el("div", {}, el("div", { class: "stats" }, stat("Connections", num(connections.length), () => run(() => viewProject(p.id, "connections"))), stat("Live connections", num(live.length)),
+    stat("Runs", num(runs.length), () => run(() => viewProject(p.id, "runs"))), stat("People found", finished ? num(finished.summary.people) : "-"),
+    stat("Items to review", toReview == null ? "-" : num(toReview), finished && can("queue.read") ? () => go("Projects", () => viewRun(p.id, finished.id, "review")) : null)),
+  el("h2", { class: "section" }, "Where you are"), list);
+}
+async function activityPanel(pid, before) {
+  const events = await api("GET", "/projects/" + pid + "/activity?limit=50" + (before ? "&before_id=" + before : ""));
+  const ACTIONS = { propose: "Saved a connection version", activate: "Made a version live", approve: "Approved a version", decline: "Declined a version", copy: "Copied a connection",
+    source_inspect: "Looked inside a source", source_preview: "Previewed a mapping", upload: "Uploaded a file", create_project: "Created the project", grant_access: "Added a member",
+    revoke_access: "Removed a member", set_second_approval: "Changed the approval setting", start: "Started a run", cancel: "Cancelled a run" };
+  const what = (e) => (e.detail && ACTIONS[e.detail.action]) || (label(e.event) + (e.detail && e.detail.action ? ": " + label(e.detail.action) : ""));
+  const target = (e) => (e.object_ref || "").replace(pid + "/", "").replace(/^connection\//, "");
+  const more = events.length === 50 ? btn("Older events", () => run(async () => { const w = await activityPanel(pid, events[events.length - 1].id); $("view").lastChild.replaceWith(w); }), "small") : null;
+  return el("div", {}, el("p", { class: "hint" }, "Who did what in this project, newest first. Personal data values are never recorded here."),
+    events.length ? table(["Time", "Who", "What", "On", ["Status"]], events.map((e) => el("tr", {}, el("td", {}, when(e.created_at)), el("td", {}, e.actor), el("td", {}, what(e)),
+      el("td", { class: "mono" }, target(e)), el("td", { class: "num" }, e.status == null ? "" : e.status)))) : empty("Nothing has happened in this project yet."), more);
+}
+function settingsPanel(p) {
+  const second = el("input", { type: "checkbox", checked: p.second_approval });
+  const save = () => run(async () => {
+    await api("PATCH", "/projects/" + p.id + "/settings", { second_approval: second.checked });
+    await refreshCache();
+    await viewProject(p.id, "settings");
+    say("Saved.", "good");
+  });
+  return el("div", {}, el("table", { class: "kv" }, el("tbody", {}, el("tr", {}, el("th", {}, "Project id"), el("td", { class: "mono" }, p.id)),
+    el("tr", {}, el("th", {}, "Created by"), el("td", {}, p.created_by)), el("tr", {}, el("th", {}, "Created"), el("td", {}, when(p.created_at))))),
+  el("h3", { class: "section" }, "Approvals"),
+  el("label", { class: "check" }, second, el("span", {}, "Require a second person to approve changes", el("span", { class: "muted" },
+    "When on, a connection or rule change is approved by someone other than whoever proposed it, and sensitive decisions need a second person too. It needs at least two people in the project. When off, one person can do everything."))),
+  el("div", { class: "row" }, btn("Save", save, "primary")));
+}
 async function accessPanel(pid) {
-  const members = await api("GET", "/projects/" + pid + "/access");
+  const [members, roles] = await Promise.all([api("GET", "/projects/" + pid + "/access"), api("GET", "/roles")]);
   const who = el("input", { type: "text", maxlength: "200", "aria-label": "Username" });
-  const role = el("select", { "aria-label": "Role" }, GRANT_ROLES.map((x) => el("option", { value: x }, label(x))));
+  const role = el("select", { "aria-label": "Role" }, roles.roles.map((x) => el("option", { value: x.name, selected: x.name === "analyst" }, label(x.name))));
   const err = el("p", { class: "bad", hidden: true });
   const add = async () => {
-    try { await api("POST", "/projects/" + pid + "/access", { subject: who.value.trim(), role: role.value }); await viewProject(pid, "access"); }
+    try { await api("POST", "/projects/" + pid + "/access", { subject: who.value.trim().toLowerCase(), role: role.value }); await viewProject(pid, "access"); }
     catch (e) { err.textContent = e.message; err.hidden = false; }
   };
   const drop = (g) => run(async () => { await api("DELETE", "/projects/" + pid + "/access/" + encodeURIComponent(g.subject) + "/" + encodeURIComponent(g.role)); await viewProject(pid, "access"); });
   return el("div", {},
-    el("p", { class: "hint" }, members.length ? "This project is members-only: only the people below, platform admins and auditors can open it. Remove the last person to open it to everyone again."
-      : "This project is open: anyone whose role allows the action can use it. Add a person to make it members-only."),
-    members.length ? table(["Person", "Role", "Added by", "Added", ""], members.map((g) => el("tr", {}, el("td", {}, g.subject), el("td", {}, label(g.role)), el("td", {}, g.granted_by),
-      el("td", {}, when(g.granted_at)), el("td", {}, btn("Remove", () => drop(g)))))) : null,
-    el("h3", { class: "section" }, "Add a person"), el("div", { class: "row" }, field("Username (the sign-in name from your identity provider)", who), field("Role", role), btn("Add", add, "primary")), err);
+    el("p", { class: "hint" }, members.length ? "Only the people below can open this project, plus administrators and auditors. What each person may do inside it comes from their role."
+      : "This project has no members listed, so anyone whose role allows an action can use it. Add a person to make it members-only."),
+    members.length ? table(["Person", "Role", "Added by", "Added", ""], members.map((g) => el("tr", {}, el("td", {}, g.subject), el("td", {}, g.role === "owner" ? tag("Owner", "info") : label(g.role)),
+      el("td", {}, g.granted_by), el("td", {}, when(g.granted_at)), el("td", {}, g.role === "owner" ? "" : btn("Remove", () => drop(g)))))) : null,
+    el("h3", { class: "section" }, "Add a person"), el("div", { class: "row" }, field("Username", who), field("Role", role), btn("Add", add, "primary")), err);
 }
 
 // ---- runs --------------------------------------------------------------------------------------------------------------
@@ -398,16 +458,17 @@ async function newRun(pid, step, chosen) {
   if (step === 1) {
     const tiles = cache.projects.map((p) => tile("folder", p.name, p.description || p.id, () => to(2, p.id)));
     show(page("New run", "Choose the project this run belongs to."), steps,
-      tiles.length ? el("div", { class: "tiles" }, tiles) : empty("Create a project first.", btn("New project", () => run(newProject), "primary", "plus")));
+      tiles.length ? el("div", { class: "tiles" }, tiles) : empty("Create a project first.", can("projects.create") ? btn("New project", () => run(newProject), "primary", "plus") : null));
     return;
   }
   if (step === 2) {
-    const live = cache.connections.filter((c) => c.live_version);
+    const all = can("config.read") ? await api("GET", "/projects/" + pid + "/connections") : [];
+    const live = all.filter((c) => c.live_version);
     const tiles = live.map((c) => tile(TYPE_ICON[c.type] || "database", c.id, label(c.type) + ", " + c.fields_mapped + " fields mapped, version " + c.live_version,
       () => { if (chosen.has(c.id)) chosen.delete(c.id); else chosen.add(c.id); to(2); }, chosen.has(c.id)));
-    show(page("New run", "Project " + projectName(pid) + ". Choose the connections to read; only approved, live connections are listed.",
-      [btn("Back", () => to(1)), btn("Next", () => (chosen.size ? to(3) : say("Choose at least one connection.", "bad")), "primary")]), steps,
-    tiles.length ? el("div", { class: "tiles" }, tiles) : empty("No live connections yet.", can("sources.manage") ? btn("Add data", () => go("Connections", viewConnections), "primary", "plus") : null));
+    show(page("New run", "Project " + projectName(pid) + ". Choose the connections to read; only live connections are listed.",
+      [btn("Back", () => (cache.projects.length > 1 ? to(1) : go("Projects", () => viewProject(pid)))), btn("Next", () => (chosen.size ? to(3) : say("Choose at least one connection.", "bad")), "primary")]), steps,
+    tiles.length ? el("div", { class: "tiles" }, tiles) : empty("This project has no live connections yet.", can("sources.manage") ? btn("Add data", () => go("Projects", () => viewProject(pid, "connections")), "primary", "plus") : null));
     return;
   }
   const reason = el("textarea", { class: "plain", maxlength: "300", "aria-label": "Reason" });
@@ -600,11 +661,15 @@ async function decisionApprovals(pid, after) {
 }
 async function viewApprovals() {
   await refreshCache();
-  const parts = [page("Approvals", "Everything waiting for a second person: new connection versions and steward decisions.")];
-  const waiting = cache.connections.filter((c) => c.latest_status === "proposed");
-  parts.push(el("h2", { class: "section" }, "Connections"), waiting.length ? table(["Connection", "Type", "Version", "Status", "Proposed by", ""], waiting.map((c) =>
-    el("tr", { class: "click", onclick: () => go("Connections", () => viewConnection(c.id)) }, el("td", {}, c.id), el("td", {}, label(c.type)), el("td", {}, "Version " + c.latest_version),
-      el("td", {}, statusTag(c.latest_status)), el("td", {}, c.updated_by), el("td", { class: "actions-cell" }, btn("Open", () => go("Connections", () => viewConnection(c.id)), "small")))))
+  const parts = [page("Approvals", "Everything waiting for someone: new connection versions and steward decisions, across your projects.")];
+  const waiting = [];
+  for (const p of cache.projects) {
+    if (!can("config.read")) break;
+    for (const c of await api("GET", "/projects/" + p.id + "/connections")) if (c.latest_status === "proposed") waiting.push([p, c]);
+  }
+  parts.push(el("h2", { class: "section" }, "Connections"), waiting.length ? table(["Project", "Connection", "Type", "Version", "Proposed by", ""], waiting.map(([p, c]) =>
+    el("tr", { class: "click", onclick: () => go("Approvals", () => viewConnection(p.id, c.id)) }, el("td", {}, p.name), el("td", {}, c.id), el("td", {}, label(c.type)),
+      el("td", {}, "Version " + c.latest_version), el("td", {}, c.updated_by), el("td", { class: "actions-cell" }, btn("Open", () => go("Approvals", () => viewConnection(p.id, c.id)), "small")))))
     : empty("No connection versions are waiting."));
   if (can("judgment.approve")) {
     for (const p of cache.projects) parts.push(el("h2", { class: "section" }, "Decisions in " + p.name), await decisionApprovals(p.id, viewApprovals));
@@ -612,7 +677,7 @@ async function viewApprovals() {
   show(...parts);
 }
 
-// ---- connections ----------------------------------------------------------------------------------------------------------
+// ---- connections (they belong to a project) -------------------------------------------------------------------------------
 const TYPE_ICON = { upload: "upload", csv: "file", tsv: "file", xlsx: "sheet", excel: "sheet", parquet: "columns", gsheet: "cloud", google_sheets: "cloud", sql: "server" };
 const ADD_TILES = [
   ["upload", "Upload a file", "CSV or Excel from your computer. Checked and stored encrypted."],
@@ -622,40 +687,72 @@ const ADD_TILES = [
   ["gsheet", "Google Sheets", "A sheet shared by link or with an access token."],
   ["parquet", "Parquet on the server", "A Parquet file in an approved data folder."],
 ];
-async function viewConnections() {
-  await refreshCache();
-  const rows = cache.connections.map((c) => el("tr", { class: "click", onclick: () => go("Connections", () => viewConnection(c.id)) },
+function projectConnections(p, connections) {
+  const pid = p.id;
+  const open = (c) => go("Projects", () => viewConnection(pid, c.id));
+  const rows = connections.map((c) => el("tr", { class: "click", onclick: () => open(c) },
     el("td", {}, el("span", { class: "title-row" }, icon(TYPE_ICON[c.type] || "database"), c.id)), el("td", {}, label(c.type)), el("td", { class: "num" }, c.fields_mapped),
     el("td", {}, c.live_version ? "Version " + c.live_version : el("span", { class: "muted" }, "Not live")),
     el("td", {}, c.latest_status === "active" ? "" : statusTag(c.latest_status)), el("td", {}, when(c.updated_at)), el("td", {}, c.updated_by)));
-  show(page("Connections", "Saved sources with their field mapping, shared by all projects. Each version is approved by a second person before runs can use it."),
+  const copy = can("sources.manage") ? btn("Copy from another project", () => run(() => copyDialog(pid)), "", "folder") : null;
+  return el("div", {},
     can("sources.manage") ? el("h2", { class: "section" }, "Add data") : null,
-    can("sources.manage") ? el("div", { class: "tiles" }, ADD_TILES.map(([t, title, text]) => tile(TYPE_ICON[t], title, text, () => run(() => connectionWizard(t))))) : null,
-    el("h2", { class: "section" }, "Your connections"),
-    rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Updated", "By"], rows) : empty("No connections yet."));
+    can("sources.manage") ? el("div", { class: "tiles" }, ADD_TILES.map(([t, title, text]) => tile(TYPE_ICON[t], title, text, () => run(() => connectionWizard(pid, t))))) : null,
+    el("div", { class: "title-row" }, el("h2", { class: "section" }, "This project's connections"), copy),
+    rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Updated", "By"], rows)
+      : empty("No connections yet. Add your first data source above; it belongs to this project only."));
 }
-async function viewConnection(cid) {
-  const c = await api("GET", "/connections/" + cid);
+async function copyDialog(pid) {
+  const others = cache.projects.filter((x) => x.id !== pid);
+  if (!others.length) { say("You have no other project to copy from.", "bad"); return; }
+  const from = el("select", { "aria-label": "Project" }, others.map((x) => el("option", { value: x.id }, x.name)));
+  const which = el("select", { "aria-label": "Connection" });
+  const newId = el("input", { type: "text", maxlength: "40", "aria-label": "New connection id" });
+  const err = el("p", { class: "bad", hidden: true });
+  const load = async () => {
+    which.replaceChildren();
+    try {
+      const list = await api("GET", "/projects/" + from.value + "/connections");
+      which.append(...list.filter((c) => c.type !== "upload").map((c) => el("option", { value: c.id }, c.id + " (" + label(c.type) + ")")));
+      if (!which.children.length) err.textContent = "That project has no connection that can be copied (uploaded files stay with their project).";
+      else err.textContent = "";
+      err.hidden = !err.textContent;
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+  };
+  from.addEventListener("change", load);
+  await load();
+  const done = await dialog("Copy a connection", el("div", {}, el("p", { class: "hint" }, "The copy is independent: later changes to either one do not affect the other. It starts as a proposal in this project."),
+    field("From project", from), field("Connection", which), field("New id here (leave empty to keep the same)", newId), err), "Copy", async () => {
+    try {
+      return await api("POST", "/projects/" + pid + "/connections/copy", { from_project: from.value, connection_id: which.value, new_id: newId.value.trim() || null });
+    } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
+  if (done) { go("Projects", () => viewConnection(pid, done.id)); say("Copied as version " + done.version + ". Check the mapping, then make it live.", "good"); }
+}
+async function viewConnection(pid, cid) {
+  const base = "/projects/" + pid + "/connections/" + cid;
+  const c = await api("GET", base);
   const latest = c.versions[c.versions.length - 1];
   const live = c.versions.find((v) => v.status === "active");
+  const second = c.second_approval;
   const act = (v, what, title, minLength, prompt, danger) => run(async () => {
     const why = await askReason(title, prompt, minLength, title.split(" ")[0], danger);
     if (why === null) return;
-    await api("POST", "/connections/" + cid + "/versions/" + v.version + "/" + what, { reason: why });
-    await viewConnection(cid);
+    await api("POST", base + "/versions/" + v.version + "/" + what, { reason: why });
+    await viewConnection(pid, cid);
     say(title + ": done.", "good");
   });
   const buttons = (v) => [
-    can("config.approve") && v.status === "proposed" ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small") : null,
+    second && can("config.approve") && v.status === "proposed" ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small") : null,
     can("config.approve") && v.status === "proposed" ? btn("Decline", () => act(v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger") : null,
-    can("config.activate") && v.status === "proposed" && v.approved_by.length ? btn("Make live", () => act(v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary") : null,
+    can("config.activate") && v.status === "proposed" && (!second || v.approved_by.length) ? btn("Make live", () => act(v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary") : null,
   ].filter(Boolean);
   const shown = c.live || c.latest;
   const mapRows = Object.entries(shown.fields || {}).map(([f, col]) => el("tr", {}, el("td", {}, label(f)), el("td", {}, typeof col === "string" ? col : JSON.stringify(col))));
   const settings = Object.entries(shown.connector).filter(([k]) => k !== "type").map(([k, v]) => el("tr", {}, el("th", {}, label(k)), el("td", { class: "mono" }, v)));
   show(page(cid, label(shown.connector.type) + " connection. " + (live ? "Live version " + live.version + "." : "Not live yet."),
-    can("sources.manage") ? [btn("Edit", () => run(() => connectionWizard(shown.connector.type, JSON.parse(JSON.stringify(c.latest)))), "", "sliders")] : [],
-    crumbs(crumb("Connections", () => go("Connections", viewConnections)), cid), statusTag(latest.status)),
+    can("sources.manage") ? [btn("Edit", () => run(() => connectionWizard(pid, shown.connector.type, JSON.parse(JSON.stringify(c.latest)))), "", "sliders")] : [],
+    crumbs(crumb("Projects", () => go("Projects", viewProjects)), crumb(projectName(pid), () => go("Projects", () => viewProject(pid, "connections"))), cid), statusTag(latest.status)),
   el("h2", { class: "section" }, "Versions"),
   table(["Version", "Status", "Proposed by", "Reason", "Approved by", ""], c.versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version),
     el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")), el("td", { class: "actions-cell" }, buttons(v))))),
@@ -663,9 +760,10 @@ async function viewConnection(cid) {
     el("div", {}, el("h2", { class: "section" }, "Field mapping" + (live ? " (live)" : "")), table(["Field", "Source column"], mapRows))));
 }
 
-// The add-a-connection wizard: 1 connect (or upload), 2 map the columns, 3 preview and propose.
-async function connectionWizard(type, preset) {
-  const opts = await api("GET", "/connections/options");
+// The add-a-connection wizard: 1 connect (or upload), 2 map the columns, 3 preview and propose. Everything it does belongs to the project.
+async function connectionWizard(pid, type, preset) {
+  const opts = await api("GET", "/connectors");
+  const root = "/projects/" + pid;
   const state = { source: preset || { source_id: "", connector: { type }, record_id: null, fields: {}, attributes: [] }, info: null, step: 1, uploadName: null };
   const out = el("div");
   const kind = () => state.source.connector.type;
@@ -674,7 +772,7 @@ async function connectionWizard(type, preset) {
     const known = ADD_TILES.find((t) => t[0] === type);
     const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (known ? known[1] : label(type)),
       opts.connectors[kind()] ? "Settings: " + opts.connectors[kind()].help : "", [],
-      crumbs(crumb("Connections", () => go("Connections", viewConnections)), preset ? state.source.source_id : "Add data"));
+      crumbs(crumb("Projects", () => go("Projects", viewProjects)), crumb(projectName(pid), () => go("Projects", () => viewProject(pid, "connections"))), preset ? state.source.source_id : "Add data"));
     if (state.step === 1) show(header, steps, connectStep());
     else if (state.step === 2) show(header, steps, mapStep());
     else show(header, steps, previewStep(), out);
@@ -687,7 +785,7 @@ async function connectionWizard(type, preset) {
   const openSource = () => run(async () => {
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(state.source.source_id)) throw new Error("Give the connection an id of letters, digits, _ or -.");
     if (kind() === "upload" && !state.source.connector.upload_id) throw new Error("Upload a file first.");
-    state.info = await api("POST", "/connections/inspect", { connector: state.source.connector });
+    state.info = await api("POST", root + "/connections/inspect", { connector: state.source.connector });
     if (!Object.keys(state.source.fields).length) for (const s of state.info.suggestions) state.source.fields[s.field] = s.column;
     state.step = 2;
     render();
@@ -700,7 +798,7 @@ async function connectionWizard(type, preset) {
       const zone = el("div", { class: "dropzone" }, icon("upload"), el("strong", {}, "Drop a file here"), btn("Choose a file", () => input.click(), "small"), status);
       const send = (f) => run(async () => {
         status.textContent = "Uploading and checking " + f.name + ".";
-        const r = await api("POST", "/uploads?filename=" + encodeURIComponent(f.name), f, { "Content-Type": "application/octet-stream" }, true);
+        const r = await api("POST", root + "/uploads?filename=" + encodeURIComponent(f.name), f, { "Content-Type": "application/octet-stream" }, true);
         state.source.connector = { type: "upload", upload_id: r.upload_id };
         state.uploadName = r.filename + " (" + num(r.rows) + " rows, " + r.columns.length + " columns, stored encrypted)";
         if (!state.source.source_id) state.source.source_id = r.filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "_").slice(0, 40);
@@ -752,7 +850,7 @@ async function connectionWizard(type, preset) {
   }
   function previewStep() {
     const doPreview = () => run(async () => {
-      const r = await api("POST", "/connections/preview", state.source);
+      const r = await api("POST", root + "/connections/preview", state.source);
       const cols = Object.keys(r.rows[0] || {}).filter((c) => c !== "attributes" && r.rows.some((row) => row[c] != null));
       out.replaceChildren(el("h3", { class: "section" }, "Fields filled in " + r.sample_size + " sample rows"),
         table(["Field", ["Rows filled"]], Object.entries(r.filled).map(([f, n]) => el("tr", {}, el("td", {}, label(f)), el("td", { class: "num" }, n + " of " + r.sample_size)))),
@@ -762,12 +860,12 @@ async function connectionWizard(type, preset) {
     const propose = () => run(async () => {
       const why = await askReason("Propose connection " + state.source.source_id, "Why add or change it?", 10, "Propose");
       if (why === null) return;
-      const res = await api("POST", "/connections", { connection: state.source, reason: why });
-      go("Connections", () => viewConnection(res.id));
-      say("Proposed as version " + res.version + ". Another person approves it and makes it live; then runs can use it.", "good");
+      const res = await api("POST", root + "/connections", { connection: state.source, reason: why });
+      go("Projects", () => viewConnection(pid, res.id));
+      say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it and makes it live; then runs can use it." : "Make it live when you are ready; then runs can use it."), "good");
     });
     setTimeout(doPreview, 0);
-    return el("div", { class: "row" }, btn("Back", () => { state.step = 2; render(); }), btn("Preview again", doPreview, "", "refresh"), btn("Propose", propose, "primary", "check"));
+    return el("div", { class: "row" }, btn("Back", () => { state.step = 2; render(); }), btn("Preview again", doPreview, "", "refresh"), btn("Save connection", propose, "primary", "check"));
   }
   render();
 }

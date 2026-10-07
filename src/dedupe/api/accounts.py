@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from sqlalchemy import Column, Float, Integer, MetaData, String, Table, Text, delete, insert, select, update
 from sqlalchemy.engine import Engine
 
+from dedupe.schema import create_and_upgrade
+
 from .roles import BUILTIN_DESCRIPTIONS, PERMISSIONS, ROLES
 
 USERNAME = r"^[a-z0-9][a-z0-9._-]{2,63}$"
@@ -135,7 +137,7 @@ def check_password_policy(password: str, username: str = "") -> None:
 class AccountStore:
     def __init__(self, engine: Engine):
         self.engine = engine
-        _meta.create_all(engine)
+        create_and_upgrade(engine, _meta)
         self._dummy = hash_password(secrets.token_urlsafe(16))        # verified against when the user is unknown, so timing does not reveal who exists
 
     # -- users --

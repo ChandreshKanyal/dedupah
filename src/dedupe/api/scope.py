@@ -84,9 +84,13 @@ def run_scope(request: Request, project_id: str, run_id: str) -> RunScope:
     if len(reviews) > MAX_CACHED:
         reviews.clear()
     pair = []
+    second = ps.project.second_approval
     for reveal in (False, True):
-        key = (project_id, run_id, reveal)
+        key = (project_id, run_id, reveal, second)
         if key not in reviews:
-            reviews[key] = ReviewService(work, ps.judgments, ReviewPolicy(reveal_sensitive=reveal))
+            # a one-person project cannot give a decision "a second look": the sensitive-decision approvals are off until the project asks for them
+            policy = ReviewPolicy(reveal_sensitive=reveal) if second else ReviewPolicy(
+                reveal_sensitive=reveal, four_eyes_id_conflict=False, four_eyes_override_fields=(), four_eyes_split=False, four_eyes_merge_min_records=None)
+            reviews[key] = ReviewService(work, ps.judgments, policy)
         pair.append(reviews[key])
     return RunScope(ps.project, ps.judgments, ps.configs, run, pair[0], pair[1])

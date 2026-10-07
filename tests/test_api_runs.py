@@ -109,11 +109,19 @@ def test_real_runs_over_connections_excel_alone_then_several_then_again(tmp_path
     admin = hdr(s, "platform_admin", "u-ops")
     assert c.post("/projects", json={"id": "insurance-only", "name": "Insurance file"}, headers=admin).status_code == 201
     assert c.post("/projects", json={"id": "customer-master", "name": "Customer master"}, headers=admin).status_code == 201
+    for pid in ("insurance-only", "customer-master"):                          # new projects are private to their creator: add the colleagues who approve and read
+        for who, role in (("u-lee", "approver"), ("u-viewer", "viewer")):
+            assert c.post(f"/projects/{pid}/access", json={"subject": who, "role": role}, headers=admin).status_code == 201
     ids = []
-    for src in json.loads(sources_file.read_text(encoding="utf-8"))["sources"]:
-        make_live(c, s, src)
+    everything = json.loads(sources_file.read_text(encoding="utf-8"))["sources"]
+    for src in everything:                                                    # connections belong to a project: every source goes into the master project
+        make_live(c, s, src, project="customer-master")
         ids.append(src["source_id"])
-    excel = next(x["source_id"] for x in json.loads(sources_file.read_text(encoding="utf-8"))["sources"] if x["connector"]["type"] == "xlsx")
+    excel_src = next(x for x in everything if x["connector"]["type"] == "xlsx")
+    excel = excel_src["source_id"]
+    make_live(c, s, excel_src, project="insurance-only")                      # the one-off project connects only the Excel file, on its own
+    assert c.get("/projects/insurance-only/connections", headers=hdr(s, "viewer")).json()[0]["id"] == excel
+    assert len(c.get("/projects/insurance-only/connections", headers=hdr(s, "viewer")).json()) == 1
     one = c.post("/projects/insurance-only/runs", json={"connections": [excel]}, headers=admin).json()
     assert sv.jobs.wait("insurance-only", one["id"], 300).status == "succeeded"
     many = c.post("/projects/customer-master/runs", json={"connections": ids}, headers=admin).json()
@@ -128,4 +136,4 @@ def test_real_runs_over_connections_excel_alone_then_several_then_again(tmp_path
     ids_2 = c.get(f"/projects/customer-master/runs/{again['id']}/queue?limit=3", headers=hdr(s, "viewer")).json()
     assert [(i["person_l"], i["person_r"]) for i in ids_1] == [(i["person_l"], i["person_r"]) for i in ids_2]   # person IDs are stable across a project's runs
     home = c.get("/home", headers=admin).json()
-    assert home["projects"] == 2 and home["connections"] == len(ids) and len(home["recent_runs"]) == 3
+    assert home["projects"] == 2 and home["connections"] == len(ids) + 1 and len(home["recent_runs"]) == 3

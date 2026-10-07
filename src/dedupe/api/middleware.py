@@ -107,13 +107,14 @@ class BodyLimitMiddleware:
 
     def __init__(self, app, max_bytes: int, on_event=None, overrides: dict | None = None):
         self.app, self.max, self.on_event = app, max_bytes, on_event
-        self.overrides = overrides or {}            # path -> a larger cap (file uploads only)
+        self.overrides = [(re.compile(k), v) for k, v in (overrides or {}).items()]      # path pattern -> a larger cap (file uploads only)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         rid = scope.get("state", {}).get("request_id", "")
-        limit = self.overrides.get(scope.get("path", ""), self.max)
+        path = scope.get("path", "")
+        limit = next((v for pat, v in self.overrides if pat.fullmatch(path)), self.max)
         declared = dict(scope["headers"]).get(b"content-length")
         if declared and declared.isdigit() and int(declared) > limit:
             return await self._reject(scope, send, rid)

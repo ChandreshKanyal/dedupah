@@ -17,7 +17,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from dedupe import crypto
-from dedupe.governance.store import ConfigStore
 from dedupe.workspace import RunJobs, Uploads, Workspace
 
 from .accounts import AccountStore
@@ -43,7 +42,6 @@ class Services:
     seclog: SecurityLog
     limiter: SlidingWindow
     workspace: Workspace
-    connections: ConfigStore                       # saved connections (main database), versioned with four eyes
     uploads: Uploads
     jobs: RunJobs
     accounts: AccountStore                         # local users and custom roles (main database)
@@ -70,6 +68,7 @@ class SecurityEvent(BaseModel):
     detail: dict
     request_id: str
     client_ip: str
+    project_id: str = ""
 
 
 ANY_USER = Depends(authenticated())
@@ -93,7 +92,7 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     jobs = RunJobs(ws, command) if command else RunJobs(ws)
     accounts = AccountStore(ws.engine)
     sv = Services(settings, verifier or TokenVerifier(settings, accounts=accounts), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws,
-                  ConfigStore.open(ws.url), Uploads(ws.engine, ws.upload_dir), jobs, accounts)
+                  Uploads(ws.engine, ws.upload_dir), jobs, accounts)
     jobs.on_finish = lambda run: sv.seclog.record("run_finished", status=None, object_ref=f"{run.project_id}/{run.id}",
                                                   detail={"exit_code": run.exit_code, "outcome": run.status})
 
@@ -120,7 +119,7 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
                            allow_headers=["authorization", "content-type", "x-request-id"], allow_credentials=False)
     if "*" not in settings.allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
-    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes, on_event=on_event, overrides={"/uploads": settings.upload_max_bytes})
+    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes, on_event=on_event, overrides={r"/projects/[a-z0-9-]{2,40}/uploads": settings.upload_max_bytes})
     app.add_middleware(ContextMiddleware, settings=settings, limiter=sv.limiter, on_event=on_event)
     app.add_middleware(HeadersMiddleware, production=settings.production)
 

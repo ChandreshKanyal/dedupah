@@ -16,6 +16,7 @@ from pathlib import Path
 from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, create_engine, event, select, text
 from sqlalchemy.engine import Engine
 
+from dedupe.schema import create_and_upgrade
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
 
 EVENTS = ("auth_failed", "login", "permission_denied", "rate_limited", "request_rejected", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "config_change",
@@ -38,8 +39,10 @@ security_log = Table(
     Column("client_ip", String(64), nullable=False, default=""),
     Column("prev_hash", String(64), nullable=False),
     Column("row_hash", String(64), nullable=False),
+    Column("project_id", String(40)),                  # the project an event belongs to (for the project's activity feed); part of the hash when set
     Index("ix_security_log_event", "event"),
     Index("ix_security_log_actor", "actor"),
+    Index("ix_security_log_project", "project_id"),
 )
 _HASHED = ("id", "created_at", "event", "actor", "roles", "method", "route", "status", "object_ref", "detail", "request_id", "client_ip")
 
@@ -67,13 +70,16 @@ def safe_detail(detail: dict | None) -> dict:
 
 
 def _row_hash(prev: str, row: dict) -> str:
-    return hashlib.sha256((prev + _json({k: row[k] for k in _HASHED})).encode("utf-8")).hexdigest()
+    body = {k: row[k] for k in _HASHED}
+    if row.get("project_id"):
+        body["project_id"] = row["project_id"]       # rows written before projects existed have none, and keep hashing exactly as they did
+    return hashlib.sha256((prev + _json(body)).encode("utf-8")).hexdigest()
 
 
 class SecurityLog:
     def __init__(self, engine: Engine, clock=_now):
         self.engine, self._clock = engine, clock
-        _meta.create_all(engine)
+        create_and_upgrade(engine, _meta)
         install_append_only(engine, "security_log")
 
     @classmethod
@@ -87,7 +93,7 @@ class SecurityLog:
         return cls(engine, clock)
 
     def record(self, event_name: str, *, actor: str = "", roles=(), method: str = "", route: str = "", status: int | None = None,
-               object_ref: str = "", detail: dict | None = None, request_id: str = "", client_ip: str = "") -> int:
+               object_ref: str = "", detail: dict | None = None, request_id: str = "", client_ip: str = "", project_id: str | None = None) -> int:
         if event_name not in EVENTS:
             raise ValueError(f"unknown security event {event_name!r}")
         with self.engine.begin() as conn:
@@ -97,9 +103,9 @@ class SecurityLog:
             prev, new_id = (last.row_hash, last.id + 1) if last else (GENESIS, 1)
             row = {"id": new_id, "created_at": self._clock(), "event": event_name, "actor": scrub(actor, 200), "roles": ",".join(sorted(roles))[:200],
                    "method": method[:10], "route": route[:200], "status": status, "object_ref": scrub(object_ref, 200),
-                   "detail": _json(safe_detail(detail)), "request_id": request_id[:64], "client_ip": client_ip[:64]}
+                   "detail": _json(safe_detail(detail)), "request_id": request_id[:64], "client_ip": client_ip[:64], "project_id": (project_id or "")[:40] or None}
             conn.execute(security_log.insert().values(**row, prev_hash=prev, row_hash=_row_hash(prev, row)))
-        log.info(_json({k: row[k] for k in _HASHED}))      # same line for the customer's log shipper / SIEM
+        log.info(_json({k: row[k] for k in _HASHED} | ({"project_id": row["project_id"]} if row["project_id"] else {})))      # same line for the customer's log shipper / SIEM
         return new_id
 
     def events(self, after_id: int = 0, limit: int = 100, event_name: str | None = None) -> list[dict]:
@@ -107,13 +113,21 @@ class SecurityLog:
         if event_name:
             q = q.where(security_log.c.event == event_name)
         with self.engine.connect() as conn:
-            return [{k: getattr(r, k) for k in _HASHED} | {"detail": json.loads(r.detail)} for r in conn.execute(q)]
+            return [{k: getattr(r, k) for k in _HASHED} | {"detail": json.loads(r.detail), "project_id": r.project_id or ""} for r in conn.execute(q)]
+
+    def activity(self, project_id: str, limit: int = 50, before_id: int | None = None) -> list[dict]:
+        """A project's own events, newest first (for its Activity tab)."""
+        q = select(security_log).where(security_log.c.project_id == project_id).order_by(security_log.c.id.desc()).limit(limit)
+        if before_id:
+            q = q.where(security_log.c.id < before_id)
+        with self.engine.connect() as conn:
+            return [{k: getattr(r, k) for k in _HASHED} | {"detail": json.loads(r.detail), "project_id": r.project_id or ""} for r in conn.execute(q)]
 
     def verify(self) -> dict:
         prev, n = GENESIS, 0
         with self.engine.connect() as conn:
             for r in conn.execute(select(security_log).order_by(security_log.c.id)):
-                row = {k: getattr(r, k) for k in _HASHED}
+                row = {k: getattr(r, k) for k in _HASHED} | {"project_id": r.project_id}
                 if r.prev_hash != prev or r.row_hash != _row_hash(prev, row):
                     return {"ok": False, "rows": n, "first_bad_id": r.id}
                 prev, n = r.row_hash, n + 1

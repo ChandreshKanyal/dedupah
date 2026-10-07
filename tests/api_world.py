@@ -56,14 +56,15 @@ def csv_connection(path, cid: str = "crm") -> dict:
             "fields": {"full_name": "full_name", "dob": "dob", "mobile": "mobile", "pan": "pan", "city": "city"}, "attributes": ["internal_note"]}
 
 
-def make_live(c, s, connection: dict, proposer="u-ops", approver="u-lee") -> int:
+def make_live(c, s, connection: dict, proposer="u-ops", approver="u-lee", project: str = PROJECT) -> int:
     """Propose a connection as one person and approve + activate it as another. Returns the live version."""
-    r = c.post("/connections", json={"connection": connection, "reason": "connect this source for testing"}, headers=hdr(s, "platform_admin", proposer))
+    base = f"/projects/{project}/connections"
+    r = c.post(base, json={"connection": connection, "reason": "connect this source for testing"}, headers=hdr(s, "platform_admin", proposer))
     assert r.status_code == 200, r.text
     v = r.json()["version"]
     cid = connection["source_id"]
-    assert c.post(f"/connections/{cid}/versions/{v}/approve", json={}, headers=hdr(s, "approver", approver)).status_code == 200
-    assert c.post(f"/connections/{cid}/versions/{v}/activate", json={}, headers=hdr(s, "approver", approver)).status_code == 200
+    assert c.post(f"{base}/{cid}/versions/{v}/approve", json={}, headers=hdr(s, "approver", approver)).status_code == 200
+    assert c.post(f"{base}/{cid}/versions/{v}/activate", json={}, headers=hdr(s, "approver", approver)).status_code == 200
     return v
 
 

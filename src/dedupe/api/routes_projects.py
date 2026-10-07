@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from dedupe.workspace import PROJECT_ID, RUN_ID, RunError, WorkspaceError
 
 from .auth import Principal
-from .guards import _context, _services, authenticated, require
+from .guards import _context, _services, authenticated, require, require_or_owner
 from .routes_read import CONFIG_NAMES, PID, RID
 from .routes_write import _key
 from .scope import can_see, project_scope
@@ -21,7 +21,8 @@ router = APIRouter()
 ANY = Depends(authenticated())
 SEE_RUNS = Depends(require("runs.read"))
 START = Depends(require("runs.start"))
-MANAGE_ACCESS = Depends(require("project.access"))
+MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's owner manages its members and settings
+CREATE = Depends(require("projects.create"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
 SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds")
 
@@ -34,6 +35,11 @@ class ProjectIn(Strict):
     id: str = Field(pattern=PROJECT_ID)
     name: str = Field(min_length=1, max_length=120)
     description: str = Field("", max_length=500)
+    second_approval: bool = False        # a one-person project approves its own changes; turn this on once others work in it
+
+
+class SettingsIn(Strict):
+    second_approval: bool
 
 
 class GrantIn(Strict):
@@ -76,6 +82,8 @@ class ProjectView(BaseModel):
     description: str
     created_by: str
     created_at: str
+    second_approval: bool = True
+    you_own: bool = False
     runs: int = 0
     latest_run: RunView | None = None
 
@@ -85,9 +93,10 @@ def _run_view(run, replayed: bool = False) -> RunView:
                       "connections": [{"id": c.get("id"), "version": c.get("version")} for c in run.connections]}, replayed=replayed)
 
 
-def _project_view(sv, proj) -> ProjectView:
+def _project_view(sv, proj, p: Principal | None = None) -> ProjectView:
     runs = sv.jobs.recent(proj.id, limit=1000)
-    return ProjectView(**proj.__dict__, runs=len(runs), latest_run=_run_view(runs[0]) if runs else None)
+    return ProjectView(**{**proj.__dict__, "second_approval": proj.second_approval}, you_own=bool(p and sv.workspace.is_owner(proj.id, p.sub)), runs=len(runs),
+                       latest_run=_run_view(runs[0]) if runs else None)
 
 
 # ---- home ----------------------------------------------------------------------------------------------------------------
@@ -96,8 +105,8 @@ def home(request: Request, p: Principal = ANY):
     """Counts and recent activity for the start page. Only what the caller's roles allow is filled in."""
     sv = _services(request)
     projects = [x for x in sv.workspace.list() if can_see(sv, p, x.id)]
-    out = {"projects": len(projects), "connections": len(sv.connections.names("connection/")), "recent_runs": [], "open_review_items": None,
-           "pending_approvals": None}
+    out = {"projects": len(projects), "connections": sum(len(sv.workspace.stores(x.id)[1].names("connection/")) for x in projects), "recent_runs": [],
+           "open_review_items": None, "pending_approvals": None}
     if "runs.read" in p.permissions:
         out["recent_runs"] = [_run_view(r) for r in sv.jobs.recent(limit=50) if can_see(sv, p, r.project_id)][:8]
     if "queue.read" in p.permissions:
@@ -105,7 +114,8 @@ def home(request: Request, p: Principal = ANY):
         out["open_review_items"] = sum((r.summary.get("review_items") or 0) for r in latest if r)
     if "judgment.approve" in p.permissions or "config.approve" in p.permissions:
         decisions = sum(len(sv.workspace.stores(x.id)[0].pending_approval()) for x in projects) if "judgment.approve" in p.permissions else 0
-        connections = sum(1 for n in sv.connections.names("connection/") if sv.connections.versions(n)[-1].status == "proposed")             if "config.approve" in p.permissions else 0
+        connections = sum(1 for x in projects for n in sv.workspace.stores(x.id)[1].names("connection/")
+                          if sv.workspace.stores(x.id)[1].versions(n)[-1].status == "proposed") if "config.approve" in p.permissions else 0
         out["pending_approvals"] = decisions + connections
     return out
 
@@ -114,18 +124,22 @@ def home(request: Request, p: Principal = ANY):
 @router.get("/projects", response_model=list[ProjectView])
 def list_projects(request: Request, p: Principal = ANY):
     sv = _services(request)
-    return [_project_view(sv, x) for x in sv.workspace.list() if can_see(sv, p, x.id)]
+    return [_project_view(sv, x, p) for x in sv.workspace.list() if can_see(sv, p, x.id)]
 
 
 @router.post("/projects", response_model=ProjectView, status_code=201)
-def create_project(request: Request, body: ProjectIn, p: Principal = START):
+def create_project(request: Request, body: ProjectIn, p: Principal = CREATE):
+    """The creator becomes the project's owner, and the project is private to them until they add others."""
     sv = _services(request)
     try:
-        proj = sv.workspace.create(body.id, body.name, body.description, p.actor)
+        proj = sv.workspace.create(body.id, body.name, body.description, p.actor, second_approval=body.second_approval)
     except WorkspaceError as e:
         raise HTTPException(409 if "exists" in str(e) else 422, str(e)) from None
-    sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=201, object_ref=proj.id, detail={"action": "create_project"}, **_context(request))
-    return _project_view(sv, proj)
+    sv.workspace.grant(proj.id, p.sub, "owner", p.actor)
+    sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=201, object_ref=proj.id,
+                     detail={"action": "create_project", "second_approval": proj.second_approval}, project_id=proj.id,
+                     **{k: v for k, v in _context(request).items() if k != "project_id"})
+    return _project_view(sv, proj, p)
 
 
 @router.get("/projects/{project_id}")
@@ -136,7 +150,7 @@ def get_project(request: Request, project_id: str = PID, p: Principal = ANY):
     for name in CONFIG_NAMES:
         act = ps.configs.active(name)
         rules[name] = act.version if act else None
-    return {**_project_view(sv, ps.project).model_dump(), "live_rules": rules}
+    return {**_project_view(sv, ps.project, p).model_dump(), "live_rules": rules}
 
 
 # ---- runs ----------------------------------------------------------------------------------------------------------------
@@ -156,7 +170,7 @@ def project_runs(request: Request, project_id: str = PID, limit: int = Query(50,
 @router.post("/projects/{project_id}/runs", response_model=RunView, status_code=202)
 def start_run(request: Request, response: Response, body: StartIn, project_id: str = PID, key: str | None = Depends(_key), p: Principal = START):
     """Start a run over the live versions of the chosen connections (or the same connections as an earlier run)."""
-    project_scope(request, project_id)
+    ps = project_scope(request, project_id)
     sv = _services(request)
     ids = list(body.connections)
     if body.from_run:
@@ -170,7 +184,7 @@ def start_run(request: Request, response: Response, body: StartIn, project_id: s
         raise HTTPException(422, "Connection ids must be distinct and well formed.")
     sources, used = [], []
     for cid in ids:
-        act = sv.connections.active(f"connection/{cid}")
+        act = ps.configs.active(f"connection/{cid}")
         if act is None:
             raise HTTPException(409, f"Connection {cid!r} has no approved live version yet.")
         sources.append(act.content)
@@ -234,7 +248,7 @@ def grant_access(request: Request, body: GrantIn, project_id: str = PID, p: Prin
     """Make a person a member of the project. The first grant turns the project from open to members-only."""
     project_scope(request, project_id)
     sv = _services(request)
-    if body.role not in sv.accounts.role_names():
+    if body.role == "owner" or body.role not in sv.accounts.role_names():
         raise HTTPException(422, "Unknown role.")
     try:
         g = sv.workspace.grant(project_id, body.subject, body.role, p.actor)
@@ -250,9 +264,33 @@ def revoke_access(request: Request, project_id: str = PID, subject: str = Path(m
                   p: Principal = MANAGE_ACCESS):
     project_scope(request, project_id)
     sv = _services(request)
+    if role == "owner":
+        raise HTTPException(409, "The owner of a project cannot be removed.")
     if not sv.workspace.revoke(project_id, subject, role):
         raise HTTPException(404, "Not found.")
     sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=204, object_ref=project_id,
                      detail={"action": "revoke_access", "subject": subject, "role": role}, **_context(request))
     return Response(status_code=204)
 
+
+@router.patch("/projects/{project_id}/settings", response_model=ProjectView)
+def project_settings(request: Request, body: SettingsIn, project_id: str = PID, p: Principal = MANAGE_ACCESS):
+    """Whether this project needs a second person to approve connection and rule changes (and sensitive decisions)."""
+    ps = project_scope(request, project_id)
+    sv = _services(request)
+    if body.second_approval == ps.project.second_approval:
+        return _project_view(sv, ps.project, p)
+    if body.second_approval and len({g.subject for g in sv.workspace.members(project_id)}) < 2:
+        raise HTTPException(409, "Add at least one more person to the project first: a second approver is needed.")
+    sv.workspace.set_second_approval(project_id, body.second_approval)
+    sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=200, object_ref=project_id,
+                     detail={"action": "set_second_approval", "second_approval": body.second_approval}, **_context(request))
+    return _project_view(sv, sv.workspace.get(project_id), p)
+
+
+@router.get("/projects/{project_id}/activity")
+def project_activity(request: Request, project_id: str = PID, limit: int = Query(50, ge=1), before_id: int | None = Query(None, ge=1), p: Principal = SEE_RUNS):
+    """Who did what in this project, newest first: runs, connections, decisions, rule changes, members, exports."""
+    project_scope(request, project_id)
+    sv = _services(request)
+    return sv.seclog.activity(project_id, min(limit, sv.settings.max_page_size), before_id)

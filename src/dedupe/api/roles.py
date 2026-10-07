@@ -24,6 +24,8 @@ PERMISSIONS = {
     "projects.all": "open every project, including members-only ones (administration and oversight)",
     "users.manage": "create users, set their roles, disable them and reset their passwords",
     "roles.manage": "create, change and delete custom roles (which permissions each role holds)",
+    "projects.create": "create projects (the creator becomes the project's owner)",
+    "results.export": "download a run's results, or write them to a database (personal data leaves the platform: every export is logged)",
 }
 
 _READ = {"queue.read", "person.read", "runs.read", "config.read"}
@@ -34,7 +36,8 @@ ROLES: dict[str, frozenset] = {
     "approver": frozenset(_READ | {"judgment.approve", "config.approve", "config.activate"}),
     "rule_admin": frozenset(_READ | {"config.propose"}),
     "auditor": frozenset(_READ | {"pii.unmask", "logs.read", "projects.all"}),
-    "platform_admin": frozenset({"runs.read", "runs.start", "sources.manage", "config.read", "logs.read", "project.access", "projects.all"}),
+    "platform_admin": frozenset({"runs.read", "runs.start", "sources.manage", "config.read", "logs.read", "project.access", "projects.all", "projects.create"}),
+    "analyst": frozenset(set(PERMISSIONS) - {"users.manage", "roles.manage", "logs.read", "projects.all", "project.access"}),    # everything in one's own projects
     "admin": frozenset(PERMISSIONS),          # everything, including managing users and roles; the four-eyes checks still compare identities
 }
 BUILTIN_DESCRIPTIONS = {
@@ -44,6 +47,7 @@ BUILTIN_DESCRIPTIONS = {
     "rule_admin": "Proposes rule and setting changes.",
     "auditor": "Reads everything including logs and unmasked identifiers; changes nothing.",
     "platform_admin": "Starts and cancels runs, connects sources, controls who works in each project.",
+    "analyst": "Works in their own projects: connects data, runs, reviews, decides, approves, manages rules and exports results. No user, role or log administration.",
     "admin": "Every permission, plus creating users and roles.",
 }
 

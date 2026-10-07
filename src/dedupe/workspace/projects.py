@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import Column, MetaData, String, Table, create_engine, event, select
+from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, event, select, update
 
 from dedupe.governance.store import ConfigStore
+from dedupe.schema import create_and_upgrade
 from dedupe.store import JudgmentStore
 
 PROJECT_ID = r"^[a-z0-9][a-z0-9-]{1,39}$"
@@ -21,6 +22,7 @@ projects = Table(
     Column("description", String(500), nullable=False, default=""),
     Column("created_by", String(200), nullable=False),
     Column("created_at", String(40), nullable=False),
+    Column("second_approval", Integer, nullable=False, server_default="1"),      # 1: a second person approves connection and rule changes; 0: one person may do all
 )
 project_grants = Table(
     "project_grants", _meta,
@@ -43,6 +45,7 @@ class Project:
     description: str
     created_by: str
     created_at: str
+    second_approval: bool = True
 
 
 @dataclass(frozen=True)
@@ -75,7 +78,8 @@ class Workspace:
         if self.template and "{project}" not in self.template:
             raise WorkspaceError("the project database URL template must contain {project}")
         self.engine = engine_for(url)
-        _meta.create_all(self.engine)
+        create_and_upgrade(self.engine, _meta)
+        self._settings: dict[str, bool] = {}
         self._stores: dict[str, tuple[JudgmentStore, ConfigStore]] = {}
         self._lock = threading.Lock()
 
@@ -101,7 +105,7 @@ class Workspace:
         return f"sqlite:///{self.project_dir(pid) / 'project.db'}"
 
     # ---- projects -----------------------------------------------------------------------------------------------------
-    def create(self, pid: str, name: str, description: str, actor: str) -> Project:
+    def create(self, pid: str, name: str, description: str, actor: str, second_approval: bool = True) -> Project:
         if not _ID.match(pid or ""):
             raise WorkspaceError("a project id is 2-40 lower-case letters, digits or - (it appears in addresses and folder names)")
         name = (name or "").strip()
@@ -110,7 +114,8 @@ class Workspace:
         with self.engine.begin() as c:
             if c.execute(select(projects.c.id).where(projects.c.id == pid)).first():
                 raise WorkspaceError("a project with this id already exists")
-            c.execute(projects.insert().values(id=pid, name=name, description=(description or "")[:500], created_by=actor, created_at=_now()))
+            c.execute(projects.insert().values(id=pid, name=name, description=(description or "")[:500], created_by=actor, created_at=_now(),
+                                               second_approval=int(bool(second_approval))))
         self.project_dir(pid).mkdir(parents=True, exist_ok=True)
         self.stores(pid)                                           # create the project's tables now, not on first use
         return self.get(pid)
@@ -120,11 +125,12 @@ class Workspace:
             return None
         with self.engine.connect() as c:
             r = c.execute(select(projects).where(projects.c.id == pid)).first()
-        return Project(r.id, r.name, r.description, r.created_by, r.created_at) if r else None
+        return Project(r.id, r.name, r.description, r.created_by, r.created_at, bool(r.second_approval)) if r else None
 
     def list(self) -> list[Project]:
         with self.engine.connect() as c:
-            return [Project(r.id, r.name, r.description, r.created_by, r.created_at) for r in c.execute(select(projects).order_by(projects.c.name))]
+            return [Project(r.id, r.name, r.description, r.created_by, r.created_at, bool(r.second_approval))
+                    for r in c.execute(select(projects).order_by(projects.c.name))]
 
     def stores(self, pid: str) -> tuple[JudgmentStore, ConfigStore]:
         """The project's own decision log and rules store (append-only, hash-chained, four eyes), opened once and kept."""
@@ -132,7 +138,25 @@ class Workspace:
             if pid not in self._stores:
                 url = self.project_url(pid)
                 self._stores[pid] = (JudgmentStore.open(url), ConfigStore.open(url))
-            return self._stores[pid]
+            judgments, configs = self._stores[pid]
+        configs.solo = not self.second_approval(pid)          # one-person projects approve their own changes; the setting applies at once
+        return judgments, configs
+
+    def second_approval(self, pid: str) -> bool:
+        """Does this project require a second person to approve connection and rule changes (and sensitive decisions)?"""
+        if pid not in self._settings:
+            with self.engine.connect() as c:
+                r = c.execute(select(projects.c.second_approval).where(projects.c.id == pid)).first()
+            self._settings[pid] = bool(r.second_approval) if r else True
+        return self._settings[pid]
+
+    def set_second_approval(self, pid: str, value: bool) -> None:
+        with self.engine.begin() as c:
+            c.execute(update(projects).where(projects.c.id == pid).values(second_approval=int(bool(value))))
+        self._settings[pid] = bool(value)
+
+    def is_owner(self, pid: str, subject: str) -> bool:
+        return "owner" in self.roles_for(pid, subject)
 
     # ---- per-project access (business-unit scoping) --------------------------------------------------------------------
     # A project with NO grants at all stays open to anyone holding the matching global role (today's behaviour, so

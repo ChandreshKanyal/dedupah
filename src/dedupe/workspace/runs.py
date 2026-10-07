@@ -18,6 +18,8 @@ from pathlib import Path
 
 from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, select, update
 
+from dedupe.schema import create_and_upgrade
+
 from .projects import Workspace
 
 RUN_ID = r"^R[0-9a-f]{12}$"
@@ -95,7 +97,7 @@ class RunJobs:
         self._procs: dict[str, subprocess.Popen] = {}
         self._cancelled: set[str] = set()
         self._lock = threading.Lock()
-        _meta.create_all(self.engine)
+        create_and_upgrade(self.engine, _meta)
         if recover:
             self._mark_interrupted()
 
