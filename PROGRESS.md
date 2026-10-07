@@ -1,26 +1,40 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-10-08
+> Last updated: 2026-10-07 (end of session 1)
 
-## >>> RESUME HERE (state at 2026-10-08, session 1) <<<
+## >>> RESUME HERE (latest state: end of session 1, after the portal audit) <<<
 
-**One-line status:** the product is now a working portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; a run queue and schedules; results export to files and databases; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported and recommended for customers). 349 tests + 3 skipped, ruff and bandit clean. EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
+**One-line status:** a working, branded (Aurionpro) portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; run queue and schedules; results export to files and databases; a dedicated Review section for the human in the loop; deleting runs and projects; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported). **349 tests + 3 skipped, ruff and bandit clean, two live click-throughs in Edge with 0 problems.** EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
 
-**Where things are described:** engine and accuracy (sections 1-35), API security baseline (36, `docs/SECURITY.md`), encryption at rest (41), sources and mapping (42), projects/runs/uploads workspace (44), members-only projects and run cancel (45), local accounts, admin and custom roles (46), project-owned connections, private by default, per-project activity, schema upgrades (47), run queue, run log, connection health (48), results export (49), scheduled runs (50), scoring without identifiers (51), portal audit fixes and the Review section (52).
+### DONE (newest first; details in the numbered sections)
+| Commit | What | Section |
+|---|---|---|
+| bdd3186 | **Portal audit and fixes.** Three audits (flows, accessibility/design, human-in-the-loop) found ~70 problems, 11 blockers; all blockers fixed. Screen addresses with Back/Forward/reload; Review section (Review inbox, decide-and-next compare page with keys S/D/U/N/P and Undo, Decisions list with undo, split a person, correct a golden value, bulk decide, score filter, paging); Approvals with evidence; delete runs / projects / unused uploads (new permission `data.delete`); rename project; edit schedules; rules editor starts from defaults; newest-first audit log; accessibility (keyboard rows, labels, dialogs, focus, contrast; accent is now the brand teal); browser-tab icon | 52 |
+| f89eb7f | Results tab and "Get the results" button on the run page | - |
+| cd11c18 | **Scoring when a file has no identifiers** (the user's Trial file scored an obvious duplicate 48.6%): learns weights from the data itself (EM) when IDs cannot teach them, says which mode scored a run, odd inputs never break a run | 51 |
+| 9ab777f | Aurionpro logo replaces "Dedupe" (sign-in page and top bar, both themes) | - |
+| 7a1976f and earlier | Project workspace in six steps: private projects owning connections, run queue, run log, connection health, results export, schedules, local accounts and roles | 44-50 |
 
-**Run the portal (Windows, project root):** `$env:DEDUPE_AUTH_MODE="local"; $env:DEDUPE_LOCAL_AUTH_SECRET="<32+ characters>"; $env:DEDUPE_WORK_DIR="data/workspace"` then `.venv\Scripts\python -m dedupe.api.accounts_cli create-admin --username admin` and `.venv\Scripts\python -m dedupe.api --port 8765`; open http://127.0.0.1:8765/ui. The demo workspace in `data/workspace` (ignored by git) was built by a scratch script (two private projects, a real run each, a database destination, a schedule) with the DEMO account admin / admin (password policy bypassed on purpose: change it or delete it before any demo or real use).
+### NEXT (suggested order; confirm with the user before starting any of them)
+1. **User reviews the portal again** (Ctrl+F5 first). Expect small usability fixes; collect them before building anything new. Quickest tour: Review inbox -> Start reviewing.
+2. **Recall without identifiers** is only 0.43-0.50 on synthetic data (precision 0.99+). Almost every true pair that reached scoring was found, so the loss is pairs the blocking step never proposed. Next: measure blocking recall on the no-ID data, then add safe name/phone/email blocking keys for files without IDs (section 51).
+3. **Remaining review-section gaps** (section 52 "Not done"): assign/claim pairs to reviewers, ageing/SLA and reviewer statistics, comments on pairs; retire a connection or destination; search for connections and people; the Approvals page makes several requests per project (slow with many projects); light-theme users see a dark flash on load.
+4. **Erasure and retention:** deleting runs, projects and uploads now exists. Still waiting for the user's three answers: are we the processor; may backups expire by retention; build only the machinery and leave the legal rules to customer configuration.
+5. **Notifications** (email/chat) when a run fails or a schedule pauses.
+6. **Never executed: Docker and PostgreSQL** (`tests/test_postgres_live.py` skips without a server; Docker Desktop was not running). Portability is a hard requirement.
+7. **Gates before any real data:** compliance opinion on Aadhaar handling, independent penetration test, legal review (DPDP, RBI, IRDAI, UIDAI, CERT-In), incident procedures; replace the admin / admin demo account; consider switching back to single sign-on.
+8. **Governance choices to confirm with a real customer:** second approval OFF by default for portal-created projects; `admin` and `analyst` export unmasked results; who holds `data.delete`; bulk "same person" merges without opening each pair (a reason is required).
 
-**Decisions of the user in this phase (do not re-ask):** projects are private to their creator for now (sharing later); each project has its own connections (copying between projects is enough); several people use one deployment, each in their own space; results can leave as Excel, CSV, Parquet or a database table (new, add to existing, replace); scheduled runs wanted now; later they may switch back to single sign-on.
+**Where things are described:** engine and accuracy (sections 1-35), API security baseline (36, `docs/SECURITY.md`), encryption at rest (41), sources and mapping (42), workspace (44), members-only projects (45), local accounts and roles (46), project-owned work (47), run queue and health (48), results export (49), schedules (50), scoring without identifiers (51), portal audit and Review section (52).
 
-**Open items and honest limits**
-- Never executed: PostgreSQL paths (`tests/test_postgres_live.py` skips without a server), Docker, CI. Docker Desktop was not running on the dev machine.
-- Governance decisions to confirm with a real customer: second-approval is OFF by default for projects created in the portal (a one-person project could not approve itself); `admin` and `analyst` hold `results.export` and `pii.unmask`; local passwords are weaker than single sign-on (no MFA, no reset by email).
-- Not built: per-project permission sets beyond membership, project sharing screens beyond the Access tab, notifications (email/chat) for failed or scheduled runs, erasure/retention machinery (three design questions are still unanswered: are we the processor, may backups expire by retention, build only the machinery), KMS client, S3 connector, field-level encryption of override values, live Google Sheets test, a separate scheduler service, a migration of any pre-project workspace (none exists).
-- The screens were rendered in Edge from real API answers and the API paths are covered by tests, but no person has clicked through the live server yet: expect small usability fixes after the user's review.
-- Gates before real data: compliance opinion on Aadhaar handling, an independent penetration test, legal review (DPDP, RBI, IRDAI, UIDAI, CERT-In), incident procedures.
+**Run the portal (Windows, project root):** `$env:DEDUPE_AUTH_MODE="local"; $env:DEDUPE_LOCAL_AUTH_SECRET="<32+ characters>"; $env:DEDUPE_WORK_DIR="data/workspace"; $env:DEDUPE_DATA_ROOTS="$PWD\data"` then `.venv\Scripts\python -m dedupe.api --port 8765`; open http://127.0.0.1:8765/ui. New install: create an administrator with `.venv\Scripts\python -m dedupe.api.accounts_cli create-admin --username admin`. The demo workspace in `data/workspace` (ignored by git; rebuild with `scripts/demo_workspace.py`) has the DEMO account admin / admin (password policy bypassed on purpose). It now also holds the user's own "Trial" project (their uploaded Excel file, three runs): do not wipe `data/workspace` without asking.
 
-**Next step:** the user reviews the portal and asks for changes and additions; confirm before starting a new phase.
+**Check the live portal after UI changes:** start the portal, then `.venv\Scripts\python scripts\ui_walkthrough.py` and (a minute later, sign-in rate limit) `scripts\ui_walkthrough_more.py`. Both need Playwright in the venv (dev tool only) and fail on any console error, server error or red message.
+
+**Decisions of the user (do not re-ask):** projects private to their creator for now (sharing later); each project has its own connections (copying between projects is enough); several people use one deployment, each in their own space; results leave as Excel, CSV, Parquet or a database table (new, add to existing, replace); scheduled runs wanted; "data can come in any form, handles must exist" (section 51); a dedicated human-in-the-loop section, deleting runs, back-and-forth navigation and accessibility for every feature (section 52); company branding is Aurionpro; may switch back to single sign-on later.
+
+**Practical pitfalls added this session:** the portal's UI tests forbid reading the address bar except in `readAddress`/`writeAddress` and forbid `::after`, emoji and extra UI files (only index.html, app.js, style.css and the whitelisted PNGs are served); judgment times (Z, microseconds) and run times (+00:00, seconds) must be compared as datetimes, never as text; long inline Python in the Bash tool still breaks: write scripts with the Write tool.
 
 ### Older notes from 2026-10-05 (partly superseded by the block above)
 
