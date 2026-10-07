@@ -32,8 +32,10 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class ApiSettings:
     env: str = "dev"                                    # dev | production
-    auth_mode: str = "dev"                              # dev (shared-secret test tokens) | oidc (customer identity provider)
+    auth_mode: str = "dev"                              # dev (shared-secret test tokens) | oidc (customer identity provider) | local (username and password)
     dev_secret: str | None = None                       # HS256 secret for dev tokens (>= 32 chars), never in production
+    local_secret: str | None = None                     # HS256 secret that signs local-login tokens (>= 32 chars)
+    allow_local_auth: bool = False                      # production only: the operator accepts local passwords instead of single sign-on
     oidc_issuer: str | None = None
     oidc_audience: str | None = None
     oidc_jwks_url: str | None = None                    # where the provider publishes its public signing keys
@@ -76,7 +78,8 @@ class ApiSettings:
             raise SettingsError("DEDUPE_OIDC_ROLE_MAP must be a JSON object") from e
         s = cls(
             env=env, auth_mode=os.environ.get("DEDUPE_AUTH_MODE", "oidc" if prod else "dev").strip().lower(),
-            dev_secret=os.environ.get("DEDUPE_DEV_AUTH_SECRET") or None,
+            dev_secret=os.environ.get("DEDUPE_DEV_AUTH_SECRET") or None, local_secret=os.environ.get("DEDUPE_LOCAL_AUTH_SECRET") or None,
+            allow_local_auth=_bool("DEDUPE_ALLOW_LOCAL_AUTH", False),
             oidc_issuer=os.environ.get("DEDUPE_OIDC_ISSUER") or None, oidc_audience=os.environ.get("DEDUPE_OIDC_AUDIENCE") or None,
             oidc_jwks_url=os.environ.get("DEDUPE_OIDC_JWKS_URL") or None,
             oidc_algorithms=_list("DEDUPE_OIDC_ALGORITHMS", ("RS256", "ES256")),
@@ -101,13 +104,18 @@ class ApiSettings:
             problems.append("production needs encryption at rest: set DEDUPE_DATA_KEY")
         if self.env not in ("dev", "production"):
             problems.append("DEDUPE_ENV must be 'dev' or 'production'")
-        if self.auth_mode not in ("dev", "oidc"):
-            problems.append("DEDUPE_AUTH_MODE must be 'dev' or 'oidc'")
+        if self.auth_mode not in ("dev", "oidc", "local"):
+            problems.append("DEDUPE_AUTH_MODE must be 'dev', 'oidc' or 'local'")
         if self.auth_mode == "dev":
             if self.production:
                 problems.append("dev tokens are not allowed in production: set DEDUPE_AUTH_MODE=oidc")
             if not self.dev_secret or len(self.dev_secret) < 32:
                 problems.append("dev auth needs DEDUPE_DEV_AUTH_SECRET of at least 32 characters")
+        elif self.auth_mode == "local":
+            if not self.local_secret or len(self.local_secret) < 32:
+                problems.append("local sign-in needs DEDUPE_LOCAL_AUTH_SECRET of at least 32 characters")
+            if self.production and not self.allow_local_auth:
+                problems.append("local passwords in production need DEDUPE_ALLOW_LOCAL_AUTH=yes (single sign-on with your identity provider is the safer choice)")
         else:
             for name, v in (("DEDUPE_OIDC_ISSUER", self.oidc_issuer), ("DEDUPE_OIDC_AUDIENCE", self.oidc_audience), ("DEDUPE_OIDC_JWKS_URL", self.oidc_jwks_url)):
                 if not v:

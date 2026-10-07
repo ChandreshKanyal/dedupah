@@ -31,7 +31,7 @@ class RunScope(ProjectScope):
 
 def can_see(sv, principal, project_id: str) -> bool:
     """Same rule as `_check_membership`, as a yes/no for lists (a members-only project does not appear for outsiders)."""
-    if "platform_admin" in principal.roles or "auditor" in principal.roles:
+    if "projects.all" in principal.permissions:
         return True
     members = sv.workspace.members(project_id)
     return not members or any(g.subject == principal.sub for g in members)
@@ -40,12 +40,12 @@ def can_see(sv, principal, project_id: str) -> bool:
 def _check_membership(request: Request, project_id: str) -> None:
     """Business-unit scoping: a project with no grants is open to anyone holding the matching global permission (today's
     behaviour, unchanged). The moment a project has at least one grant, only its members may touch it - except
-    platform_admin and auditor, who always see every project (administration and oversight). Called after the route's
+    holders of the `projects.all` permission (platform_admin, auditor, admin), who always see every project. Called after the route's
     own `require(...)` guard has already run and set `request.state.principal`."""
     principal = getattr(request.state, "principal", None)
     if principal is None:
         return
-    if "platform_admin" in principal.roles or "auditor" in principal.roles:
+    if "projects.all" in principal.permissions:
         return
     sv = _services(request)
     members = sv.workspace.members(project_id)

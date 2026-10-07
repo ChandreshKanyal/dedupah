@@ -182,7 +182,7 @@ def all_routes(app):
 
 
 SAMPLE = {"person_id": "P000000001", "person_l": "P000000001", "person_r": "P000000002", "name": "decision", "version": "1", "judgment_id": "1",
-          "action_id": "abcdef012345", "project_id": "demo", "run_id": "R000000000000", "connection_id": "crm", "subject": "alice", "role": "steward"}
+          "action_id": "abcdef012345", "project_id": "demo", "run_id": "R000000000000", "connection_id": "crm", "subject": "alice", "role": "steward", "username": "carol"}
 
 
 def concrete(path):
@@ -220,7 +220,11 @@ def test_authorization_matrix_every_route_for_every_role(tmp_path):
                 continue
             assert call({}).status_code == 401, (method, path)
             assert call({"Authorization": "Bearer garbage"}).status_code == 401
-            assert call(bearer(s, roles=[])).status_code == (200 if kind == "authenticated" else 403), (method, path, "no roles")
+            none = call(bearer(s, roles=[])).status_code
+            if kind == "authenticated":
+                assert none not in (401, 403) and (method != "GET" or none == 200), (method, path, "no roles")      # signed in is enough
+            else:
+                assert none == 403, (method, path, "no roles")
             for role in ROLES:
                 got = call(bearer(s, role)).status_code
                 if kind == "authenticated" or role in roles_allowed(perm):

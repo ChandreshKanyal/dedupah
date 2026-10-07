@@ -13,7 +13,6 @@ from dedupe.workspace import PROJECT_ID, RUN_ID, RunError, WorkspaceError
 
 from .auth import Principal
 from .guards import _context, _services, authenticated, require
-from .roles import ROLES
 from .routes_read import CONFIG_NAMES, PID, RID
 from .routes_write import _key
 from .scope import can_see, project_scope
@@ -234,9 +233,9 @@ def list_access(request: Request, project_id: str = PID, p: Principal = MANAGE_A
 def grant_access(request: Request, body: GrantIn, project_id: str = PID, p: Principal = MANAGE_ACCESS):
     """Make a person a member of the project. The first grant turns the project from open to members-only."""
     project_scope(request, project_id)
-    if body.role not in ROLES:
-        raise HTTPException(422, "Unknown role.")
     sv = _services(request)
+    if body.role not in sv.accounts.role_names():
+        raise HTTPException(422, "Unknown role.")
     try:
         g = sv.workspace.grant(project_id, body.subject, body.role, p.actor)
     except WorkspaceError as e:

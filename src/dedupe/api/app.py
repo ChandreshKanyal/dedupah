@@ -20,10 +20,11 @@ from dedupe import crypto
 from dedupe.governance.store import ConfigStore
 from dedupe.workspace import RunJobs, Uploads, Workspace
 
+from .accounts import AccountStore
 from .auth import Principal, TokenVerifier
 from .guards import authenticated, public, require
 from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddleware, SlidingWindow
-from .roles import ROLES
+from .routes_admin import router as admin_router
 from .routes_connections import router as connections_router
 from .routes_projects import router as projects_router
 from .routes_read import router as read_router
@@ -45,6 +46,7 @@ class Services:
     connections: ConfigStore                       # saved connections (main database), versioned with four eyes
     uploads: Uploads
     jobs: RunJobs
+    accounts: AccountStore                         # local users and custom roles (main database)
     reviews: dict = field(default_factory=dict)    # (project, run, reveal) -> ReviewService, built on first use
 
 
@@ -89,14 +91,17 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     ws = workspace or Workspace(settings.work, db, settings.project_database_url)
     os.environ["DEDUPE_UPLOAD_DIR"] = str(ws.upload_dir)      # where `upload` connections find their files (inspect, preview)
     jobs = RunJobs(ws, command) if command else RunJobs(ws)
-    sv = Services(settings, verifier or TokenVerifier(settings), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws, ConfigStore.open(ws.url),
-                  Uploads(ws.engine, ws.upload_dir), jobs)
+    accounts = AccountStore(ws.engine)
+    sv = Services(settings, verifier or TokenVerifier(settings, accounts=accounts), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws,
+                  ConfigStore.open(ws.url), Uploads(ws.engine, ws.upload_dir), jobs, accounts)
     jobs.on_finish = lambda run: sv.seclog.record("run_finished", status=None, object_ref=f"{run.project_id}/{run.id}",
                                                   detail={"exit_code": run.exit_code, "outcome": run.status})
 
     @asynccontextmanager
     async def lifespan(app):
         sv.seclog.record("startup", detail={"auth_mode": settings.auth_mode, "env": settings.env})
+        if settings.auth_mode == "local":
+            log.warning("LOCAL PASSWORD SIGN-IN IS ON. Prefer your identity provider (DEDUPE_AUTH_MODE=oidc) for real data.")
         if settings.auth_mode == "dev":
             log.warning("DEV AUTHENTICATION IS ON: tokens are signed with a shared secret. Never use this with real data.")
         yield
@@ -152,10 +157,7 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     def security_verify(p: Principal = READ_LOGS):
         return sv.seclog.verify()
 
-    @app.get("/roles")
-    def roles(p: Principal = ANY_USER):
-        return {r: sorted(perms) for r, perms in ROLES.items()}
-
+    app.include_router(admin_router)
     app.include_router(projects_router)
     app.include_router(read_router)
     app.include_router(write_router)

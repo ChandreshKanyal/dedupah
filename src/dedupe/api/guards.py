@@ -12,6 +12,8 @@ from fastapi import HTTPException, Request
 from .auth import AuthError, Principal
 from .roles import PERMISSIONS
 
+PASSWORD_CHANGE_ROUTES = ("/me", "/auth/password")        # all a user with a temporary password may call
+
 
 def _services(request: Request):
     return request.app.state.services
@@ -42,6 +44,8 @@ def authenticate(request: Request) -> Principal:
     if not sv.limiter.allow(f"user:{principal.sub}", sv.settings.rate_limit_per_min):
         sv.seclog.record("rate_limited", actor=principal.actor, roles=principal.roles, status=429, detail={"scope": "user"}, **ctx)
         raise HTTPException(429, "Too many requests.", headers={"Retry-After": "60"})
+    if principal.must_change and getattr(request.scope.get("route"), "path", "") not in PASSWORD_CHANGE_ROUTES:
+        raise HTTPException(403, "You must change your password before doing anything else.")
     request.state.principal = principal
     return principal
 

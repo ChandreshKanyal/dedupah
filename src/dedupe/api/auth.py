@@ -14,6 +14,7 @@ from .roles import ROLES, permissions_for
 from .settings import ApiSettings
 
 DEV_ISSUER, DEV_AUDIENCE = "dedupe-dev", "dedupe-api"
+LOCAL_ISSUER = "dedupe-local"
 MAX_TOKEN_CHARS = 8192
 
 
@@ -31,6 +32,8 @@ class Principal:
     username: str                # display only
     roles: frozenset
     jti: str | None = None
+    granted: frozenset | None = None      # local accounts: permissions resolved from the database on every request (so changes apply at once)
+    must_change: bool = False             # local accounts: the password must be changed before anything else
 
     @property
     def actor(self) -> str:
@@ -38,7 +41,7 @@ class Principal:
 
     @property
     def permissions(self) -> frozenset:
-        return permissions_for(self.roles)
+        return self.granted if self.granted is not None else permissions_for(self.roles)
 
 
 def _claim(payload: dict, path: str):
@@ -58,10 +61,14 @@ _REASONS = {
 
 
 class TokenVerifier:
-    def __init__(self, settings: ApiSettings, key_resolver=None):
+    def __init__(self, settings: ApiSettings, key_resolver=None, accounts=None):
         """`key_resolver(token) -> key` is injectable for tests; by default signing keys are fetched (and cached) from the provider's JWKS."""
-        self.s = settings
-        if settings.auth_mode == "oidc":
+        self.s, self.accounts = settings, accounts
+        if settings.auth_mode == "local":
+            if accounts is None:
+                raise ValueError("local sign-in needs the accounts store")
+            self._algs, self._key, self._iss, self._aud = ["HS256"], (lambda _tok: settings.local_secret), LOCAL_ISSUER, DEV_AUDIENCE
+        elif settings.auth_mode == "oidc":
             self._algs = [a for a in settings.oidc_algorithms]
             if key_resolver is None:
                 client = jwt.PyJWKClient(settings.oidc_jwks_url, cache_keys=True, lifespan=300, timeout=5)
@@ -87,8 +94,24 @@ class TokenVerifier:
         sub = payload["sub"]
         if not isinstance(sub, str) or not sub.strip() or len(sub) > 200:
             raise AuthError("bad_subject")
+        if self.s.auth_mode == "local":
+            return self._local(sub, payload)
         return Principal(sub=sub, username=str(payload.get("preferred_username") or payload.get("name") or sub)[:100],
                          roles=self._roles(payload), jti=payload.get("jti"))
+
+    def _local(self, sub: str, payload: dict) -> Principal:
+        """A local token proves who signed in; what they may do is read from the database NOW, so disabling a user, changing a password or
+        editing a role takes effect on the very next request."""
+        user = self.accounts.get(sub)
+        if user is None:
+            raise AuthError("unknown_user")
+        if user.disabled:
+            raise AuthError("disabled_user")
+        if payload.get("ep") != user.epoch:
+            raise AuthError("session_ended")
+        roles = frozenset(user.roles)
+        return Principal(sub=user.username, username=user.display_name or user.username, roles=roles, jti=payload.get("jti"),
+                         granted=self.accounts.permissions_of(roles), must_change=user.must_change)
 
     def _roles(self, payload: dict) -> frozenset:
         raw = _claim(payload, self.s.roles_claim)

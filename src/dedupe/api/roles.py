@@ -21,6 +21,9 @@ PERMISSIONS = {
     "sources.manage": "connect sources and edit field mappings",
     "logs.read": "read the security / access log and verify its integrity",
     "project.access": "grant or revoke who may work in a project",
+    "projects.all": "open every project, including members-only ones (administration and oversight)",
+    "users.manage": "create users, set their roles, disable them and reset their passwords",
+    "roles.manage": "create, change and delete custom roles (which permissions each role holds)",
 }
 
 _READ = {"queue.read", "person.read", "runs.read", "config.read"}
@@ -30,8 +33,18 @@ ROLES: dict[str, frozenset] = {
     "steward": frozenset(_READ | {"judgment.write", "pii.unmask"}),
     "approver": frozenset(_READ | {"judgment.approve", "config.approve", "config.activate"}),
     "rule_admin": frozenset(_READ | {"config.propose"}),
-    "auditor": frozenset(_READ | {"pii.unmask", "logs.read"}),
-    "platform_admin": frozenset({"runs.read", "runs.start", "sources.manage", "config.read", "logs.read", "project.access"}),
+    "auditor": frozenset(_READ | {"pii.unmask", "logs.read", "projects.all"}),
+    "platform_admin": frozenset({"runs.read", "runs.start", "sources.manage", "config.read", "logs.read", "project.access", "projects.all"}),
+    "admin": frozenset(PERMISSIONS),          # everything, including managing users and roles; the four-eyes checks still compare identities
+}
+BUILTIN_DESCRIPTIONS = {
+    "viewer": "Reads the review queue, people, rules and runs (masked).",
+    "steward": "Decides pairs, splits and overrides; can see unmasked identifiers (logged).",
+    "approver": "Gives the second approval on decisions and rule or connection changes, and makes them live.",
+    "rule_admin": "Proposes rule and setting changes.",
+    "auditor": "Reads everything including logs and unmasked identifiers; changes nothing.",
+    "platform_admin": "Starts and cancels runs, connects sources, controls who works in each project.",
+    "admin": "Every permission, plus creating users and roles.",
 }
 
 if not all(p in PERMISSIONS for perms in ROLES.values() for p in perms):

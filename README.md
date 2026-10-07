@@ -27,6 +27,8 @@ python -m venv .venv
 # 4. start the API (development): needs DEDUPE_DEV_AUTH_SECRET (32+ characters); see docs/SECURITY.md before using real data
 .venv/Scripts/python -m dedupe.api.devtoken --sub asha --roles steward
 .venv/Scripts/python -m dedupe.api
+# ... or sign in with a username and password: DEDUPE_AUTH_MODE=local, DEDUPE_LOCAL_AUTH_SECRET (32+ characters), then create the first admin
+.venv/Scripts/python -m dedupe.api.accounts_cli create-admin --username admin     # asks for the password; users and roles are managed on the Users and Roles screens
 .venv/Scripts/python scripts/security_scan.py   # lint, static analysis, dependency audit, SBOM
 
 # 5. reproduce the published benchmark

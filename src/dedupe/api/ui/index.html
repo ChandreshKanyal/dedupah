@@ -10,11 +10,21 @@
 <div id="login">
   <form id="login-form" autocomplete="off">
     <h1>Sign in to Dedupe</h1>
-    <p>Paste your access token. It is kept in this page's memory only and is gone when you close or reload the tab.</p>
+    <p id="login-help">Paste your access token. It is kept in this page's memory only and is gone when you close or reload the tab.</p>
     <p id="login-error" class="bad" role="alert" hidden></p>
-    <div class="field">
+    <div id="token-fields" class="field">
       <label for="token">Access token</label>
       <input id="token" type="password" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="password-fields" hidden>
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="none">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password">
+      </div>
     </div>
     <button id="signin" type="submit" class="primary">Sign in</button>
   </form>
@@ -31,6 +41,7 @@
       <button id="theme" class="ghost" aria-label="Switch between dark and light"></button>
       <span id="avatar" aria-hidden="true"></span>
       <span id="who"></span>
+      <button id="password-btn" class="ghost" hidden>Password</button>
       <button id="signout" class="ghost">Sign out</button>
     </div>
   </header>

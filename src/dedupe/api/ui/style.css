@@ -167,6 +167,10 @@ ul.plain li { margin: 3px 0; }
 #login h1 { margin: 0 0 4px; font-size: 20px; line-height: 28px; font-weight: 600; }
 #login p { margin: 0 0 16px; color: var(--muted); }
 #login button { width: 100%; justify-content: center; }
+.checks { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow: auto; padding: 8px 0; margin-bottom: 12px; }
+.check { display: flex; gap: 8px; align-items: flex-start; }
+.check input { margin-top: 3px; }
+.check .muted { display: block; }
 
 @media (max-width: 860px) {
   #app { grid-template-columns: 1fr; grid-template-rows: 48px auto 1fr; }

@@ -5,6 +5,7 @@
 let token = null;
 let me = null;
 let timer = null;
+let mode = "token";                // how people sign in: "token" (identity provider or test token) or "local" (username and password)
 const cache = { projects: [], connections: [], runs: [] };
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
@@ -124,16 +125,42 @@ async function run(fn) {
 }
 
 // ---- sign in and out ---------------------------------------------------------------------------------------------------
+async function passwordLogin(username, password) {
+  const r = await fetch("/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }), credentials: "omit", cache: "no-store" });
+  let data = null;
+  try { data = await r.json(); } catch (_) { /* no body */ }
+  if (!r.ok) throw new Error((data && data.error && data.error.message) || "Sign-in failed.");
+  return data;
+}
+async function initLogin() {
+  try {
+    const r = await fetch("/auth/config", { credentials: "omit", cache: "no-store" });
+    mode = r.ok && (await r.json()).password_login ? "local" : "token";
+  } catch (_) { mode = "token"; }
+  $("token-fields").hidden = mode === "local";
+  $("password-fields").hidden = mode !== "local";
+  $("login-help").textContent = mode === "local" ? "Sign in with your username and password."
+    : "Paste your access token. It is kept in this page's memory only and is gone when you close or reload the tab.";
+}
 async function signIn(ev) {
   ev.preventDefault();
-  token = $("token").value.trim();
-  $("token").value = "";
   const fail = $("login-error");
   fail.hidden = true;
+  let mustChange = false;
   try {
+    if (mode === "local") {
+      const r = await passwordLogin($("username").value.trim().toLowerCase(), $("password").value);
+      token = r.token;
+      mustChange = r.must_change_password;
+    } else {
+      token = $("token").value.trim();
+    }
+    $("token").value = "";
+    $("password").value = "";
     me = await api("GET", "/me");
   } catch (e) {
     token = null;
+    $("password").value = "";
     fail.textContent = e.message === "unauthorised" ? "That token was not accepted." : e.message;
     fail.hidden = false;
     return;
@@ -143,6 +170,8 @@ async function signIn(ev) {
   $("avatar").textContent = (me.username || "?").slice(0, 1).toUpperCase();
   $("who").textContent = me.username;
   $("who").setAttribute("title", me.roles.join(", "));
+  $("password-btn").hidden = mode !== "local";
+  if (mustChange) { $("nav").replaceChildren(); await run(() => viewPassword(true)); return; }       // nothing else works until the password is changed
   buildNav();
 }
 function signOut(msg) {
@@ -161,6 +190,7 @@ const NAV = [
   ["", [["Home", "any", "home", () => viewHome()], ["Projects", "any", "folder", () => viewProjects()], ["Runs", "runs.read", "play", () => viewRuns()],
     ["Connections", "config.read", "database", () => viewConnections()]]],
   ["Governance", [["Approvals", "config.approve", "check", () => viewApprovals()], ["Audit log", "logs.read", "shield", () => viewAudit()]]],
+  ["Administration", [["Users", "users.manage", "users", () => viewUsers()], ["Roles", "roles.manage", "sliders", () => viewRoles()]]],
 ];
 const NEW_MENU = [
   ["New project", "runs.start", "folder", () => newProject(), "Projects"], ["New run", "runs.start", "play", () => newRun(), "Runs"],
@@ -746,7 +776,7 @@ async function connectionWizard(type, preset) {
 async function viewAudit(event) {
   const rows = await api("GET", "/security/events?limit=200" + (event ? "&event=" + event : ""));
   const filter = el("select", { "aria-label": "Event", onchange: () => run(() => viewAudit(filter.value)) }, el("option", { value: "" }, "All events"),
-    ["auth_failed", "permission_denied", "rate_limited", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "config_change", "judgment_change", "server_error", "startup"]
+    ["auth_failed", "login", "permission_denied", "rate_limited", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "config_change", "judgment_change", "server_error", "startup"]
       .map((e) => el("option", { value: e, selected: e === event }, label(e))));
   const verify = () => run(async () => {
     const v = await api("GET", "/security/verify");
@@ -758,8 +788,124 @@ async function viewAudit(event) {
       el("td", { class: "num" }, e.status == null ? "" : e.status)))) : empty("No events."));
 }
 
+// ---- password, users and roles ---------------------------------------------------------------------------------------------
+async function viewPassword(forced) {
+  const cur = el("input", { type: "password", autocomplete: "current-password", "aria-label": "Current password" });
+  const nw = el("input", { type: "password", autocomplete: "new-password", "aria-label": "New password" });
+  const again = el("input", { type: "password", autocomplete: "new-password", "aria-label": "Repeat the new password" });
+  const err = el("p", { class: "bad", hidden: true });
+  const save = async () => {
+    err.hidden = true;
+    if (nw.value !== again.value) { err.textContent = "The two new passwords differ."; err.hidden = false; return; }
+    try {
+      const r = await api("POST", "/auth/password", { current_password: cur.value, new_password: nw.value });
+      token = r.token;
+      me = await api("GET", "/me");
+      cur.value = ""; nw.value = ""; again.value = "";
+      buildNav();
+      say("Your password was changed.", "good");
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+  };
+  show(page(forced ? "Choose a new password" : "Change password",
+    forced ? "You signed in with a temporary password. Choose your own before you continue." : "Changing it signs you out of any other session.", [btn("Save password", save, "primary")]),
+  el("div", {}, field("Current password", cur), field("New password (12 to 128 characters, not your username)", nw), field("Repeat the new password", again), err));
+}
+function checkList(items, chosen, allowed, readOnly) {
+  const boxes = items.map((it) => {
+    const box = el("input", { type: "checkbox", value: it.name, checked: chosen.has(it.name), disabled: readOnly || !allowed(it) });
+    return [box, el("label", { class: "check" }, box, el("span", {}, el("strong", { class: readOnly ? "" : "mono" }, it.name), el("span", { class: "muted" }, it.description || "")))];
+  });
+  return { node: el("div", { class: "checks" }, boxes.map((b) => b[1])), values: () => boxes.filter((b) => b[0].checked).map((b) => b[0].value) };
+}
+const heldBy = (perms) => { const mine = new Set(me.permissions); return perms.every((p) => mine.has(p)); };
+const roleTags = (roles) => el("span", { class: "row" }, roles.map((r) => tag(label(r))));
+async function viewUsers() {
+  const [users, roles] = await Promise.all([api("GET", "/users"), api("GET", "/roles")]);
+  const state = (u) => (u.disabled ? tag("Disabled", "danger") : u.locked ? tag("Locked", "danger") : u.must_change_password ? tag("Temporary password", "info") : tag("Active", "success"));
+  const rows = users.map((u) => el("tr", {}, el("td", {}, u.username), el("td", {}, u.display_name), el("td", {}, roleTags(u.roles)), el("td", {}, state(u)),
+    el("td", {}, u.last_login_at ? when(u.last_login_at) : "Never"),
+    el("td", {}, el("div", { class: "row" }, btn("Edit", () => run(() => userDialog(u, roles))), u.username === me.sub ? null : btn("Reset password", () => run(() => resetDialog(u)))))));
+  show(page("Users", "People who can sign in with a username and password. Roles decide what each person may do.", [btn("New user", () => run(() => userDialog(null, roles)), "primary", "plus")]),
+    rows.length ? table(["Username", "Name", "Roles", "Status", "Last sign-in", ""], rows) : empty("No users yet."));
+}
+async function userDialog(u, catalogue) {
+  const roles = catalogue.roles.filter((r) => heldBy(r.permissions) || (u && u.roles.includes(r.name)));
+  const self = !!u && u.username === me.sub;
+  const name = el("input", { type: "text", maxlength: "64", "aria-label": "Username", value: u ? u.username : "", disabled: !!u });
+  const full = el("input", { type: "text", maxlength: "100", "aria-label": "Name", value: u ? u.display_name : "" });
+  const pass = el("input", { type: "password", autocomplete: "new-password", "aria-label": "Temporary password" });
+  const off = el("input", { type: "checkbox", checked: !!(u && u.disabled), disabled: self });
+  const picks = checkList(roles.map((r) => ({ name: r.name, description: r.description })), new Set(u ? u.roles : []),
+    (it) => heldBy(roles.find((r) => r.name === it.name).permissions), self);
+  const err = el("p", { class: "bad", hidden: true });
+  const body = el("div", {}, field("Username (lower-case letters, digits, . - _)", name), field("Name (optional)", full),
+    u ? null : field("Temporary password (12 to 128 characters; the person must change it at first sign-in)", pass),
+    el("h3", { class: "section" }, "Roles"), picks.node,
+    u ? el("label", { class: "check" }, off, el("span", {}, "Disabled: this person cannot sign in")) : null, err);
+  const done = await dialog(u ? "Edit " + u.username : "New user", body, u ? "Save" : "Create user", async () => {
+    try {
+      if (u) {
+        const patch = { display_name: full.value.trim() };
+        if (!self) { patch.roles = picks.values(); patch.disabled = off.checked; }
+        await api("PATCH", "/users/" + u.username, patch);
+      } else {
+        await api("POST", "/users", { username: name.value.trim().toLowerCase(), display_name: full.value.trim(), password: pass.value, roles: picks.values() });
+      }
+      return true;
+    } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
+  if (done) { await viewUsers(); say(u ? "User saved." : "User created. Give them the temporary password in person; they must change it at first sign-in.", "good"); }
+}
+async function resetDialog(u) {
+  const pass = el("input", { type: "password", autocomplete: "new-password", "aria-label": "New temporary password" });
+  const err = el("p", { class: "bad", hidden: true });
+  const body = el("div", {}, el("p", { class: "hint" }, "Their current sessions end and they must choose a new password at the next sign-in."),
+    field("New temporary password (12 to 128 characters)", pass), err);
+  const done = await dialog("Reset password for " + u.username, body, "Reset password", async () => {
+    try { await api("POST", "/users/" + u.username + "/password", { password: pass.value }); return true; } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
+  if (done) { await viewUsers(); say("Password reset.", "good"); }
+}
+async function viewRoles() {
+  const data = await api("GET", "/roles");
+  const rows = data.roles.map((r) => el("tr", {}, el("td", {}, label(r.name)), el("td", {}, r.builtin ? tag("Built-in") : tag("Custom", "info")), el("td", {}, r.description),
+    el("td", { class: "num" }, r.permissions.length), el("td", { class: "num" }, r.users),
+    el("td", {}, el("div", { class: "row" }, btn(r.builtin ? "View" : "Edit", () => run(() => roleDialog(r, data.permissions))),
+      r.builtin ? null : btn("Delete", () => run(() => deleteRole(r)), "danger")))));
+  show(page("Roles", "A role is a named set of permissions. Built-in roles are fixed; create your own to give people exactly the access they need. Nobody can give a role more than they hold themselves.",
+    [btn("New role", () => run(() => roleDialog(null, data.permissions)), "primary", "plus")]), table(["Role", "Type", "Description", ["Permissions"], ["People"], ""], rows));
+}
+async function roleDialog(role, catalogue) {
+  const fixed = !!(role && role.builtin);
+  const name = el("input", { type: "text", maxlength: "40", "aria-label": "Role name" });
+  const desc = el("input", { type: "text", maxlength: "300", "aria-label": "Description", value: role ? role.description : "", disabled: fixed });
+  const picks = checkList(catalogue, new Set(role ? role.permissions : []), (it) => heldBy([it.name]), fixed);
+  const err = el("p", { class: "bad", hidden: true });
+  const body = el("div", {}, role ? null : field("Name (lower-case letters, digits, - or _)", name), field("Description", desc),
+    el("h3", { class: "section" }, "What this role may do"), picks.node, err);
+  const title = role ? (fixed ? label(role.name) + " (built-in, read only)" : "Edit " + role.name) : "New role";
+  const done = await dialog(title, body, fixed ? "Close" : "Save role", async () => {
+    if (fixed) return true;
+    try {
+      if (role) await api("PUT", "/roles/" + role.name, { description: desc.value.trim(), permissions: picks.values() });
+      else await api("POST", "/roles", { name: name.value.trim().toLowerCase(), description: desc.value.trim(), permissions: picks.values() });
+      return true;
+    } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
+  if (done && !fixed) { await viewRoles(); say("Role saved. It applies to everyone holding it from their next request.", "good"); }
+}
+async function deleteRole(r) {
+  const ok = await dialog("Delete role " + r.name + "?", el("p", {}, "This cannot be undone. A role that people or projects still use cannot be deleted."), "Delete role", async () => true, true);
+  if (!ok) return;
+  await api("DELETE", "/roles/" + r.name);
+  await viewRoles();
+  say("Role deleted.", "good");
+}
+
 initTheme();
 initSearch();
+initLogin();
 $("theme").addEventListener("click", () => setTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark"));
 $("login-form").addEventListener("submit", signIn);
 $("signout").addEventListener("click", () => signOut(""));
+$("password-btn").addEventListener("click", () => go("", () => viewPassword(false)));
