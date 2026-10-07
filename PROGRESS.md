@@ -1,9 +1,9 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-10-07 (end of session 1)
+> Last updated: 2026-10-07 (end of session 2)
 
-## >>> RESUME HERE (latest state: end of session 1, after the portal audit) <<<
+## >>> RESUME HERE (latest state: end of session 2, after review round 2) <<<
 
 **One-line status:** a working, branded (Aurionpro) portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; run queue and schedules; results export to files and databases; a dedicated Review section for the human in the loop; deleting runs and projects; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported). **381 tests + 3 skipped, ruff and bandit clean, three live click-through scripts in Edge with 0 problems (section 53: golden-record rules, incremental runs, messy data; section 54: user review round 2).** EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
 
@@ -19,14 +19,35 @@
 | 7a1976f and earlier | Project workspace in six steps: private projects owning connections, run queue, run log, connection health, results export, schedules, local accounts and roles | 44-50 |
 
 ### NEXT (suggested order; confirm with the user before starting any of them)
-1. **User reviews the portal again** (Ctrl+F5 first). Expect small usability fixes; collect them before building anything new. Quickest tour: Review inbox -> Start reviewing.
-2. **Next accuracy work (optional):** pairs that share only a name (one record has the phone, the other the birth date) are the remaining misses without IDs; they need more data, not more rules (section 53 step 4). Golden-record stage is now the slowest part of an incremental run.
-3. **Remaining review-section gaps** (section 52 "Not done"): assign/claim pairs to reviewers, ageing/SLA and reviewer statistics, comments on pairs; retire a connection or destination; search for connections and people; the Approvals page makes several requests per project (slow with many projects); light-theme users see a dark flash on load.
-4. **Erasure and retention:** deleting runs, projects and uploads now exists. Still waiting for the user's three answers: are we the processor; may backups expire by retention; build only the machinery and leave the legal rules to customer configuration.
+0. **Pending with the user:** (a) `git push` the local commits (GitHub private repo `ChandreshKanyal/dedupah` has only up to 476e033;
+   NEVER add Claude co-author lines, author email chandreshkanyal@gmail.com); (b) the user's portal review of section 54 (Ctrl+F5 after
+   a portal restart); (c) decline the walk-through proposals left waiting in the demo `customer-master` project (two matching-rules
+   versions, one golden-record version) if unwanted; (d) OFFERED, not built: an "identifier check" on the run page (people found vs
+   count(distinct) of each identifier; persons holding several values; values split over several persons) - the user asked whether output
+   rows should equal count(distinct primary key): answer was "only when the key is complete, clean and one per person".
+1. **Remaining human-in-the-loop gaps:** assign/claim pairs to reviewers, ageing/SLA, reviewer statistics, comments on pairs; reviewer
+   decisions are stored training-ready but NOT used to learn weights yet (they act as fixed must/cannot-link overrides).
+2. **Other portal gaps** (section 52 "Not done"): retire a connection or destination; search for connections and people; Approvals page
+   makes several requests per project; light-theme flash on load; nested rules only via JSON (section 54).
+3. **Accuracy (optional):** remaining no-ID misses are pairs sharing only a name (need more data, not rules); golden-record stage is the
+   slowest part of an incremental run (about 4 s at 10k records).
+4. **Erasure and retention:** deleting runs, projects and uploads exists. Still waiting for the user's three answers: are we the processor;
+   may backups expire by retention; build only the machinery and leave the legal rules to customer configuration.
 5. **Notifications** (email/chat) when a run fails or a schedule pauses.
-6. **Never executed: Docker and PostgreSQL** (`tests/test_postgres_live.py` skips without a server; Docker Desktop was not running). Portability is a hard requirement.
-7. **Gates before any real data:** compliance opinion on Aadhaar handling, independent penetration test, legal review (DPDP, RBI, IRDAI, UIDAI, CERT-In), incident procedures; replace the admin / admin demo account; consider switching back to single sign-on.
-8. **Governance choices to confirm with a real customer:** second approval OFF by default for portal-created projects; `admin` and `analyst` export unmasked results; who holds `data.delete`; bulk "same person" merges without opening each pair (a reason is required).
+6. **Never executed: Docker and PostgreSQL.** The user plans to move to a personal MacBook where Docker works: clone the private repo,
+   `python3 -m venv .venv`, install, run tests, then try Docker/Postgres there. `data/` is git-ignored (copy `data/workspace` for the Trial
+   project); the click-through scripts use Edge (`channel="msedge"`): on a Mac use `channel="chrome"` or Playwright's Chromium.
+7. **Gates before any real data:** compliance opinion on Aadhaar handling, independent penetration test, legal review (DPDP, RBI, IRDAI,
+   UIDAI, CERT-In), incident procedures; replace the admin / admin demo account; consider switching back to single sign-on.
+8. **Governance choices to confirm with a real customer:** second approval OFF by default for portal-created projects; `admin` and
+   `analyst` export unmasked results; who holds `data.delete`; bulk "same person" merges; masked-by-default results preview with
+   one-click unmask with a reason (the user wanted to see values; kept masked by default for DPDP/audit, explained to the user).
+
+**How the engine works, in the words used with the user (session 2):** pairs, not files: read + map -> clean -> blocking (candidate pairs
+on shared keys) -> score each pair (weights learned: logistic regression on ID-proven pairs = self-supervised; EM when IDs are too few =
+the ONLY unsupervised ML; `insufficient` = no learning) -> decide (score levels + business rules; middle band to people) -> cluster
+(merge pairs joined, contradiction guards, steward decisions applied) -> stable person IDs -> golden record. Without IDs it uses phone,
+email, name sounds + birth date/PIN/city-age as keys and requires name + DOB/contact/address (or exact DOB + contact) before merging.
 
 **Where things are described:** engine and accuracy (sections 1-35), API security baseline (36, `docs/SECURITY.md`), encryption at rest (41), sources and mapping (42), workspace (44), members-only projects (45), local accounts and roles (46), project-owned work (47), run queue and health (48), results export (49), schedules (50), scoring without identifiers (51), portal audit and Review section (52).
 
@@ -34,9 +55,9 @@
 
 **Check the live portal after UI changes:** RESTART the portal (it reads app.js once at start-up), then `.venv\Scripts\python scripts\ui_walkthrough.py`, `scripts\ui_walkthrough_more.py` and `scripts\ui_walkthrough_round2.py` (a minute apart: sign-in rate limit). Both need Playwright in the venv (dev tool only) and fail on any console error, server error or red message.
 
-**Decisions of the user (do not re-ask):** projects private to their creator for now (sharing later); each project has its own connections (copying between projects is enough); several people use one deployment, each in their own space; results leave as Excel, CSV, Parquet or a database table (new, add to existing, replace); scheduled runs wanted; "data can come in any form, handles must exist" (section 51); a dedicated human-in-the-loop section, deleting runs, back-and-forth navigation and accessibility for every feature (section 52); company branding is Aurionpro; may switch back to single sign-on later.
+**Decisions of the user (do not re-ask):** no Claude attribution in commits (memory); "fix all and thoroughly" for golden records (section 53); no-code rules, editable connections, results preview, deletes in lists (section 54); projects private to their creator for now (sharing later); each project has its own connections (copying between projects is enough); several people use one deployment, each in their own space; results leave as Excel, CSV, Parquet or a database table (new, add to existing, replace); scheduled runs wanted; "data can come in any form, handles must exist" (section 51); a dedicated human-in-the-loop section, deleting runs, back-and-forth navigation and accessibility for every feature (section 52); company branding is Aurionpro; may switch back to single sign-on later.
 
-**Practical pitfalls added this session:** the portal's UI tests forbid reading the address bar except in `readAddress`/`writeAddress` and forbid `::after`, emoji and extra UI files (only index.html, app.js, style.css and the whitelisted PNGs are served); judgment times (Z, microseconds) and run times (+00:00, seconds) must be compared as datetimes, never as text; long inline Python in the Bash tool still breaks: write scripts with the Write tool.
+**Practical pitfalls (session 2):** the portal reads app.js once at start-up (restart before a live check); never hand an array or null to DOM append/replaceChildren (use `add()`/`fill()`/`el()`); Git Bash rewrites arguments starting with / (use MSYS_NO_PATHCONV=1); Python 3.10: no nested same-type quotes or backslashes inside f-strings; heredoc + Python replacement strings: `\\1` became \x01 once (check the file after regex edits). **Earlier pitfalls:** the portal's UI tests forbid reading the address bar except in `readAddress`/`writeAddress` and forbid `::after`, emoji and extra UI files (only index.html, app.js, style.css and the whitelisted PNGs are served); judgment times (Z, microseconds) and run times (+00:00, seconds) must be compared as datetimes, never as text; long inline Python in the Bash tool still breaks: write scripts with the Write tool.
 
 ### Older notes from 2026-10-05 (partly superseded by the block above)
 
