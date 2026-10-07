@@ -30,6 +30,9 @@ python -m venv .venv
 # ... or sign in with a username and password: DEDUPE_AUTH_MODE=local, DEDUPE_LOCAL_AUTH_SECRET (32+ characters), then create the first admin
 .venv/Scripts/python -m dedupe.api.accounts_cli create-admin --username admin     # asks for the password; users and roles are managed on the Users and Roles screens
 .venv/Scripts/python scripts/security_scan.py   # lint, static analysis, dependency audit, SBOM
+# The portal (http://127.0.0.1:8765/ui): create a project, add data inside it (upload a file or connect a source), make the connection live,
+# start a run (they queue), review matches, then take the results out from the project's Results tab (Excel, CSV, Parquet or a database table).
+# Projects are private to their creator; the owner adds members on the Access tab. Schedules, activity and settings are tabs of the project too.
 
 # 5. reproduce the published benchmark
 .venv/Scripts/python -m dedupe.benchmark --out docs/BENCHMARK.md

@@ -1,15 +1,30 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-10-05 (project kickoff)
+> Last updated: 2026-10-08
 
-## >>> RESUME HERE (state at end of session 1, 2026-10-05) <<<
+## >>> RESUME HERE (state at 2026-10-08, session 1) <<<
 
-**One-line status:** Phase 0-1 (core engine) and most of Phase 2 are built, tested (229 tests + 1 skipped, lint and security scans clean) and measured on SYNTHETIC data. Done in Phase 2: golden record, stable IDs, judgment log, review service, simulated reviewer, versioned/audited configuration (2.3), API security baseline with login and roles (2.6a). Next: 2.6b read endpoints, 2.6c write endpoints, 2.6d run jobs, 2.7 web UI, then encryption at rest BEFORE any real data (gates in docs/SECURITY.md). Nothing has been validated on real data; no independent security test; Docker, CI and Postgres paths unexecuted.
+**One-line status:** the product is now a working portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; a run queue and schedules; results export to files and databases; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported and recommended for customers). 333 tests + 3 skipped, ruff and bandit clean. EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
 
-**In flight:** nothing (last finished: 2.3 versioned configuration, section 33). Phase 1.10 is finished (big run, regenerated benchmark, section 18).
+**Where things are described:** engine and accuracy (sections 1-35), API security baseline (36, `docs/SECURITY.md`), encryption at rest (41), sources and mapping (42), projects/runs/uploads workspace (44), members-only projects and run cancel (45), local accounts, admin and custom roles (46), project-owned connections, private by default, per-project activity, schema upgrades (47), run queue, run log, connection health (48), results export (49), scheduled runs (50).
 
-**Immediate next steps (in order)**
+**Run the portal (Windows, project root):** `$env:DEDUPE_AUTH_MODE="local"; $env:DEDUPE_LOCAL_AUTH_SECRET="<32+ characters>"; $env:DEDUPE_WORK_DIR="data/workspace"` then `.venv\Scripts\python -m dedupe.api.accounts_cli create-admin --username admin` and `.venv\Scripts\python -m dedupe.api --port 8765`; open http://127.0.0.1:8765/ui. The demo workspace in `data/workspace` (ignored by git) was built by a scratch script (two private projects, a real run each, a database destination, a schedule) with the DEMO account admin / admin (password policy bypassed on purpose: change it or delete it before any demo or real use).
+
+**Decisions of the user in this phase (do not re-ask):** projects are private to their creator for now (sharing later); each project has its own connections (copying between projects is enough); several people use one deployment, each in their own space; results can leave as Excel, CSV, Parquet or a database table (new, add to existing, replace); scheduled runs wanted now; later they may switch back to single sign-on.
+
+**Open items and honest limits**
+- Never executed: PostgreSQL paths (`tests/test_postgres_live.py` skips without a server), Docker, CI. Docker Desktop was not running on the dev machine.
+- Governance decisions to confirm with a real customer: second-approval is OFF by default for projects created in the portal (a one-person project could not approve itself); `admin` and `analyst` hold `results.export` and `pii.unmask`; local passwords are weaker than single sign-on (no MFA, no reset by email).
+- Not built: per-project permission sets beyond membership, project sharing screens beyond the Access tab, notifications (email/chat) for failed or scheduled runs, erasure/retention machinery (three design questions are still unanswered: are we the processor, may backups expire by retention, build only the machinery), KMS client, S3 connector, field-level encryption of override values, live Google Sheets test, a separate scheduler service, a migration of any pre-project workspace (none exists).
+- The screens were rendered in Edge from real API answers and the API paths are covered by tests, but no person has clicked through the live server yet: expect small usability fixes after the user's review.
+- Gates before real data: compliance opinion on Aadhaar handling, an independent penetration test, legal review (DPDP, RBI, IRDAI, UIDAI, CERT-In), incident procedures.
+
+**Next step:** the user reviews the portal and asks for changes and additions; confirm before starting a new phase.
+
+### Older notes from 2026-10-05 (partly superseded by the block above)
+
+**Older next steps (items 0-2 and 4 are still open; item 3, the product layer, is done)**
 0. Accuracy status (section 31): most remaining error is information-poor records (same name, nothing else), which no blocking rule can fix safely; age evidence was added and, after the code-review fixes (section 32), measured at 35k records as +0.6 F1 before review, +0.8 after full review, 72 -> 44 wrong merges, for about 30% more review items. Further gains need NEW SIGNALS or real data: e.g. transliteration-aware name matching, household context as evidence for individuals, document images (Phase 3), or a learned blocker/matcher trained on steward decisions.
 1. Try Docker again (`docker info`; Docker Desktop must show "Engine running"; if stuck, `wsl --shutdown` then reopen, or reboot). If it works, `docker compose run --rm --build app` must pass the tests inside the container; fix the Dockerfile as needed. Portability is a hard requirement, so Phase 0 is not truly done until this passes.
 2. Memory for millions: peak is now 4.6 GB at 694k records (section 23). The remaining big holder is clustering in pure Python (dicts/lists per record, ~2 GB left after it). Linear extrapolation gives ~30 GB at 5M records, too much for one machine: move clustering to array-based union-find (NumPy) or DuckDB before a multi-million test.

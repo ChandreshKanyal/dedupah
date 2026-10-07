@@ -66,7 +66,9 @@ a { color: var(--link); }
 h2.section { margin: 28px 0 10px; font-size: 15px; font-weight: 600; }
 h3.section { margin: 18px 0 8px; font-size: 13px; font-weight: 600; }
 .hint { color: var(--muted); margin: 4px 0 10px; }
-.title-row { display: flex; align-items: center; gap: 10px; }
+.title-row { display: flex; align-items: center; gap: 12px; }
+.title-row > .section { margin-top: 0; margin-bottom: 0; }
+div.title-row:has(> .section) { margin: 24px 0 8px; }
 
 /* ---- controls ---------------------------------------------------------------------------------------------------- */
 button, input, select, textarea { font: inherit; color: var(--text); }
