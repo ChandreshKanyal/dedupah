@@ -21,7 +21,7 @@ import pyarrow as pa
 
 from .base import Connector, register, secret, to_string_table
 from .files import FILE_TYPES, _as_text, read_local
-from .guard import ConnectorConfigError, allow_insecure_http, check_host
+from .guard import ConnectorConfigError, allow_insecure_http, check_host, check_peer, resolve_checked
 from .records import batches_of, columns_of, need
 
 MAX_DOWNLOAD = 4 * 1024 ** 3                 # 4 GB per SFTP file
@@ -80,7 +80,10 @@ class SftpConnector(Connector):
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
         pkey = _load_private_key(paramiko, secret(None, self.config["private_key_env"], "SFTP private key")) if self.config.get("private_key_env") else None
         pw = secret(None, self.config["password_env"], "SFTP password") if self.config.get("password_env") else None
-        client.connect(self.host, port=self.port, username=self.config["username"], password=pw, pkey=pkey, allow_agent=False, look_for_keys=False,
+        import socket
+        sock = socket.create_connection((resolve_checked(self.host)[0], self.port), timeout=30)     # the checked address, not the name again
+        check_peer(sock)
+        client.connect(self.host, port=self.port, sock=sock, username=self.config["username"], password=pw, pkey=pkey, allow_agent=False, look_for_keys=False,
                        timeout=30, banner_timeout=30, auth_timeout=30)
         return client
 
@@ -96,7 +99,19 @@ class SftpConnector(Connector):
             fd, name = tempfile.mkstemp(dir=_work_tmp(), suffix="." + self.fmt.replace("_", ""))
             os.close(fd)
             self._local = Path(name)
-            sftp.get(self.config["path"], str(self._local))
+            # stream with our own count: the size the server reported is only its claim (it may lie, or the file may still be growing)
+            got = 0
+            with sftp.open(self.config["path"], "rb") as src, open(self._local, "wb") as dst:
+                if size:
+                    src.prefetch(size)                  # read-ahead for the size the server reported; reading continues past it
+                while chunk := src.read(1 << 20):
+                    got += len(chunk)
+                    if got > MAX_DOWNLOAD:
+                        raise ConnectorConfigError("the remote file is larger than the allowed size")
+                    dst.write(chunk)
+        except BaseException:
+            self._cleanup()                       # a partial download never stays on disk
+            raise
         finally:
             client.close()
         self._reader = read_local(self.fmt, self._local, self.config)

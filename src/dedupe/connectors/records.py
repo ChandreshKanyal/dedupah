@@ -5,6 +5,7 @@ because a person's record rarely needs them for matching and a fixed set of colu
 taken from the first records read (DISCOVER records), and every later batch is conformed to it, so the mapping never meets a surprise column.
 """
 import importlib
+import itertools
 import json
 from typing import Iterable, Iterator
 
@@ -97,3 +98,29 @@ def available(module: str | None) -> bool:
         return True
     except ImportError:
         return False
+
+
+class RecordSource:
+    """Mixin for connectors that yield records (`_records()`): the columns are discovered from the first records of the SAME stream that is then
+    read, so a run asks the source once (a paginated API or a MongoDB collection is not crawled twice). The first records are kept until
+    read_batches() continues the stream; a second read starts a fresh stream with the columns already known."""
+
+    _cols: list[str] | None = None
+    _pending: tuple | None = None
+
+    def _records(self):
+        raise NotImplementedError
+
+    def columns(self) -> list[str]:
+        if self._cols is None:
+            it = iter(self._records())
+            head = list(itertools.islice(it, DISCOVER))
+            self._cols = discover_columns([flatten(r) for r in head])
+            self._pending = (head, it)
+        return self._cols
+
+    def read_batches(self, batch_size: int = 50_000):
+        cols = self.columns()
+        pending, self._pending = self._pending, None
+        records = itertools.chain(pending[0], pending[1]) if pending else self._records()
+        yield from batches_of(records, batch_size, cols)

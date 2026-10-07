@@ -17,7 +17,7 @@ from sqlalchemy.engine import URL
 
 from .base import Connector, register, secret, to_string_table
 from .files import _as_text
-from .guard import ConnectorConfigError, check_host, check_identifier, check_path, check_select_only
+from .guard import ConnectorConfigError, check_host, check_identifier, check_path, check_select_only, resolve_checked
 from .records import need
 
 # engine -> (SQLAlchemy driver name, driver module to import, optional-dependency name, default port)
@@ -87,6 +87,12 @@ def build_url(engine: str, c: dict) -> tuple[URL | str, dict]:
         if mode not in SSL_MODES:
             raise ConnectorConfigError("ssl_mode must be one of " + ", ".join(SSL_MODES))
         query["sslmode"] = mode
+        if engine == "postgres":                 # libpq connects to hostaddr and still uses host for the certificate check
+            try:
+                query["hostaddr"] = resolve_checked(host)[0]
+            except ConnectorConfigError as e:
+                if "could not be resolved" not in str(e):
+                    raise                         # a metadata address is refused; an unknown name is reported by the driver itself
         if engine == "redshift":                       # redshift_connector always uses TLS; it accepts only the two verifying modes
             query = {"sslmode": mode} if mode in ("verify-ca", "verify-full") else {}
         elif c.get("ssl_ca_env"):
@@ -125,6 +131,8 @@ class _Database(Connector):
 
     def _connect(self):
         """A connection that cannot write where the database supports it (PostgreSQL read-only transaction). Elsewhere rely on a read-only user."""
+        if getattr(self, "_host", None):          # again right before connecting: the driver resolves the name itself (see check_host)
+            check_host(self._host)
         conn = self.engine.connect()
         return conn.execution_options(postgresql_readonly=True) if self.engine.dialect.name == "postgresql" else conn
 
@@ -205,6 +213,7 @@ class DatabaseConnector(_Database):
         if engine == "sqlserver_pymssql":
             conf.pop("odbc_driver", None)
         url, kwargs = build_url(engine, conf)
+        self._host = conf.get("host") if engine not in ("snowflake", "bigquery") else None
         if engine == "sqlserver_pymssql":
             url = url.set(query={})
         self._setup(url, kwargs, module, extra)

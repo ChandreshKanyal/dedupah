@@ -142,13 +142,13 @@ add("bigquery", "Google BigQuery", "Cloud data warehouses", "bigquery", "BigQuer
     [S("project", "Project id", required=True, placeholder="my-gcp-project"), S("dataset", "Dataset", required=True, placeholder="crm"),
      S("credentials_env", "Service account key file (environment variable)", "env", help="Path of a service account JSON key with BigQuery read access. "
        "Leave empty to use the server's own Google identity. " + ENV),
-     S("table", "Table or view", placeholder="customers"), S("query", "Or a SELECT query", "textarea", placeholder="SELECT * FROM crm.customers")],
+     S("table", "Table or view", placeholder="customers"), S("query", "Or a SELECT query", "textarea", placeholder="SELECT * FROM crm.customers"), S("url_env", "Complete connection URL instead (environment variable)", "env", help="Advanced: a full SQLAlchemy URL in an environment variable. When set, it is used instead of the fields above.", advanced=True)],
     module="sqlalchemy_bigquery", extra="bigquery", docs="https://googleapis.dev/python/sqlalchemy-bigquery/latest/README.html")
 add("databricks", "Databricks SQL", "Cloud data warehouses", "databricks", "Tables in a Databricks SQL warehouse (Unity Catalog).",
     [S("host", "Server host name", required=True, placeholder="adb-1234567890123456.7.azuredatabricks.net"),
      S("http_path", "HTTP path", required=True, help="From the SQL warehouse's connection details.", placeholder="/sql/1.0/warehouses/abc123"),
      S("token_env", "Access token (environment variable)", "env", True, ENV), S("catalog", "Catalog", placeholder="main"),
-     S("schema", "Schema", placeholder="crm"), S("table", "Table or view"), S("query", "Or a SELECT query", "textarea")],
+     S("schema", "Schema", placeholder="crm"), S("table", "Table or view"), S("query", "Or a SELECT query", "textarea"), S("url_env", "Complete connection URL instead (environment variable)", "env", help="Advanced: a full SQLAlchemy URL in an environment variable. When set, it is used instead of the fields above.", advanced=True)],
     module="databricks.sqlalchemy", extra="databricks", docs="https://docs.databricks.com/en/dev-tools/sqlalchemy.html")
 
 # ---- cloud storage and file transfer ------------------------------------------------------------------------------------------------
@@ -254,7 +254,7 @@ def allowed_settings() -> dict[str, set[str]]:
     out = {}
     for t, c in BY_TYPE.items():
         names = {s["name"] for s in c["settings"]} | {"type"}
-        if c["type"] in ("postgres", "mysql", "mariadb", "rds", "aurora", "sqlserver", "azure_sql", "oracle", "db2", "redshift", "snowflake"):
+        if c["type"] in ("postgres", "mysql", "mariadb", "rds", "aurora", "sqlserver", "azure_sql", "oracle", "db2", "redshift", "snowflake", "bigquery", "databricks"):    # every DatabaseConnector type
             names |= {"url_env"}
         out[t] = names
     return out

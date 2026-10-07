@@ -46,12 +46,22 @@ def ingest(config_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
         "GROUP BY 1 HAVING d > 0", [str(out_path)]).fetchall()
     if dupes:
         # A record id used twice in one source (a re-export, a bad key column) would make every later join ambiguous. The first row
-        # keeps the id, later ones become '<id>#2', '#3'... in file order; the count is reported so the source can be fixed.
+        # keeps the id, later ones become '<id>#2', '#3'... in file order; the count is reported so the source can be fixed. A new id
+        # could itself already exist ('INV#1001' twice next to a real 'INV#1001#2'): the result is checked, and on a clash the suffix
+        # changes ('#dup1-2', '#dup2-2', ...) until every id is unique.
         tmp = out_path.with_name(out_path.stem + ".dedup.parquet")
-        con.execute(f"""COPY (SELECT * EXCLUDE (n, file_row_number) REPLACE (CASE WHEN n > 1 THEN source_record_id || '#' || n ELSE source_record_id END
-                                                                         AS source_record_id)
-            FROM (SELECT *, row_number() OVER (PARTITION BY source_id, source_record_id ORDER BY file_row_number) AS n
-                  FROM {crypto.rp(out_path, row_numbers=True)}) ORDER BY file_row_number) TO '{tmp}' ({crypto.fmt()})""")
+        for attempt in range(10):
+            sep = "#" if attempt == 0 else f"#dup{attempt}-"
+            con.execute(f"""COPY (SELECT * EXCLUDE (n, file_row_number) REPLACE (CASE WHEN n > 1 THEN source_record_id || '{sep}' || n
+                                                                             ELSE source_record_id END AS source_record_id)
+                FROM (SELECT *, row_number() OVER (PARTITION BY source_id, source_record_id ORDER BY file_row_number) AS n
+                      FROM {crypto.rp(out_path, row_numbers=True)}) ORDER BY file_row_number) TO '{tmp}' ({crypto.fmt()})""")
+            clash = con.execute(f"SELECT count(*) - count(DISTINCT (source_id, source_record_id)) FROM {crypto.rp_param()}", [str(tmp)]).fetchone()[0]
+            if not clash:
+                break
+        else:
+            tmp.unlink(missing_ok=True)
+            raise ValueError("record ids repeat inside a source and could not be made unique: check the record id column")
         tmp.replace(out_path)
     return {"records": stats, "total": sum(stats.values()), "duplicate_source_record_ids": dict(dupes),
             "output": str(out_path)}

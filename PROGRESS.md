@@ -1368,3 +1368,22 @@ Tests: `test_connectors_catalogue.py` (22) and `test_connectors_remote.py` (8). 
 - IAM database auth for RDS is not supported.
 - Columns of JSON, API and MongoDB sources are discovered from the first 1,000 records.
 - Kafka and other streams are out of scope (batch platform).
+
+## 58. Cloud review (ultrareview) findings fixed (2026-10-08)
+Six findings on the work of sections 53-57, all fixed, each with a test in `tests/test_ultrareview_fixes.py`:
+1. **DNS rebinding around the host check:** the name was checked once, then the driver resolved it again when connecting. Fixes:
+   - REST, Salesforce, HubSpot and Dynamics: the opener checks the address it really reached after connecting (`check_peer`), and the
+     TLS name check still applies.
+   - SFTP connects to the checked address (`resolve_checked`).
+   - PostgreSQL is pinned with libpq `hostaddr`.
+   - Other databases and MongoDB repeat the check right before each connection. This narrows the gap but cannot close it, because those
+     drivers resolve names themselves. So production should ALSO block 169.254.169.254 at the network (written in `check_host`).
+2. **Mobile data-quality count:** it was judged on the merged phone, which can come from the second phone column. It is now judged on the
+   mobile column itself.
+3. **`url_env` for BigQuery and Databricks:** it is now allowed, with an advanced field on their forms.
+4. **SFTP size cap:** it was only checked against the size the server reports. The download now streams with our own byte count, and a
+   partial file is deleted.
+5. **Duplicate record ids:** a renamed duplicate ('ACME001#2') could collide with a real id. The result is now checked, and on a clash the
+   suffix changes ('#dup1-2', ...) until every id is unique.
+6. **Record sources read twice:** JSON, XML, Avro, the APIs and MongoDB were read once to find the columns and again to read the rows. The
+   `RecordSource` mixin now finds the columns from the first records of the same stream it then reads, so each source is read once per run.

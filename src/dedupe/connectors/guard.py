@@ -1,6 +1,7 @@
 """Safety checks for connector configurations. A connector config will soon come from a user (web screen / API), so it is untrusted input:
 a file path must not reach outside the allowed data folders, a query must not change data, a Google Sheet id must not become another URL,
 and credentials must never follow a redirect to a different host."""
+import http.client
 import os
 import re
 import urllib.request
@@ -80,9 +81,38 @@ def allow_insecure_http() -> bool:
     return os.environ.get("DEDUPE_SOURCES_ALLOW_HTTP") == "1" and not _production()
 
 
+def _blocked(ip_text: str) -> bool:
+    import ipaddress
+    ip = ipaddress.ip_address(ip_text.split("%")[0])
+    return ip.is_link_local or str(ip) in _METADATA or (ip.version == 6 and ip.ipv4_mapped is not None and ip.ipv4_mapped.is_link_local)
+
+
+def resolve_checked(host: str, what: str = "host") -> list[str]:
+    """check_host, then the addresses the name resolves to NOW (all of them allowed). Connect to one of these addresses, not to the name, so
+    a DNS answer that changes between the check and the connection (DNS rebinding) cannot lead to a metadata address."""
+    import socket
+    h = check_host(host, what)
+    try:
+        addrs = list(dict.fromkeys(i[4][0] for i in socket.getaddrinfo(h, None)))
+    except OSError:
+        raise ConnectorConfigError(f"the {what} name could not be resolved") from None
+    if any(_blocked(a) for a in addrs):
+        raise ConnectorConfigError(f"{what} resolves to a link-local or metadata address, which is never allowed")
+    return addrs
+
+
+def check_peer(sock, what: str = "host") -> None:
+    """After connecting: the address actually reached must not be a metadata or link-local one (the last line against DNS rebinding)."""
+    if _blocked(sock.getpeername()[0]):
+        sock.close()
+        raise ConnectorConfigError(f"{what} turned out to be a link-local or metadata address; the connection was closed")
+
+
 def check_host(host: str, what: str = "host") -> str:
     """A host name or IP address: well formed, not a cloud metadata address (also after DNS resolution), and inside DEDUPE_SOURCE_HOSTS when that
-    allow-list is set (comma separated; '*.example.com' allows sub-domains). Production deployments should set the allow-list."""
+    allow-list is set (comma separated; '*.example.com' allows sub-domains). Production deployments should set the allow-list AND block the
+    metadata address (169.254.169.254) at the network: database drivers resolve the name again when they connect, so for drivers that cannot
+    be handed a fixed address the check is repeated right before each connection, which narrows but cannot close that gap."""
     import ipaddress
     import socket
     h = (host or "").strip().strip("[]")
@@ -103,10 +133,8 @@ def check_host(host: str, what: str = "host") -> str:
         addrs = {i[4][0] for i in socket.getaddrinfo(h, None)} if not is_ip else {h}
     except OSError:
         return h                                    # unknown name: the driver reports that it cannot connect
-    for a in addrs:
-        ip = ipaddress.ip_address(a.split("%")[0])
-        if ip.is_link_local or str(ip) in _METADATA:
-            raise ConnectorConfigError(f"{what} resolves to a link-local or metadata address, which is never allowed")
+    if any(_blocked(a) for a in addrs):
+        raise ConnectorConfigError(f"{what} resolves to a link-local or metadata address, which is never allowed")
     return h
 
 
@@ -131,8 +159,35 @@ class SameHostRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _CheckedHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        super().connect()
+        check_peer(self.sock, "the API host")
+
+
+class _CheckedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()                         # TCP connect + TLS handshake (certificate and name are still verified)
+        check_peer(self.sock, "the API host")
+
+
+class _CheckedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_CheckedHTTPConnection, req)
+
+
+class _CheckedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        kw = {"context": self._context}
+        if hasattr(self, "_check_hostname"):      # Python 3.10/3.11 pass it on; later versions dropped it
+            kw["check_hostname"] = self._check_hostname
+        return self.do_open(_CheckedHTTPSConnection, req, **kw)
+
+
 def same_host_opener() -> urllib.request.OpenerDirector:
-    return urllib.request.build_opener(SameHostRedirect)
+    """Redirects stay on the same host, and every connection is checked AFTER it is made (the address really reached), so a DNS answer that
+    changes after the settings were checked cannot lead to a metadata address."""
+    return urllib.request.build_opener(SameHostRedirect, _CheckedHTTPHandler, _CheckedHTTPSHandler)
 
 
 # ---- Google Sheets ---------------------------------------------------------------------------------------------------

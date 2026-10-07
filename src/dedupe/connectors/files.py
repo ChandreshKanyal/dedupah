@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 
 from .base import Connector, register, to_string_table
 from .guard import ConnectorConfigError, check_path
-from .records import batches_of, columns_of, need
+from .records import RecordSource, need
 
 
 class _FileConnector(Connector):
@@ -159,7 +159,7 @@ def _dig(doc, path: str | None):
 
 
 @register
-class JsonConnector(_FileConnector):
+class JsonConnector(RecordSource, _FileConnector):
     """A JSON file holding a list of records ([{...}, {...}]), or an object with the list inside (records_path, e.g. "data.customers").
     Also JSON Lines (.jsonl: one record per line), read as a stream. Nested fields become dotted columns (address.city)."""
     types = ("json", "jsonl")
@@ -185,15 +185,10 @@ class JsonConnector(_FileConnector):
         for r in recs:
             yield r if isinstance(r, dict) else {"value": r}
 
-    def columns(self) -> list[str]:
-        return columns_of(self._records())
-
-    def read_batches(self, batch_size: int = 50_000) -> Iterator[pa.Table]:
-        yield from batches_of(self._records(), batch_size, self.columns())
 
 
 @register
-class XmlConnector(_FileConnector):
+class XmlConnector(RecordSource, _FileConnector):
     """An XML file with one element per record (record_tag, e.g. "Customer"). Child elements become columns, nested ones dotted
     (Address.City), attributes are prefixed with @. Parsed with defusedxml: no external entities, no entity expansion bombs."""
     types = ("xml",)
@@ -208,11 +203,6 @@ class XmlConnector(_FileConnector):
                 yield _element(elem)
                 elem.clear()
 
-    def columns(self) -> list[str]:
-        return columns_of(self._records())
-
-    def read_batches(self, batch_size: int = 50_000) -> Iterator[pa.Table]:
-        yield from batches_of(self._records(), batch_size, self.columns())
 
 
 def _element(elem) -> dict:
@@ -272,7 +262,7 @@ class FixedWidthConnector(_FileConnector):
 
 
 @register
-class AvroConnector(_FileConnector):
+class AvroConnector(RecordSource, _FileConnector):
     """Apache Avro container files (the schema travels inside the file)."""
     types = ("avro",)
 
@@ -281,11 +271,6 @@ class AvroConnector(_FileConnector):
         with self.path.open("rb") as f:
             yield from fastavro.reader(f)
 
-    def columns(self) -> list[str]:
-        return columns_of(self._records())
-
-    def read_batches(self, batch_size: int = 50_000) -> Iterator[pa.Table]:
-        yield from batches_of(self._records(), batch_size, self.columns())
 
 
 @register

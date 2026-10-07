@@ -46,7 +46,9 @@ _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_al
 # data-quality report: of the values a source supplied, which survived validation?
 _VALIDATION = {
     **{f: (lambda raw, row, out=out: row[out] is not None) for f, out in (
-        ("mobile", "mobile"), ("email", "email"), ("pan", "pan"), ("dob", "dob"), ("aadhaar", "aadhaar_token"), ("pincode", "address_pin"))},
+        ("email", "email"), ("pan", "pan"), ("dob", "dob"), ("aadhaar", "aadhaar_token"), ("pincode", "address_pin"))},
+    # judged on the mobile column itself: the cleaned "mobile" may come from the second phone column when the first one is unusable
+    "mobile": lambda raw, row: bool(odd.phones(raw["mobile"])[0]),
     "age": lambda raw, row: dates.parse_age(raw["age"]) is not None,
     # an unreadable record date silently turns an age into a birth year counted from today: surface it
     "record_date": lambda raw, row: dates.parse_record_date(raw["record_date"]) is not None,

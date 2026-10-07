@@ -7,13 +7,10 @@ does not load the primary. Nested documents become dotted columns; ObjectId and 
 """
 import json
 import re
-from typing import Iterator
-
-import pyarrow as pa
 
 from .base import Connector, register, secret
 from .guard import ConnectorConfigError, check_host
-from .records import batches_of, columns_of, need
+from .records import RecordSource, need
 
 _NAME = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
 _CODE_OPERATORS = {"$where", "$function", "$accumulator"}
@@ -44,7 +41,7 @@ def _json_setting(raw: str | None, what: str) -> dict:
 
 
 @register
-class MongoConnector(Connector):
+class MongoConnector(RecordSource, Connector):
     types = ("mongodb",)
 
     def __init__(self, **config):
@@ -63,6 +60,7 @@ class MongoConnector(Connector):
         opts = {"readPreference": "secondaryPreferred", "serverSelectionTimeoutMS": 15000, "appname": "dedupe"}
         if c.get("uri_env"):
             return pymongo.MongoClient(secret(None, c["uri_env"], "MongoDB connection string"), **opts)
+        check_host(c["host"])                      # again right before connecting (the driver resolves the name itself)
         pw = secret(None, c.get("password_env"), "MongoDB password") if c.get("password_env") else None
         return pymongo.MongoClient(host=c["host"], port=int(c.get("port") or 27017), username=c.get("username") or None, password=pw,
                                    authSource=c.get("auth_source") or "admin", tls=c.get("tls", "yes") != "no", **opts)
@@ -79,8 +77,3 @@ class MongoConnector(Connector):
     def test_connection(self) -> None:
         self.columns()
 
-    def columns(self) -> list[str]:
-        return columns_of(self._records())
-
-    def read_batches(self, batch_size: int = 50_000) -> Iterator[pa.Table]:
-        yield from batches_of(self._records(), batch_size, self.columns())

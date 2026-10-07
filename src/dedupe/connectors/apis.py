@@ -21,11 +21,9 @@ import urllib.parse
 import urllib.request
 from typing import Iterator
 
-import pyarrow as pa
-
 from .base import Connector, register, secret
 from .guard import ConnectorConfigError, allow_insecure_http, check_url, same_host_opener
-from .records import batches_of, columns_of
+from .records import RecordSource
 
 MAX_PAGE_BYTES = 50 * 1024 * 1024
 MAX_PAGES = 100_000
@@ -45,7 +43,7 @@ def dig(doc, path: str | None):
     return None
 
 
-class _Http(Connector):
+class _Http(RecordSource, Connector):
     """Shared HTTP machinery: authentication, retries, paging."""
 
     def _get_json(self, url: str, headers: dict, data: bytes | None = None, method: str = "GET") -> dict | list:
@@ -99,11 +97,6 @@ class _Http(Connector):
     def test_connection(self) -> None:
         self.columns()
 
-    def columns(self) -> list[str]:
-        return columns_of(self._records())
-
-    def read_batches(self, batch_size: int = 50_000) -> Iterator[pa.Table]:
-        yield from batches_of(self._records(), batch_size, self.columns())
 
 
 @register
