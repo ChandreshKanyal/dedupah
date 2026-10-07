@@ -85,6 +85,16 @@ def inspect_source(conf: dict, sample_rows: int = 200) -> dict:
     return {"columns": cols, "sample": sample, "suggestions": suggest(sample) if sample.num_rows else []}
 
 
+def probe_source(src: SourceConfig, sample_rows: int = 200) -> dict:
+    """Can the source be opened, read and mapped right now? Returns its column names and how many sample rows were read (for the connection's health)."""
+    info = inspect_source(src.connector, sample_rows)
+    try:
+        compile_select(src, info["columns"])
+    except MappingError as e:
+        raise SourceProblem(str(e).split(". Available")[0][:400]) from None
+    return {"columns": info["columns"], "rows_sampled": info["sample"].num_rows}
+
+
 def check_source(src: SourceConfig, sample_rows: int = 200) -> pa.Table:
     """Validate one whole source; returns its sample turned into canonical rows (for the masked preview)."""
     info = inspect_source(src.connector, sample_rows)

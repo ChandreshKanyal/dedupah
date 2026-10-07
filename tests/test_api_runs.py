@@ -39,16 +39,18 @@ def test_a_run_starts_with_202_runs_alone_and_earlier_runs_stay_readable(tmp_pat
     r = c.post(P + "/runs", json={"connections": ["crm"], "reason": "weekly sweep"}, headers=admin)
     assert r.status_code == 202 and r.json()["status"] == "running" and r.json()["requested_by"] == "u-ops" and r.json()["connections"] == [{"id": "crm", "version": 1}]
     rid = r.json()["id"]
-    assert c.post(P + "/runs", json={"connections": ["crm"]}, headers=admin).status_code == 409             # one run at a time
+    second = c.post(P + "/runs", json={"connections": ["crm"]}, headers=admin)                                # one at a time: the next one waits its turn
+    assert second.status_code == 202 and second.json()["status"] == "queued" and second.json()["queue_position"] == 1
     assert c.get(earlier + "/queue", headers=hdr(s, "viewer")).status_code == 200                              # the earlier run is still readable
     assert c.get(f"{P}/runs/{rid}/queue", headers=hdr(s, "viewer")).status_code == 409                         # the running one is not, yet
     sources = json.loads((sv.workspace.run_dir(PROJECT, rid) / "sources.json").read_text(encoding="utf-8"))
     assert [x["source_id"] for x in sources["sources"]] == ["crm"]                                             # the exact connection versions used
     gate.write_text("x")
     assert sv.jobs.wait(PROJECT, rid, 30).status == "succeeded"
-    assert [x["id"] for x in c.get(P + "/runs", headers=hdr(s, "viewer")).json()] == [rid, earlier.rsplit("/", 1)[1]]
-    events = {e["event"]: e for e in sv.seclog.events(limit=200) if e["event"] in ("run_started", "run_finished")}
-    assert events["run_started"]["object_ref"] == f"{PROJECT}/{rid}" and events["run_finished"]["detail"]["outcome"] == "succeeded"
+    assert sv.jobs.wait(PROJECT, second.json()["id"], 30).status == "succeeded"                                  # the queued run started by itself
+    assert [x["id"] for x in c.get(P + "/runs", headers=hdr(s, "viewer")).json()] == [second.json()["id"], rid, earlier.rsplit("/", 1)[1]]
+    events = {e["event"]: e for e in sv.seclog.events(limit=200) if e["event"] in ("run_started", "run_finished") and e["object_ref"] == f"{PROJECT}/{rid}"}
+    assert events["run_started"]["project_id"] == PROJECT and events["run_finished"]["detail"]["outcome"] == "succeeded"
 
 
 def test_runs_need_live_connections_and_a_known_project(tmp_path):

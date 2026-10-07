@@ -60,6 +60,16 @@ def scrub(value, limit: int = 200):
     return value if isinstance(value, (int, float, bool)) or value is None else scrub(str(value), limit)
 
 
+def scrub_text(text: str, line_limit: int = 400) -> str:
+    """Scrub a block of free text (a run's log) line by line: anything that looks like personal data is removed and long lines are cut."""
+    out = []
+    for line in str(text).splitlines():
+        for p in _PATTERNS:
+            line = p.sub("[redacted]", line)
+        out.append(line[:line_limit])
+    return "\n".join(out)
+
+
 def safe_detail(detail: dict | None) -> dict:
     out = {}
     for k, v in (detail or {}).items():

@@ -236,6 +236,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-08 (session 1, step 2 of 6)** — Run queue (runs wait their turn and survive a restart), run log, rows per connection, connection health (test now, history from runs, column drift). Section 48.
 - **2026-10-08 (session 1, project-owned work, step 1 of 6)** — Projects private to their creator, connections and uploads inside the project, copy between projects, one-person projects approve their own changes, per-project activity feed, additive schema upgrades, project workspace screens (Overview checklist, Connections, Runs, Rules, Activity, Access, Settings). Section 47.
 - **2026-10-07 (session 1, accounts)** — Username/password sign-in (local mode), an admin holding every permission, users and admin-defined roles with delegation limits, Users and Roles screens, sessions ended at once on disable/reset. Section 46.
 - **2026-10-07 (session 1, access and cancel)** — Members-only projects (business-unit scoping), run cancel, Postgres test written (not executed: no Docker/Postgres here). Section 45.
@@ -908,3 +909,18 @@ Design choice: the grant's role is recorded and shown, but membership alone deci
 - The Postgres paths are still not executed (no server here); copying/ownership/activity use the same SQL as on SQLite but are unproven on Postgres.
 
 **Tests:** `tests/test_projects_private.py` (9: private by default and owner-managed access, project-creation permission, isolated connections, uploads tied to a project, copy rules, second-approval setting, activity feed, security-log upgrade and tamper evidence, schema helper); existing connection, run, security-matrix, UI tests moved to the project routes (the role matrix covers the new routes automatically).
+
+## 48. Run queue, run log and connection health (step 2 of 6)
+
+**Run queue.** Starting a run no longer fails when another is going. `RunJobs` keeps runs in order and starts them by itself: `DEDUPE_MAX_CONCURRENT_RUNS` run at once (default 1: a big run needs the machine's memory, 4.6 GB at 694k records), `DEDUPE_MAX_QUEUED_RUNS` may wait (default 20; beyond that a start is refused with a plain sentence). A queued run shows its place (`queue_position`, 1 = next), can be cancelled (it simply never starts) and stays queued across an API restart, where a run that was going is marked interrupted. Claiming a queued run is an atomic database update, so a second API process could not start it twice.
+**Run log.** `GET /projects/{p}/runs/{r}/log` returns the end of the run's log with anything that looks like PAN, Aadhaar, phone or email removed (the same scrubber as the security log), for people who can open the project and read runs; shown on the run page (Log tab, and under a failed run). It is the first thing to read when a run fails.
+**Rows per connection.** The run summary gained `records_by_source`; the run's Overview lists the rows each connection delivered.
+**Connection health.** New table `connection_checks` (main database). `POST /projects/{p}/connections/{c}/test` opens the source with its live settings (newest when none is live), reads a sample, applies the mapping and records ok/failed, rows sampled and DRIFT (columns added or removed since the last good check). Every finished run also records a health entry per connection it used (rows read, or failed). Errors are fixed sentences: they may name a missing column, never a value, path or driver text. Screens: Health panel with Test now on the connection page, Last check column in the list.
+
+**Honest limits**
+- Only the order of queued runs is guaranteed, not fairness between projects or users (one person can queue 20 runs). A per-project cap is easy to add if it matters.
+- Scheduling and exports come in the next steps. "Interrupted" runs are not retried automatically.
+- A test reads a sample of up to 200 rows, so it proves the source opens, reads and maps; it does not prove every row is good (the pipeline's own data-quality report does that).
+- Nothing here ran against PostgreSQL or a real remote source.
+
+**Tests:** `tests/test_runs_queue_health.py` (7: order, cancel of a queued run, automatic start, concurrency and queue limit, restart behaviour, scrubbed log and access, rows and health from runs, test-now results and failure wording, drift added/removed); the one-at-a-time expectation of the older run test was updated; the allowed summary keys include `records_by_source`.

@@ -186,3 +186,4 @@ ul.plain li { margin: 3px 0; }
 .todo-row.next { background: var(--bg-subtle); }
 .todo-mark { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--muted); font-size: 12px; }
 .todo-mark .icon { width: 14px; height: 14px; color: var(--success); }
+.log { margin: 0; max-height: 360px; overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 18px; white-space: pre-wrap; word-break: break-word; }

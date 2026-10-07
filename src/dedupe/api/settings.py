@@ -59,6 +59,8 @@ class ApiSettings:
     work: Path = Path("data/staging")
     upload_max_bytes: int = 50_000_000                  # largest file accepted from the browser
     project_database_url: str | None = None             # template with {project}: one server database per project (production)
+    max_concurrent_runs: int = 1                        # runs going at once; the rest wait in the queue (a big run needs the machine's memory)
+    max_queued_runs: int = 20                           # runs allowed to wait
 
     @property
     def production(self) -> bool:
@@ -93,6 +95,7 @@ class ApiSettings:
             enable_docs=_bool("DEDUPE_API_DOCS", not prod), database_url=os.environ.get("DEDUPE_DATABASE_URL") or None,
             work=Path(os.environ.get("DEDUPE_WORK_DIR", "data/staging")),
             upload_max_bytes=_int("DEDUPE_UPLOAD_MAX_BYTES", 50_000_000), project_database_url=os.environ.get("DEDUPE_PROJECT_DATABASE_URL") or None,
+            max_concurrent_runs=_int("DEDUPE_MAX_CONCURRENT_RUNS", 1), max_queued_runs=_int("DEDUPE_MAX_QUEUED_RUNS", 20),
         )
         s.validate()
         return s
@@ -136,6 +139,8 @@ class ApiSettings:
                 problems.append("CORS origin '*' is not allowed")
             if not self.project_database_url or "{project}" not in self.project_database_url or self.project_database_url.startswith("sqlite"):
                 problems.append("production needs DEDUPE_PROJECT_DATABASE_URL: a server database URL template containing {project}")
+        if not (1 <= self.max_concurrent_runs <= 16) or not (1 <= self.max_queued_runs <= 1000):
+            problems.append("DEDUPE_MAX_CONCURRENT_RUNS must be 1-16 and DEDUPE_MAX_QUEUED_RUNS 1-1000")
         if self.max_token_lifetime_s < 60 or self.max_page_size < 1 or self.max_body_bytes < 1024 or self.upload_max_bytes < 1024:
             problems.append("token lifetime, page size and body size limits are out of range")
         if problems:

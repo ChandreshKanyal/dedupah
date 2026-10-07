@@ -295,11 +295,12 @@ async function viewHome() {
     can("runs.read") ? el("h2", { class: "section" }, "Recent runs") : null,
     can("runs.read") ? runsTable(h.recent_runs, true) : null);
 }
+const runState = (r) => tag(r.status === "queued" && r.queue_position ? "Queued, " + (r.queue_position - 1 ? (r.queue_position - 1) + " ahead" : "next") : label(r.status), STATUS_KIND[r.status]);
 function runsTable(runs, withProject, pid) {
   if (!runs.length) return empty("No runs yet.", can("runs.start") ? btn("Start a run", () => go("Runs", () => newRun(pid)), "primary", "play") : null);
   const cols = [...(withProject ? ["Project"] : []), "Run", "Status", "Connections", ["Records"], ["People"], ["To review"], "Started", "By"];
   return table(cols, runs.map((r) => el("tr", { class: "click", onclick: () => go("Runs", () => viewRun(r.project_id, r.id)) },
-    withProject ? el("td", {}, projectName(r.project_id)) : null, el("td", { class: "mono" }, r.id), el("td", {}, statusTag(r.status)),
+    withProject ? el("td", {}, projectName(r.project_id)) : null, el("td", { class: "mono" }, r.id), el("td", {}, runState(r)),
     el("td", {}, r.connections.map((c) => c.id).join(", ") || el("span", { class: "muted" }, "imported")),
     el("td", { class: "num" }, num(r.summary.records)), el("td", { class: "num" }, num(r.summary.people)), el("td", { class: "num" }, num(r.summary.review_items)),
     el("td", {}, when(r.started_at || r.created_at)), el("td", {}, r.requested_by))));
@@ -487,34 +488,47 @@ async function viewRun(pid, rid, tab) {
   if (going && can("runs.start")) actions.push(btn("Cancel run", () => run(() => cancelRun(pid, rid)), "danger"));
   if (can("runs.start") && !going && r.connections.length) actions.push(btn("Run again", () => run(() => startRun(pid, [], rid)), "", "refresh"));
   const top = page("Run " + rid, "Started " + when(r.started_at || r.created_at) + " by " + r.requested_by + (r.finished_at ? ". Finished " + when(r.finished_at) + "." : "."), actions,
-    crumbs(crumb("Projects", () => go("Projects", viewProjects)), crumb(projectName(pid), () => go("Projects", () => viewProject(pid))), rid), statusTag(r.status));
+    crumbs(crumb("Projects", () => go("Projects", viewProjects)), crumb(projectName(pid), () => go("Projects", () => viewProject(pid, "runs"))), rid), runState(r));
   if (going) {
     timer = setInterval(() => run(async () => {
       const now = await api("GET", "/projects/" + pid + "/runs/" + rid);
       if (now.status !== "running" && now.status !== "queued") { stopTimer(); await viewRun(pid, rid); }
     }), 4000);
-    show(top, empty("This run is in progress. Its results appear here when it finishes; earlier runs stay readable meanwhile."));
+    show(top, empty(r.status === "queued" ? "This run is waiting its turn" + (r.queue_position > 1 ? " (" + (r.queue_position - 1) + " ahead of it)" : " and starts next") + ". It starts by itself; you can cancel it above."
+      : "This run is in progress. Its results appear here when it finishes; earlier runs stay readable meanwhile."));
     return;
   }
   if (r.status === "cancelled") { show(top, empty("This run was cancelled before it finished, so it has no results. Start it again from the button above.")); return; }
-  if (r.status !== "succeeded") { show(top, empty("This run did not finish successfully (exit code " + r.exit_code + "), so it has no results. The run log is kept on the server.")); return; }
-  const tabList = [["overview", "Overview"], ...(can("queue.read") ? [["review", "Review queue"]] : []), ...(can("person.read") ? [["people", "People"]] : [])];
+  if (r.status !== "succeeded") {
+    show(top, empty(r.status === "interrupted" ? "This run was interrupted when the server restarted, so it has no results. Start it again from the button above."
+      : "This run did not finish successfully (exit code " + r.exit_code + "), so it has no results. The end of its log is below."), await runLogPanel(pid, rid));
+    return;
+  }
+  const tabList = [["overview", "Overview"], ...(can("queue.read") ? [["review", "Review queue"]] : []), ...(can("person.read") ? [["people", "People"]] : []), ["log", "Log"]];
   const base = "/projects/" + pid + "/runs/" + rid;
   let body;
   if (tab === "overview") body = runOverview(r);
   else if (tab === "review") body = await reviewQueue(pid, rid, base, "open");
+  else if (tab === "log") body = await runLogPanel(pid, rid);
   else body = peopleLookup(base);
   show(top, tabs(tabList, tab, (t) => viewRun(pid, rid, t)), body);
+}
+async function runLogPanel(pid, rid) {
+  const log = await api("GET", "/projects/" + pid + "/runs/" + rid + "/log?lines=200");
+  return el("div", {}, el("h2", { class: "section" }, "Run log"),
+    log.available ? el("p", { class: "hint" }, "The end of the log" + (log.truncated ? " (older lines are cut)" : "") + ". Anything that looks like personal data is removed.") : null,
+    log.available ? el("pre", { class: "log" }, log.lines.join("\n")) : empty("No log was kept for this run."));
 }
 function runOverview(r) {
   const s = r.summary;
   const parts = [el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("People found", num(s.people)), stat("Households", num(s.households)),
     stat("Pairs merged automatically", num(s.auto_merged_pairs)), stat("Items to review", num(s.review_items)), stat("Time taken", s.seconds == null ? "" : s.seconds.toFixed(1) + " s"))];
-  const srcRows = r.connections.length ? r.connections.map((c) => el("tr", {}, el("td", {}, c.id), el("td", {}, "Version " + c.version)))
-    : (s.sources || []).map((x) => el("tr", {}, el("td", {}, x), el("td", { class: "muted" }, "imported run")));
+  const rowsOf = (id) => (s.records_by_source || {})[id];
+  const srcRows = r.connections.length ? r.connections.map((c) => el("tr", {}, el("td", {}, c.id), el("td", {}, "Version " + c.version), el("td", { class: "num" }, num(rowsOf(c.id)))))
+    : (s.sources || []).map((x) => el("tr", {}, el("td", {}, x), el("td", { class: "muted" }, "imported run"), el("td", { class: "num" }, num(rowsOf(x)))));
   const cfgRows = Object.entries(r.configs || {}).filter(([k]) => k !== "sources").map(([k, v]) => el("tr", {}, el("td", {}, label(k)),
     el("td", {}, v.source === "store" ? "Version " + v.version : "Built-in default"), el("td", { class: "mono" }, (v.hash || "").slice(0, 12))));
-  parts.push(el("div", { class: "cols" }, el("div", {}, el("h2", { class: "section" }, "Sources read"), table(["Connection", "Version"], srcRows)),
+  parts.push(el("div", { class: "cols" }, el("div", {}, el("h2", { class: "section" }, "Sources read"), table(["Connection", "Version", ["Records read"]], srcRows)),
     el("div", {}, el("h2", { class: "section" }, "Rules used"), cfgRows.length ? table(["Configuration", "Version", "Fingerprint"], cfgRows) : empty("Not recorded."))));
   if (r.stages) {
     parts.push(el("h2", { class: "section" }, "Stages"), table(["Stage", ["Seconds"], ["Peak memory (MB)"]], r.stages.map((st) => el("tr", {}, el("td", {}, label(st.stage)),
@@ -693,13 +707,14 @@ function projectConnections(p, connections) {
   const rows = connections.map((c) => el("tr", { class: "click", onclick: () => open(c) },
     el("td", {}, el("span", { class: "title-row" }, icon(TYPE_ICON[c.type] || "database"), c.id)), el("td", {}, label(c.type)), el("td", { class: "num" }, c.fields_mapped),
     el("td", {}, c.live_version ? "Version " + c.live_version : el("span", { class: "muted" }, "Not live")),
-    el("td", {}, c.latest_status === "active" ? "" : statusTag(c.latest_status)), el("td", {}, when(c.updated_at)), el("td", {}, c.updated_by)));
+    el("td", {}, c.latest_status === "active" ? "" : statusTag(c.latest_status)),
+    el("td", {}, c.last_check ? tag(c.last_check.ok ? "OK" : "Failed", c.last_check.ok ? "success" : "danger") : el("span", { class: "muted" }, "never")), el("td", {}, when(c.updated_at))));
   const copy = can("sources.manage") ? btn("Copy from another project", () => run(() => copyDialog(pid)), "", "folder") : null;
   return el("div", {},
     can("sources.manage") ? el("h2", { class: "section" }, "Add data") : null,
     can("sources.manage") ? el("div", { class: "tiles" }, ADD_TILES.map(([t, title, text]) => tile(TYPE_ICON[t], title, text, () => run(() => connectionWizard(pid, t))))) : null,
     el("div", { class: "title-row" }, el("h2", { class: "section" }, "This project's connections"), copy),
-    rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Updated", "By"], rows)
+    rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Last check", "Updated"], rows)
       : empty("No connections yet. Add your first data source above; it belongs to this project only."));
 }
 async function copyDialog(pid) {
@@ -756,9 +771,20 @@ async function viewConnection(pid, cid) {
   el("h2", { class: "section" }, "Versions"),
   table(["Version", "Status", "Proposed by", "Reason", "Approved by", ""], c.versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version),
     el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")), el("td", { class: "actions-cell" }, buttons(v))))),
+  el("div", { class: "title-row" }, el("h2", { class: "section" }, "Health"), can("sources.manage") ? btn("Test now", () => run(async () => {
+    const t = await api("POST", base + "/test");
+    await viewConnection(pid, cid);
+    say(t.ok ? "The source reads fine (" + num(t.rows) + " sample rows)." + driftText(t.drift) : "The source could not be read: " + t.error, t.ok ? "good" : "bad");
+  }), "", "refresh") : null),
+  c.health.length ? table(["When", "Check", "Version", "Result", ["Rows"], "Changes in the source", "By"], c.health.map((h) => el("tr", {}, el("td", {}, when(h.checked_at)),
+    el("td", {}, h.kind === "run" ? "A run" : "Test now"), el("td", {}, h.version == null ? "" : "Version " + h.version), el("td", {}, h.ok ? tag("OK", "success") : tag("Failed", "danger")),
+    el("td", { class: "num" }, h.rows == null ? "" : num(h.rows)), el("td", {}, h.ok ? driftText(h.drift) : (h.error || "")), el("td", {}, h.checked_by))))
+    : empty("Not checked yet. Press Test now, or start a run."),
   el("div", { class: "cols" }, el("div", {}, el("h2", { class: "section" }, "Settings" + (live ? " (live)" : "")), settings.length ? el("table", { class: "kv" }, el("tbody", {}, settings)) : empty("None.")),
     el("div", {}, el("h2", { class: "section" }, "Field mapping" + (live ? " (live)" : "")), table(["Field", "Source column"], mapRows))));
 }
+const driftText = (d) => ((d && ((d.added || []).length || (d.removed || []).length))
+  ? [(d.added || []).length ? "Added: " + d.added.join(", ") : "", (d.removed || []).length ? "Removed: " + d.removed.join(", ") : ""].filter(Boolean).join(". ") : "");
 
 // The add-a-connection wizard: 1 connect (or upload), 2 map the columns, 3 preview and propose. Everything it does belongs to the project.
 async function connectionWizard(pid, type, preset) {

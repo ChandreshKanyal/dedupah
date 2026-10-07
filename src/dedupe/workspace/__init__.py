@@ -14,10 +14,11 @@ On disk, under the workspace root (DEDUPE_WORK_DIR):
     projects/<project>/runs/<run>/         one run's results
     uploads/<upload>.parquet               uploaded files, encrypted when a data key is set
 """
+from .health import ConnectionHealth
 from .projects import PROJECT_ID, Grant, Project, Workspace, WorkspaceError
 from .runs import RUN_ID, Run, RunError, RunJobs
 from .uploads import UPLOAD_ID, UploadError, Uploads
 
 __all__ = [
-    "Workspace", "Project", "Grant", "WorkspaceError", "PROJECT_ID", "RunJobs", "Run", "RunError", "RUN_ID", "Uploads", "UploadError", "UPLOAD_ID",
+    "Workspace", "Project", "Grant", "WorkspaceError", "PROJECT_ID", "RunJobs", "Run", "RunError", "RUN_ID", "Uploads", "UploadError", "UPLOAD_ID", "ConnectionHealth",
 ]

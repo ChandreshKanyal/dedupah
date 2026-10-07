@@ -1,7 +1,8 @@
 """Runs: one execution of a project over chosen connections, in a separate OS process, into its own folder.
 
 A request starts a run and returns at once. The run is a separate process (a crash or memory spike never takes the API down); its state lives in
-the database; one run at a time on this machine, enforced by the database. The caller chooses the project and the approved connections, nothing
+the database. Runs wait in a queue: only `max_concurrent` (default 1: a big run needs the machine's memory) run at once, the rest are "queued" in
+the order they were asked for and start by themselves when one finishes, also after the API restarts. The caller chooses the project and the approved connections, nothing
 else: the command is a fixed argument list (no shell), the project's database URL travels in the child's environment (never on the command line),
 the child does not receive the API's login secret, and the child's output goes to a log file the API never serves.
 """
@@ -16,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, select, update
+from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, func, select, update
 
 from dedupe.schema import create_and_upgrade
 
@@ -85,30 +86,34 @@ def headline(work: Path) -> dict:
             "candidate_pairs": (s.get("blocking") or {}).get("candidate_pairs"), "auto_merged_pairs": dec.get("auto_merge"),
             "review_pairs": dec.get("review"), "people": (s.get("clustering") or {}).get("clusters"),
             "review_items": (s.get("review_queue") or {}).get("queue_items"), "households": (s.get("households") or {}).get("households"),
-            "seconds": s.get("total_seconds")}
+            "seconds": s.get("total_seconds"), "records_by_source": (s.get("ingest") or {}).get("records") or {}}
 
 
 class RunJobs:
-    def __init__(self, workspace: Workspace, command=pipeline_command, recover: bool = True):
-        """`recover`: mark runs left 'running' by a previous API process as interrupted (the API does this at start; tools must not)."""
+    def __init__(self, workspace: Workspace, command=pipeline_command, recover: bool = True, max_concurrent: int = 1, max_queued: int = 20):
+        """`recover`: mark runs left 'running' by a previous API process as interrupted and start the ones still queued (the API does this at start;
+        tools must not)."""
         self.ws, self._command = workspace, command
+        self.max_concurrent, self.max_queued = max(1, max_concurrent), max(1, max_queued)
         self.engine = workspace.engine
         self._threads: dict[str, threading.Thread] = {}
         self._procs: dict[str, subprocess.Popen] = {}
         self._cancelled: set[str] = set()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         create_and_upgrade(self.engine, _meta)
         if recover:
             self._mark_interrupted()
+            with self._lock:
+                self._dispatch()
 
     def on_finish(self, run: "Run") -> None:            # hook: the API writes the audit row
         return None
 
     # ---- state -------------------------------------------------------------------------------------------------------
     def _mark_interrupted(self) -> None:
-        """A run still 'running' when the API starts belongs to a process whose supervisor died with the old API."""
+        """A run still 'running' when the API starts belongs to a process whose supervisor died with the old API. Queued runs have not started and stay queued."""
         with self.engine.begin() as c:
-            c.execute(update(runs).where(runs.c.status.in_(ACTIVE)).values(status="interrupted", finished_at=_now()))
+            c.execute(update(runs).where(runs.c.status == "running").values(status="interrupted", finished_at=_now()))
 
     @staticmethod
     def _run(r) -> Run:
@@ -134,22 +139,36 @@ class RunJobs:
         return self._run(r) if r else None
 
     def active(self) -> Run | None:
+        """A run that is going (or, failing that, the next in the queue)."""
         with self.engine.connect() as c:
-            r = c.execute(select(runs).where(runs.c.status.in_(ACTIVE)).limit(1)).first()
+            r = c.execute(select(runs).where(runs.c.status.in_(ACTIVE)).order_by(runs.c.status.desc(), runs.c.created_at, runs.c.id).limit(1)).first()
         return self._run(r) if r else None
+
+    def _count(self, status: str) -> int:
+        with self.engine.connect() as c:
+            return c.execute(select(func.count()).select_from(runs).where(runs.c.status == status)).scalar() or 0
+
+    def queue_position(self, run: Run) -> int | None:
+        """1 for the run that starts next; None when the run is not queued."""
+        if run.status != "queued":
+            return None
+        with self.engine.connect() as c:
+            ahead = c.execute(select(func.count()).select_from(runs).where(
+                runs.c.status == "queued", (runs.c.created_at < run.created_at) | ((runs.c.created_at == run.created_at) & (runs.c.id < run.id)))).scalar() or 0
+        return ahead + 1
 
     # ---- start -------------------------------------------------------------------------------------------------------
     def start(self, project_id: str, sources: dict, used: list[dict], actor: str, reason: str = "", key: str | None = None) -> tuple[Run, bool]:
         """`sources` is the ingest configuration assembled from the chosen connections' live versions; `used` records which ones.
-        Returns (run, replayed). Raises RunError when another run is going."""
+        Returns (run, replayed). The run starts at once when there is room, otherwise it waits in the queue. Raises RunError when the queue is full."""
         with self._lock:
             if key is not None:
                 with self.engine.connect() as c:
                     old = c.execute(select(runs).where(runs.c.requested_by == actor, runs.c.idempotency_key == key)).first()
                 if old:
                     return self._run(old), True
-            if (busy := self.active()) is not None:
-                raise RunError(f"another run is in progress ({busy.id} in {busy.project_id}); one run at a time on this machine")
+            if self._count("queued") >= self.max_queued:
+                raise RunError(f"the run queue is full ({self.max_queued} waiting): wait for some to finish or cancel one")
             rid = "R" + uuid.uuid4().hex[:12]
             run_dir = self.ws.run_dir(project_id, rid)
             run_dir.mkdir(parents=True)
@@ -157,8 +176,20 @@ class RunJobs:
             with self.engine.begin() as c:
                 c.execute(runs.insert().values(id=rid, project_id=project_id, created_at=_now("microseconds"), requested_by=actor, status="queued", idempotency_key=key,
                                                reason=reason, connections=json.dumps(used), summary="{}"))
-            self._launch(project_id, rid)
+            self._dispatch()
         return self.get(project_id, rid), False
+
+    def _dispatch(self) -> None:
+        """Start queued runs, oldest first, while there is room. Called with the lock held."""
+        while self._count("running") < self.max_concurrent:
+            with self.engine.connect() as c:
+                nxt = c.execute(select(runs.c.id, runs.c.project_id).where(runs.c.status == "queued").order_by(runs.c.created_at, runs.c.id).limit(1)).first()
+            if nxt is None:
+                return
+            with self.engine.begin() as c:
+                claimed = c.execute(update(runs).where(runs.c.id == nxt.id, runs.c.status == "queued").values(status="running", started_at=_now())).rowcount
+            if claimed:
+                self._launch(nxt.project_id, nxt.id)
 
     def _launch(self, pid: str, rid: str) -> None:
         run_dir = self.ws.run_dir(pid, rid)
@@ -174,9 +205,7 @@ class RunJobs:
             log.close()
             self._finish(pid, rid, 127)
             return
-        with self.engine.begin() as c:
-            c.execute(update(runs).where(runs.c.id == rid).values(status="running", started_at=_now()))
-        self._procs[rid] = proc                                                            # already inside the caller's lock (start())
+        self._procs[rid] = proc                                                            # already inside the caller's lock (the dispatcher)
         t = threading.Thread(target=self._supervise, args=(pid, rid, proc, log), daemon=True, name=f"run-{rid}")
         self._threads[rid] = t
         t.start()
@@ -195,6 +224,8 @@ class RunJobs:
         with self.engine.begin() as c:
             c.execute(update(runs).where(runs.c.id == rid).values(status=status, finished_at=_now(), exit_code=code, summary=json.dumps(summary)))
         self.on_finish(self.get(pid, rid))
+        with self._lock:
+            self._dispatch()                                                               # room has opened up: the next queued run starts
 
     def wait(self, project_id: str, run_id: str, timeout: float = 60.0) -> Run | None:
         t = self._threads.get(run_id)
@@ -203,22 +234,21 @@ class RunJobs:
         return self.get(project_id, run_id)
 
     def cancel(self, project_id: str, run_id: str, actor: str) -> Run:
-        """Stop a run that is still queued or running (SIGTERM, then SIGKILL after a grace period). The child's own
-        process group is not a single pipeline stage's unit of work, so the result is always a clean 'cancelled' run,
-        never mistaken for a crash."""
+        """Stop a run that is still queued (it simply never starts) or running (SIGTERM, then SIGKILL after a grace period). The result is always a
+        clean 'cancelled' run, never mistaken for a crash."""
         with self._lock:
             run = self.get(project_id, run_id)
             if run is None:
                 raise RunError("no such run")
             if run.status not in ACTIVE:
                 raise RunError("this run has already finished")
-            self._cancelled.add(run_id)
             proc = self._procs.get(run_id)
-            if proc is None:                                            # defensive: should not happen, start() launches synchronously
+            if proc is None:                                            # still waiting in the queue
                 with self.engine.begin() as c:
-                    c.execute(update(runs).where(runs.c.id == run_id).values(status="cancelled", finished_at=_now()))
-                self._cancelled.discard(run_id)
+                    c.execute(update(runs).where(runs.c.id == run_id, runs.c.status == "queued").values(status="cancelled", finished_at=_now()))
+                self.on_finish(self.get(project_id, run_id))
                 return self.get(project_id, run_id)
+            self._cancelled.add(run_id)
         proc.terminate()                                                  # our own child process
         try:
             proc.wait(timeout=10)

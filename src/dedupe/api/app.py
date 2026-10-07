@@ -17,7 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from dedupe import crypto
-from dedupe.workspace import RunJobs, Uploads, Workspace
+from dedupe.workspace import ConnectionHealth, RunJobs, Uploads, Workspace
 
 from .accounts import AccountStore
 from .auth import Principal, TokenVerifier
@@ -45,6 +45,7 @@ class Services:
     uploads: Uploads
     jobs: RunJobs
     accounts: AccountStore                         # local users and custom roles (main database)
+    health: ConnectionHealth                       # connection checks (main database)
     reviews: dict = field(default_factory=dict)    # (project, run, reveal) -> ReviewService, built on first use
 
 
@@ -89,12 +90,22 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     db = settings.database_url or f"sqlite:///{settings.work}/api.db"
     ws = workspace or Workspace(settings.work, db, settings.project_database_url)
     os.environ["DEDUPE_UPLOAD_DIR"] = str(ws.upload_dir)      # where `upload` connections find their files (inspect, preview)
-    jobs = RunJobs(ws, command) if command else RunJobs(ws)
+    limits = {"max_concurrent": settings.max_concurrent_runs, "max_queued": settings.max_queued_runs}
+    jobs = RunJobs(ws, command, **limits) if command else RunJobs(ws, **limits)
+    health = ConnectionHealth(ws.engine)
     accounts = AccountStore(ws.engine)
     sv = Services(settings, verifier or TokenVerifier(settings, accounts=accounts), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws,
-                  Uploads(ws.engine, ws.upload_dir), jobs, accounts)
-    jobs.on_finish = lambda run: sv.seclog.record("run_finished", status=None, object_ref=f"{run.project_id}/{run.id}",
-                                                  detail={"exit_code": run.exit_code, "outcome": run.status})
+                  Uploads(ws.engine, ws.upload_dir), jobs, accounts, health)
+    def run_finished(run):
+        sv.seclog.record("run_finished", status=None, object_ref=f"{run.project_id}/{run.id}", project_id=run.project_id,
+                         detail={"exit_code": run.exit_code, "outcome": run.status})
+        if run.status in ("succeeded", "failed"):                     # each connection the run used gets a health entry: rows read, or "failed"
+            rows = run.summary.get("records_by_source") or {}
+            for used in run.connections:
+                sv.health.record(run.project_id, used["id"], used.get("version"), "run", ok=run.status == "succeeded", rows=rows.get(used["id"]),
+                                 error=None if run.status == "succeeded" else "the run did not finish", actor=run.requested_by)
+
+    jobs.on_finish = run_finished
 
     @asynccontextmanager
     async def lifespan(app):

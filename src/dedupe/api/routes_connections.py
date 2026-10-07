@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from dedupe.governance.diff import describe_changes
 from dedupe.governance.store import ConfigError
 from dedupe.mapping.canonical import CANONICAL_FIELDS
-from dedupe.mapping.check import ALLOWED_SETTINGS, SETTING_HELP, SourceProblem, check_source, check_sources, inspect_source
+from dedupe.mapping.check import ALLOWED_SETTINGS, SETTING_HELP, SourceProblem, check_source, check_sources, inspect_source, probe_source
 from dedupe.mapping.config import SourceConfig
 from dedupe.workspace import PROJECT_ID, UploadError
 
@@ -115,7 +115,8 @@ def options(p: Principal = MANAGE):
 @router.get(BASE)
 def list_connections(request: Request, project_id: str = PID, p: Principal = READ):
     ps = project_scope(request, project_id)
-    return [_summary(ps.configs, name) for name in ps.configs.names("connection/")]
+    last = _services(request).health.latest(project_id)
+    return [{**_summary(ps.configs, name), "last_check": last.get(name.split("/", 1)[1])} for name in ps.configs.names("connection/")]
 
 
 @router.get(BASE + "/{connection_id}")
@@ -128,7 +129,7 @@ def get_connection(request: Request, project_id: str = PID, connection_id: str =
     live = next((v for v in vs if v.status == "active"), None)
     return {"id": connection_id, "versions": [VersionView(**{**v.__dict__, "approved_by": list(v.approved_by)}) for v in vs],
             "live": ps.configs.get(name, live.version) if live else None, "latest": ps.configs.get(name, vs[-1].version),
-            "second_approval": ps.project.second_approval}
+            "second_approval": ps.project.second_approval, "health": _services(request).health.history(project_id, connection_id)}
 
 
 @router.get(BASE + "/{connection_id}/diff", response_model=list[str])
@@ -140,6 +141,31 @@ def diff(request: Request, project_id: str = PID, connection_id: str = CID, old:
         return describe_changes(name, ps.configs.get(name, old), ps.configs.get(name, new))
     except ConfigError:
         raise HTTPException(404, "Not found.") from None
+
+
+@router.post(BASE + "/{connection_id}/test")
+def test_connection(request: Request, project_id: str = PID, connection_id: str = CID, p: Principal = MANAGE):
+    """Open the source with its live settings (or the newest version when none is live) and see whether it still reads and maps. The result is
+    recorded in the connection's health: rows sampled, and any columns added or removed since the last good check."""
+    ps = project_scope(request, project_id)
+    _throttle(request, p, "source_inspect", INSPECT_LIMIT_PER_MIN)
+    name = f"connection/{connection_id}"
+    vs = ps.configs.versions(name)
+    if not vs:
+        raise HTTPException(404, "Not found.")
+    version = next((v for v in vs if v.status == "active"), vs[-1]).version
+    health = _services(request).health
+    try:
+        src = SourceConfig.model_validate(ps.configs.get(name, version))
+        _own_upload(request, project_id, src.connector)
+        probe = probe_source(src)
+    except (SourceProblem, HTTPException, ValueError) as e:
+        text = e.detail if isinstance(e, HTTPException) else str(e)
+        result = health.record(project_id, connection_id, version, "test", ok=False, error=str(text)[:300], actor=p.actor)
+    else:
+        result = health.record(project_id, connection_id, version, "test", ok=True, rows=probe["rows_sampled"], columns=probe["columns"], actor=p.actor)
+    _log(request, p, "source_test", f"connection/{connection_id}:{version}", ok=result["ok"])
+    return result
 
 
 # ---- looking inside a source ----------------------------------------------------------------------------------------------

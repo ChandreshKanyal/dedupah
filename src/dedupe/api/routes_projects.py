@@ -16,6 +16,7 @@ from .guards import _context, _services, authenticated, require, require_or_owne
 from .routes_read import CONFIG_NAMES, PID, RID
 from .routes_write import _key
 from .scope import can_see, project_scope
+from .seclog import scrub_text
 
 router = APIRouter()
 ANY = Depends(authenticated())
@@ -24,7 +25,7 @@ START = Depends(require("runs.start"))
 MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's owner manages its members and settings
 CREATE = Depends(require("projects.create"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
-SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds")
+SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source")
 
 
 class Strict(BaseModel):
@@ -74,6 +75,7 @@ class RunView(BaseModel):
     connections: list[dict]
     summary: dict
     replayed: bool = False
+    queue_position: int | None = None             # 1 = starts next; set only while the run waits in the queue
 
 
 class ProjectView(BaseModel):
@@ -88,15 +90,16 @@ class ProjectView(BaseModel):
     latest_run: RunView | None = None
 
 
-def _run_view(run, replayed: bool = False) -> RunView:
+def _run_view(run, replayed: bool = False, sv=None) -> RunView:
     return RunView(**{**run.__dict__, "summary": {k: run.summary.get(k) for k in SUMMARY_KEYS if k in run.summary},
-                      "connections": [{"id": c.get("id"), "version": c.get("version")} for c in run.connections]}, replayed=replayed)
+                      "connections": [{"id": c.get("id"), "version": c.get("version")} for c in run.connections]}, replayed=replayed,
+                   queue_position=sv.jobs.queue_position(run) if sv is not None else None)
 
 
 def _project_view(sv, proj, p: Principal | None = None) -> ProjectView:
     runs = sv.jobs.recent(proj.id, limit=1000)
     return ProjectView(**{**proj.__dict__, "second_approval": proj.second_approval}, you_own=bool(p and sv.workspace.is_owner(proj.id, p.sub)), runs=len(runs),
-                       latest_run=_run_view(runs[0]) if runs else None)
+                       latest_run=_run_view(runs[0], sv=sv) if runs else None)
 
 
 # ---- home ----------------------------------------------------------------------------------------------------------------
@@ -108,7 +111,7 @@ def home(request: Request, p: Principal = ANY):
     out = {"projects": len(projects), "connections": sum(len(sv.workspace.stores(x.id)[1].names("connection/")) for x in projects), "recent_runs": [],
            "open_review_items": None, "pending_approvals": None}
     if "runs.read" in p.permissions:
-        out["recent_runs"] = [_run_view(r) for r in sv.jobs.recent(limit=50) if can_see(sv, p, r.project_id)][:8]
+        out["recent_runs"] = [_run_view(r, sv=sv) for r in sv.jobs.recent(limit=50) if can_see(sv, p, r.project_id)][:8]
     if "queue.read" in p.permissions:
         latest = [sv.jobs.latest_succeeded(x.id) for x in projects]
         out["open_review_items"] = sum((r.summary.get("review_items") or 0) for r in latest if r)
@@ -157,14 +160,14 @@ def get_project(request: Request, project_id: str = PID, p: Principal = ANY):
 @router.get("/runs", response_model=list[RunView])
 def recent_runs(request: Request, limit: int = Query(20, ge=1), p: Principal = SEE_RUNS):
     sv = _services(request)
-    return [_run_view(r) for r in sv.jobs.recent(limit=sv.settings.max_page_size * 4) if can_see(sv, p, r.project_id)][:min(limit, sv.settings.max_page_size)]
+    return [_run_view(r, sv=sv) for r in sv.jobs.recent(limit=sv.settings.max_page_size * 4) if can_see(sv, p, r.project_id)][:min(limit, sv.settings.max_page_size)]
 
 
 @router.get("/projects/{project_id}/runs", response_model=list[RunView])
 def project_runs(request: Request, project_id: str = PID, limit: int = Query(50, ge=1), p: Principal = SEE_RUNS):
     project_scope(request, project_id)
     sv = _services(request)
-    return [_run_view(r) for r in sv.jobs.recent(project_id, limit=min(limit, sv.settings.max_page_size))]
+    return [_run_view(r, sv=sv) for r in sv.jobs.recent(project_id, limit=min(limit, sv.settings.max_page_size))]
 
 
 @router.post("/projects/{project_id}/runs", response_model=RunView, status_code=202)
@@ -198,7 +201,7 @@ def start_run(request: Request, response: Response, body: StartIn, project_id: s
     else:
         sv.seclog.record("run_started", actor=p.actor, roles=p.roles, status=202, object_ref=f"{project_id}/{run.id}", detail={"action": "start",
                          "connections": ids}, **_context(request))
-    return _run_view(run, replayed)
+    return _run_view(run, replayed, sv)
 
 
 def _valid(cid: str) -> bool:
@@ -212,7 +215,7 @@ def run_detail(request: Request, project_id: str = PID, run_id: str = RID, p: Pr
     run = sv.jobs.get(project_id, run_id)
     if run is None:
         raise HTTPException(404, "Not found.")
-    out = _run_view(run).model_dump()
+    out = _run_view(run, sv=sv).model_dump()
     summ = sv.workspace.run_dir(project_id, run_id) / "pipeline_summary.json"
     if run.status == "succeeded" and summ.exists():
         s = json.loads(summ.read_text(encoding="utf-8"))
@@ -233,7 +236,25 @@ def cancel_run(request: Request, project_id: str = PID, run_id: str = RID, p: Pr
         raise HTTPException(404 if "no such" in str(e) else 409, "Not found." if "no such" in str(e) else str(e)) from None
     sv.seclog.record("run_cancelled", actor=p.actor, roles=p.roles, status=200, object_ref=f"{project_id}/{run_id}", detail={"action": "cancel"},
                      **_context(request))
-    return _run_view(run)
+    return _run_view(run, sv=_services(request))
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/log")
+def run_log(request: Request, project_id: str = PID, run_id: str = RID, lines: int = Query(200, ge=1, le=1000), p: Principal = SEE_RUNS):
+    """The end of the run's log, with anything that looks like personal data removed. Useful when a run failed."""
+    project_scope(request, project_id)
+    sv = _services(request)
+    if sv.jobs.get(project_id, run_id) is None:
+        raise HTTPException(404, "Not found.")
+    path = sv.workspace.run_dir(project_id, run_id) / "run.log"
+    if not path.exists():
+        return {"available": False, "lines": [], "truncated": False}
+    size = path.stat().st_size
+    with open(path, "rb") as f:
+        f.seek(max(0, size - 65536))
+        raw = f.read().decode("utf-8", errors="replace")
+    rows = scrub_text(raw).splitlines()
+    return {"available": True, "lines": rows[-lines:], "truncated": size > 65536 or len(rows) > lines}
 
 
 # ---- who may work in a project (business-unit scoping) -------------------------------------------------------------------
