@@ -19,6 +19,9 @@
 | 7a1976f and earlier | Project workspace in six steps: private projects owning connections, run queue, run log, connection health, results export, schedules, local accounts and roles | 44-50 |
 
 ### NEXT (suggested order; confirm with the user before starting any of them)
+**New direction (2026-10-07, section 55):** the user wants images, ID-card OCR and face matching added and "any data" handled by type.
+Research and a phased plan are in [docs/RESEARCH_MULTIMODAL.md](docs/RESEARCH_MULTIMODAL.md) (A: smarter tabular engine; B: documents
+and images; C: faces). Waiting for the user to choose where to start.
 0. **Pending with the user:** (a) `git push` the local commits (GitHub private repo `ChandreshKanyal/dedupah` has only up to 476e033;
    NEVER add Claude co-author lines, author email chandreshkanyal@gmail.com); (b) the user's portal review of section 54 (Ctrl+F5 after
    a portal restart); (c) decline the walk-through proposals left waiting in the demo `customer-master` project (two matching-rules
@@ -1219,3 +1222,16 @@ values after a reason, preview masked -> unmasked, search + paging (40 rows), de
 deleted from the list, a custom rule added and proposed (demo project). Tests: `tests/test_review_round2.py` (4).
 **Honest limits:** the rule builder makes flat all/any rules (nested and/or/not only through JSON); a custom rule takes effect only
 after it is made live and a run happens; the field roles shown while mapping are fixed text, not computed from the trained model.
+
+## 55. Research: industry tools, images, ID cards and faces (2026-10-07; nothing built)
+The user asked for a platform that takes "any form of data" (including paired images, ID-card images, numbers read from cards and face
+matching), recognises the types and picks strategies. The research is in [docs/RESEARCH_MULTIMODAL.md](docs/RESEARCH_MULTIMODAL.md),
+covering Senzing, Reltio, Informatica, Tamr, Quantexa, Splink/Zingg, HyperVerge and IDfy. Key findings:
+- No tool deduplicates data it knows nothing about; they all detect or declare the type, then use the strategy for that type.
+- InsightFace's ready-made models are for non-commercial use only; OpenCV YuNet (MIT) and SFace (Apache-2.0) are safe to use and run on
+  a CPU; PaddleOCR is Apache-2.0.
+- Aadhaar copies must have the first 8 digits and the QR code masked before they are stored.
+- DPDP's main duties apply from 14 May 2027.
+- Proposed phases: A, a smarter tabular engine (type detection, attribute behaviour profiles, record-to-entity matching, learning from
+  reviewers, over/underlinking checks, transliteration); B, images and OCR (after a legal opinion); C, faces (one comparison among many,
+  never merging on its own).
