@@ -21,7 +21,8 @@
 ### NEXT (suggested order; confirm with the user before starting any of them)
 **New direction (2026-10-07, section 55):** the user wants images, ID-card OCR and face matching added and "any data" handled by type.
 Research and a phased plan are in [docs/RESEARCH_MULTIMODAL.md](docs/RESEARCH_MULTIMODAL.md) (A: smarter tabular engine; B: documents
-and images; C: faces). Waiting for the user to choose where to start.
+and images; C: faces). The user said "begin" with A. **A1 done (section 56): column types from values.** Next: A2 attribute behaviour
+profiles (confirm with the user first).
 0. **Pending with the user:** (a) `git push` the local commits (GitHub private repo `ChandreshKanyal/dedupah` has only up to 476e033;
    NEVER add Claude co-author lines, author email chandreshkanyal@gmail.com); (b) the user's portal review of section 54 (Ctrl+F5 after
    a portal restart); (c) decline the walk-through proposals left waiting in the demo `customer-master` project (two matching-rules
@@ -1235,3 +1236,50 @@ covering Senzing, Reltio, Informatica, Tamr, Quantexa, Splink/Zingg, HyperVerge 
 - Proposed phases: A, a smarter tabular engine (type detection, attribute behaviour profiles, record-to-entity matching, learning from
   reviewers, over/underlinking checks, transliteration); B, images and OCR (after a legal opinion); C, faces (one comparison among many,
   never merging on its own).
+
+## 56. Phase A step 1: column types recognised from the values (2026-10-07)
+**What:** a new module, `mapping/detect.py`, checks each column's values one by one and names what the column holds. It recognises:
+- **Identifiers:** PAN, Aadhaar (Verhoeff checksum), masked Aadhaar, passport, voter ID, driving licence, a mix of identity numbers in
+  one column, GSTIN (with its check character), IFSC, vehicle numbers.
+- **Contact:** Indian mobiles, emails.
+- **Dates:** dates of birth vs recent record dates (by how old the dates are and whether they carry a time).
+- **Person and place:** gender, marital status, ages and age bands, states, cities, PIN codes, people's names vs business names,
+  addresses.
+- **Other:** row ids, tokens or hashes, amounts, four-digit numbers, categories (a short repeated list), free text, and image or
+  document file names (ready for Phase B).
+
+The same repair functions as the cleaning are used, so a value the cleaning accepts is recognised. Only counts and shares leave the
+module, never values.
+
+**Why:** the mapping was suggested from column names only. A file whose columns are named c1, c2 ... or named wrongly got a poor
+suggestion. Every later Phase A step (and images later) starts from knowing what each column holds.
+
+**Changes to existing code:**
+- **Suggestions** (`mapping/suggest.py`) combine the name and the values, and say which one decided ("from the column name", "from the
+  values", "name and values agree").
+  - A column whose name says one thing but whose values clearly prove another (for example "pan" holding phones) is not mapped by its
+    name, and `warnings_for()` flags it.
+  - Names still rule out people who are not the customer (nominee, co-applicant).
+  - Each row's own id is suggested from the values (`record_id_column`).
+- **Inspect API** returns `types` (per column: type, description, share, filled, distinct, strong) and `record_id`.
+- **Mapping screen:**
+  - "Values look like: ..." under each mapped field, shown as a warning tag when the values contradict the field.
+  - A new table, "What we found in your columns": every column with its detected type, % filled, % different values, what it is used
+    as, and "Could fill: X" when an unused column fits a field nothing fills yet.
+- **Cleaning fix found on the user's Trial file:** phones written with a trunk prefix, "091-98765-10028" or "0091 ...", were thrown away
+  (13 digits). They are now kept. On the Trial file that was 38 of the 285 sampled phone values. The synthetic data has no such phones,
+  so the benchmark is unchanged.
+
+**Checked:**
+- All five synthetic sources and the Trial file are recognised correctly. Remaining "not recognised" columns: branch codes, agent codes,
+  policy numbers repeated per party, sparse alt_mobile.
+- The Trial file has a `signup_date` column not yet mapped: the screen now offers it as the record date.
+- Live check in Edge: 0 problems.
+- Tests: `tests/test_detect.py` (32). Suite: 413 passed, 3 skipped. Ruff and bandit clean.
+
+**Honest limits:**
+- Thresholds (80% of values; 70% for names, places and addresses) are hand-set on synthetic data and one real-looking file.
+- City detection knows about 60 large cities (others count as "not recognised" unless the column name says city).
+- Names vs short category words are separated by how repetitive the column is.
+- PIN codes vs 6-digit amounts are told apart by trailing zeros.
+- Only Latin script.

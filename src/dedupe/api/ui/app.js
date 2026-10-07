@@ -1394,6 +1394,7 @@ const FIELD_ROLE = {
   annual_income: ["Golden record", ""], related_name: ["Households", "links family members"], party_role: ["Households", ""], relation_to_proposer: ["Households", ""],
 };
 const ROLE_KIND = { Matching: "info", Identifier: "success", "Newest value": "warn" };
+const SUGGESTED_BY = { name: "Suggested from the column name", values: "Suggested from the values", "name and values": "Suggested: name and values agree" };
 // Identifiers a project can let decide on their own: the matching rules they switch on (same value -> same person; different -> never).
 const KEY_RULES = {
   pan: ["PAN", "auto_same_pan_compatible_name", "veto_pan_conflict"],
@@ -1455,7 +1456,10 @@ async function connectionWizard(pid, type, preset, startStep) {
     state.info = info;
     state.decision = decision;
     if (!state.keys) state.keys = Object.fromEntries(Object.keys(KEY_RULES).map((k) => [k, keyOn(decision, k)]));
-    if (!Object.keys(state.source.fields).length) for (const s of state.info.suggestions) state.source.fields[s.field] = s.column;
+    if (!Object.keys(state.source.fields).length) {
+      for (const s of state.info.suggestions) state.source.fields[s.field] = s.column;
+      if (!state.source.record_id && state.info.record_id) state.source.record_id = state.info.record_id;
+    }
     state.step = target || 2;
     render();
   };
@@ -1501,9 +1505,17 @@ async function connectionWizard(pid, type, preset, startStep) {
   function mapStep() {
     const cols = state.info.columns;
     const sample = state.info.sample;
-    const suggested = Object.fromEntries(state.info.suggestions.map((x) => [x.field, x.column]));
+    const suggested = Object.fromEntries(state.info.suggestions.map((x) => [x.field, x]));
+    const types = state.info.types || {};
     const examples = (c) => (c ? [...new Set(sample.map((r) => r[c]).filter((v) => v != null && v !== ""))].slice(0, 3) : []);
-    const exampleCell = (c) => el("span", { class: "examples" }, examples(c).map((v) => el("span", { class: "ex" }, String(v))));
+    // what the values look like (detected from the whole sample, not from the column's name); a warning when they clearly hold something else
+    const looksLike = (c, f) => {
+      const t = c && types[c];
+      if (!t || !t.type) return null;
+      return t.strong && f && t.field !== f ? el("div", {}, tag("Values look like: " + t.description, "warn"))
+        : el("div", { class: "muted small" }, "Values look like: " + t.description + " (" + Math.round(t.share * 100) + "%)");
+    };
+    const exampleCell = (c, f) => el("span", {}, el("span", { class: "examples" }, examples(c).map((v) => el("span", { class: "ex" }, String(v)))), looksLike(c, f));
     const pick = (value, onchange, text) => {
       const s = el("select", { "aria-label": text }, el("option", { value: "" }, "Not in this source"), cols.map((c) => el("option", { value: c, selected: c === value }, c)));
       s.addEventListener("change", () => onchange(s.value));
@@ -1513,12 +1525,13 @@ async function connectionWizard(pid, type, preset, startStep) {
       const rows = g.fields.map((f) => {
         const cur = state.source.fields[f];
         const simple = typeof cur === "string" || cur === undefined;
-        const ex = el("td", {}, simple ? exampleCell(cur) : "");
+        const ex = el("td", {}, simple ? exampleCell(cur, f) : "");
         const role = FIELD_ROLE[f] || ["Golden record", ""];
-        const sel = simple ? pick(cur || "", (v) => { if (v) state.source.fields[f] = v; else delete state.source.fields[f]; ex.replaceChildren(exampleCell(v)); }, fieldTitle(f) + ": your column")
+        const sel = simple ? pick(cur || "", (v) => { if (v) state.source.fields[f] = v; else delete state.source.fields[f]; ex.replaceChildren(exampleCell(v, f)); }, fieldTitle(f) + ": your column")
           : el("span", { class: "muted" }, "Several columns combined (kept as is)");
+        const sug = suggested[f] && suggested[f].column === cur ? suggested[f] : null;
         return el("tr", {}, el("td", {}, el("strong", {}, fieldTitle(f)), el("div", { class: "muted small" }, opts.field_help[f] || "")),
-          el("td", {}, sel, suggested[f] && suggested[f] === cur ? el("div", {}, tag("Suggested", "info")) : null), ex,
+          el("td", {}, sel, sug ? el("div", {}, tag(SUGGESTED_BY[sug.why] || "Suggested", "info")) : null), ex,
           el("td", {}, tag(role[0], ROLE_KIND[role[0]]), role[1] ? el("div", { class: "muted small" }, role[1]) : null));
       });
       return el("div", {}, el("h3", { class: "section" }, g.title), table(["Our field", "Your column", "Examples from your data", "Used for"], rows));
@@ -1529,6 +1542,27 @@ async function connectionWizard(pid, type, preset, startStep) {
       cb.addEventListener("change", () => { const set = new Set(state.source.attributes || []); if (cb.checked) set.add(c); else set.delete(c); state.source.attributes = [...set]; });
       return el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, c), el("span", { class: "muted" }, examples(c).join(", "))));
     }));
+    // every column of the source: what its values look like and what it is used as now
+    function columnTypes() {
+      if (!Object.keys(types).length) return null;
+      const usedAs = (c) => {
+        const fs = Object.entries(state.source.fields).filter(([, col]) => col === c).map(([f]) => fieldTitle(f));
+        if (fs.length) return fs.join(", ");
+        if (c === state.source.record_id) return "Each row's own id";
+        if ((state.source.attributes || []).includes(c)) return "Kept as an extra column";
+        const f = (types[c] || {}).field;
+        return f && !state.source.fields[f] ? el("span", {}, "Not used. ", tag("Could fill: " + fieldTitle(f), "info")) : "Not used";
+      };
+      const rows = cols.map((c) => {
+        const t = types[c] || {};
+        return el("tr", {}, el("td", {}, el("strong", {}, c)), el("td", {}, t.type ? t.description : el("span", { class: "muted" }, "Not recognised")),
+          el("td", { class: "num" }, Math.round((t.filled || 0) * 100) + "%"), el("td", { class: "num" }, Math.round((t.distinct || 0) * 100) + "%"), el("td", {}, usedAs(c)));
+      });
+      return el("details", { class: "advanced", open: true }, el("summary", {}, "What we found in your columns (from the values, not the names)"),
+        el("p", { class: "hint" }, "Each column is checked value by value: PAN and GST structure, Aadhaar checksum, Indian mobile rules, dates, names, places. " +
+          "\"Different values\" near 100% means almost every row has its own value (an id); a low share means a short list of options."),
+        table(["Your column", "Values look like", ["Rows filled"], ["Different values"], "Used as"], rows));
+    }
     // which identifiers decide on their own: the project's matching rules, proposed together with the connection
     const present = can("config.propose") ? Object.keys(KEY_RULES).filter((k) => KEY_FIELDS[k].some((f) => state.source.fields[f])) : [];
     const keyBoxes = present.map((k) => {
@@ -1541,6 +1575,7 @@ async function connectionWizard(pid, type, preset, startStep) {
       el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your data (" + (state.info.unmasked ? "actual values" : "values shortened") + ")"),
         revealButton(async () => { state.info = { ...state.info, ...(await api("POST", inspectUrl(), { connector: state.source.connector })) }; render(); })),
       wide(cols, sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c]))))),
+      columnTypes(),
       el("p", { class: "hint" }, "For each of our fields, pick the column of your data that holds it. Leave a field as 'Not in this source' when your data does not have it: " +
         "every field is optional, but the more of them a source fills, the more duplicates it finds."),
       groups,

@@ -19,6 +19,8 @@ _warned = False
 def phone(raw: str | None) -> str | None:
     """Indian mobile -> 10 digits starting 6-9, else None (landlines/garbage rejected)."""
     d = re.sub(r"\D", "", raw or "")
+    if len(d) in (13, 14) and d.startswith(("091", "0091")):     # "091-98765-43210", "0091 98765 43210": trunk or international prefix
+        d = d[len(d) - 12:]
     if len(d) == 12 and d.startswith("91"):
         d = d[2:]
     elif len(d) == 11 and d.startswith("0"):

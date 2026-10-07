@@ -15,7 +15,8 @@ from dedupe.connectors.guard import ConnectorConfigError
 
 from .canonical import CANONICAL_FIELDS
 from .config import IngestConfig, MappingError, SourceConfig, compile_select
-from .suggest import suggest
+from .detect import profile
+from .suggest import STRONG_TYPES, record_id_column, suggest
 
 ENV_PREFIX = "DEDUPE_SRC_"
 _ENV_NAME = re.compile(r"^DEDUPE_SRC_[A-Z0-9_]{1,60}$")
@@ -82,7 +83,11 @@ def inspect_source(conf: dict, sample_rows: int = 200) -> dict:
         sample = conn.sample(sample_rows)
     except Exception as e:  # noqa: BLE001
         raise SourceProblem(f"the source could be reached but not read ({type(e).__name__})") from None
-    return {"columns": cols, "sample": sample, "suggestions": suggest(sample) if sample.num_rows else []}
+    if not sample.num_rows:
+        return {"columns": cols, "sample": sample, "suggestions": [], "types": {}, "record_id": None}
+    types = profile(sample)
+    return {"columns": cols, "sample": sample, "suggestions": suggest(sample, profiles=types), "record_id": record_id_column(sample, types),
+            "types": {c: {**d, "strong": d["type"] in STRONG_TYPES} for c, d in types.items()}}
 
 
 def probe_source(src: SourceConfig, sample_rows: int = 200) -> dict:

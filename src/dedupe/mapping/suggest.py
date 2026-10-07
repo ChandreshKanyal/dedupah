@@ -3,6 +3,8 @@ import re
 
 import pyarrow as pa
 
+from .detect import profile
+
 _NAME_RULES: dict[str, tuple[list[str], list[str]]] = {
     # field: (synonyms, words that disqualify a column)
     "full_name": (["fullname", "name", "applicantname", "partyname", "customername", "leadname", "nameondoc"],
@@ -33,15 +35,10 @@ _NAME_RULES: dict[str, tuple[list[str], list[str]]] = {
     "relation_to_proposer": (["relationtoproposer"], []),
 }
 
-_PATTERNS: dict[str, re.Pattern] = {
-    "pan": re.compile(r"^[A-Z]{5}\d{4}[A-Z]$"),
-    "email": re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
-    "mobile": re.compile(r"^(\+?91[\s-]?)?0?[6-9]\d{4}[\s-]?\d{5}$|^(\+?91[\s-]?)?[6-9]\d{2}\s\d{3}\s\d{4}$"),
-    "aadhaar": re.compile(r"^[2-9]\d{3}\s?\d{4}\s?\d{4}$"),
-    "pincode": re.compile(r"^[1-9]\d{5}$"),
-    "dob": re.compile(r"^(\d{4}-\d{2}-\d{2}|\d{2}[/-]\d{2}[/-]\d{4}|\d{2}-[A-Za-z]{3}-\d{4})$"),
-    "gender": re.compile(r"^(M|F|Male|Female|MALE|FEMALE|Other)$"),
-}
+SOFT_TYPES = {"person_name", "address", "city", "state", "age", "category"}
+# Types the values prove beyond doubt (checksums, fixed shapes): a column named for another field but holding these is flagged.
+STRONG_TYPES = {"aadhaar", "pan", "gstin", "ifsc", "email", "mobile", "voter_id", "passport", "driving_licence", "vehicle", "token",
+                "file_ref", "aadhaar_masked"}
 
 
 def _norm(name: str) -> str:
@@ -60,29 +57,54 @@ def _name_score(field: str, col: str) -> float:
     return 0.0
 
 
-def _pattern_score(field: str, values: list[str]) -> float:
-    pat = _PATTERNS.get(field)
-    vals = [v.strip() for v in values if v and v.strip()]
-    if not pat or len(vals) < 5:
+def _value_score(field: str, col: str, det: dict) -> float:
+    """What the values say: 0.85 when the detected type is this field (0.75 for the softer types), unless the column's name rules the field
+    out ("nominee_name" holds people's names but is not the customer's name)."""
+    if det.get("field") != field:
         return 0.0
-    return 0.9 if sum(bool(pat.match(v)) for v in vals) / len(vals) >= 0.8 else 0.0
+    if field in _NAME_RULES and any(x in _norm(col) for x in _NAME_RULES[field][1]):
+        return 0.0
+    return 0.75 if det["type"] in SOFT_TYPES else 0.85
 
 
-def suggest(sample: pa.Table, threshold: float = 0.6) -> list[dict]:
-    """Greedy best-first assignment of columns to canonical fields. Returns [{field, column, confidence}]."""
+def suggest(sample: pa.Table, threshold: float = 0.6, profiles: dict[str, dict] | None = None) -> list[dict]:
+    """Greedy best-first assignment of columns to canonical fields from column names AND detected value types.
+    Returns [{field, column, confidence, why}]; `why` is "name", "values" or "name and values"."""
+    profiles = profiles if profiles is not None else profile(sample)
     scored = []
     for col in sample.column_names:
-        values = sample[col].to_pylist()
-        for field in _NAME_RULES:
-            ns, ps = _name_score(field, col), _pattern_score(field, values)
-            s = max(ns, ps) + (0.1 if ns and ps else 0.0)
+        det = profiles.get(col) or {}
+        strong_other = det.get("type") in STRONG_TYPES and det.get("share", 0) >= 0.9
+        for field in set(_NAME_RULES) | ({det["field"]} if det.get("field") else set()):
+            ns = _name_score(field, col) if field in _NAME_RULES else 0.0
+            if ns and strong_other and det.get("field") != field:
+                ns /= 2                        # named "pan" but the values are clearly something else (phones, GST numbers ...)
+            vs = _value_score(field, col, det)
+            s = max(ns, vs) + (0.1 if ns and vs else 0.0)
             if s >= threshold:
-                scored.append((s, field, col))
+                scored.append((s, field, col, "name and values" if ns and vs else "name" if ns >= vs else "values"))
     out, used_cols, used_fields = [], set(), set()
-    for s, field, col in sorted(scored, key=lambda x: -x[0]):
+    for s, field, col, why in sorted(scored, key=lambda x: (-x[0], x[2])):
         if col in used_cols or field in used_fields:
             continue
         used_cols.add(col)
         used_fields.add(field)
-        out.append({"field": field, "column": col, "confidence": round(min(s, 1.0), 2)})
+        out.append({"field": field, "column": col, "confidence": round(min(s, 1.0), 2), "why": why})
     return sorted(out, key=lambda d: d["field"])
+
+
+def warnings_for(mapping: dict[str, str], profiles: dict[str, dict]) -> list[dict]:
+    """Mapped columns whose values clearly look like something else: [{field, column, looks_like}] (no values, only the detected type)."""
+    out = []
+    for field, col in mapping.items():
+        det = profiles.get(col) if isinstance(col, str) else None
+        if det and det.get("type") in STRONG_TYPES and det.get("share", 0) >= 0.9 and det.get("field") != field:
+            out.append({"field": field, "column": col, "looks_like": det["description"]})
+    return out
+
+
+def record_id_column(sample: pa.Table, profiles: dict[str, dict]) -> str | None:
+    """The column most likely to be each row's own id: a different value on every row, preferring names that say "id"."""
+    cands = [c for c in sample.column_names if (profiles.get(c) or {}).get("type") == "row_id" and (profiles[c].get("filled") or 0) >= 0.99]
+    cands.sort(key=lambda c: (not re.search(r"(^|_|\b)(id|no|number|key)$|id$", c.lower()), sample.column_names.index(c)))
+    return cands[0] if cands else None

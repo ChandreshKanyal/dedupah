@@ -198,7 +198,7 @@ def inspect(request: Request, body: InspectIn, project_id: str = PID, unmask: bo
     if reveal:
         _log_unmask(request, p, f"{project_id}/source-sample", reason, "source sample")
     cell = _plain if reveal else mask_cell
-    return {"columns": info["columns"], "suggestions": info["suggestions"], "unmasked": reveal,
+    return {"columns": info["columns"], "suggestions": info["suggestions"], "unmasked": reveal, "types": info["types"], "record_id": info["record_id"],
             "sample": [{k: cell(v) for k, v in row.items()} for row in info["sample"].slice(0, SAMPLE_ROWS).to_pylist()]}
 
 
