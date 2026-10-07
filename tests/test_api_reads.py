@@ -38,7 +38,7 @@ def test_a_run_shows_its_headline_numbers_and_configuration_but_no_evaluation_da
     assert body["status"] == "succeeded" and body["project_id"] == PROJECT
     assert body["summary"]["records"] > 100 and body["summary"]["people"] > 50 and body["summary"]["review_items"] > 0
     assert set(body["summary"]) <= {"records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source",
-                                    "scoring", "judgments", "golden"}           # how scores were learned; decisions applied; how golden values were chosen (no personal data)
+                                    "scoring", "judgments", "golden", "source_quality", "incremental"}         # how scores were learned; decisions applied; how golden values were chosen (no personal data)
     assert body["configs"]["decision"]["source"] == "file" and "eval" not in r.text and "truth" not in r.text
 
 
@@ -64,7 +64,7 @@ def test_a_person_is_masked_by_default_for_everyone(api, output):
         assert r.status_code == 200 and output["pan"] not in r.text, role                 # the full PAN appears nowhere in the response
         v = r.json()
         assert v["unmasked"] is False and v["golden"]["pan"].startswith("*") and v["golden"]["pan"].endswith(output["pan"][-3:])
-        assert set(v) == {"person_id", "golden", "record_count", "sources", "conflict_fields", "records", "unmasked"}
+        assert set(v) == {"person_id", "golden", "record_count", "sources", "conflict_fields", "records", "extra", "unmasked"}   # extra: masked extra source columns
 
 
 def test_unmasking_needs_permission_a_reason_and_is_logged_without_the_data(api, output):

@@ -677,8 +677,8 @@ async function deleteRun(pid, rid) {
   await go(() => viewProject(pid, "runs"));
   say("Run " + rid + " was deleted.", "good");
 }
-async function startRun(pid, connections, fromRun, reason, key) {
-  const r = await api("POST", P(pid) + "/runs", { connections, from_run: fromRun || null, reason: reason || "" }, { "Idempotency-Key": key || uuid() });
+async function startRun(pid, connections, fromRun, reason, key, full) {
+  const r = await api("POST", P(pid) + "/runs", { connections, from_run: fromRun || null, reason: reason || "", full_rerun: !!full }, { "Idempotency-Key": key || uuid() });
   await go(() => viewRun(pid, r.id));
   say(r.replayed ? "This run was already started." : "Run started. This page updates by itself until it finishes.", "good");
 }
@@ -709,9 +709,12 @@ async function newRun(pid, step, chosen) {
   }
   const reason = el("textarea", { class: "plain", maxlength: "300" });
   const key = uuid();                              // one key for this form: a second press replays the first start instead of starting twice
-  show(page("New run", "Check and start.", [btn("Back", () => to(2)), btn("Start run", () => startRun(pid, [...chosen], null, reason.value, key), "primary", "play")], back), bar,
+  const full = el("input", { type: "checkbox" });
+  show(page("New run", "Check and start.", [btn("Back", () => to(2)), btn("Start run", () => startRun(pid, [...chosen], null, reason.value, key, full.checked), "primary", "play")], back), bar,
     kv([["Project", projectName(pid)], ["Connections", [...chosen].join(", ")], ["Rules", "The project's live rules, or the built-in defaults when none are live"]]),
-    field("Reason (optional)", reason));
+    field("Reason (optional)", reason),
+    el("label", { class: "check" }, full, el("span", {}, "Full re-run: process every record from scratch. Otherwise records that did not change since the latest successful run " +
+      "reuse its work, which is much faster; people are still formed from all records.")));
 }
 async function viewRun(pid, rid, tab) {
   const [r] = await Promise.all([api("GET", R(pid, rid)), refreshCache()]);
@@ -795,6 +798,27 @@ function runOverview(r) {
     parts.push(el("h2", { class: "section" }, "Steward decisions this run applied"),
       kv([["Decisions applied", num(j.judgments_applied_to_run)], ...Object.entries(j.by_kind || {}).map(([k, n]) => ["  " + (KIND_LABEL[k] || label(k)), num(n)]),
         ["Kept in the result", num(j.held)], ["Not kept", j.not_held ? el("span", { class: "bad" }, num(j.not_held) + " (a later decision or an identifier rule overruled them)") : "0"]]));
+  }
+  const inc = s.incremental;
+  if (inc) {
+    const rc = inc.records || {};
+    parts.push(el("h2", { class: "section" }, "Work reused from the previous run"), inc.used
+      ? kv([["Previous run", inc.previous_run], ["Records unchanged", num(rc.unchanged)], ["New", num(rc.new)], ["Changed", num(rc.changed)], ["Removed", num(rc.removed)],
+        ["Pairs whose scores were reused", num(inc.pairs_reused)], ["Pairs scored now", num(inc.pairs_scored)],
+        ["Scoring model", inc.model === "reused" ? "Reused from the previous run" : "Learned again" + (inc.model_reason ? ": " + inc.model_reason : "")]])
+      : el("p", { class: "hint" }, "Nothing reused: every record was processed" + (inc.reason ? " (" + inc.reason + ")" : "") + "."));
+  }
+  const q = s.source_quality;
+  if (q && Object.keys(q).length) {
+    const cols = [["name", "Name"], ["birth_date", "Birth date"], ["birth_year_or_age", "Birth year or age"], ["phone", "Phone"], ["email", "Email"],
+      ["address_pin", "PIN code"], ["identifier", "An ID"], ["record_date", "Record date"]];
+    const pct = (n, d) => (d ? Math.round((100 * n) / d) + "%" : "");
+    parts.push(el("h2", { class: "section" }, "Source data quality"),
+      el("p", { class: "hint" }, "Share of each source's records that carry a usable value after cleaning. Sources with little to match on find fewer duplicates; " +
+        "rejected values failed a check (a phone with too few digits, a PAN of the wrong shape) and were not used."),
+      table(["Source", ["Records"], ...cols.map(([, t]) => [t]), "Rejected values"], Object.entries(q).map(([src, x]) => el("tr", {}, el("td", { class: "mono" }, src),
+        el("td", { class: "num" }, num(x.records)), cols.map(([k]) => el("td", { class: "num" }, pct(x.filled[k] || 0, x.records))),
+        el("td", {}, Object.entries(x.invalid || {}).map(([f, n]) => label(f) + " " + num(n)).join(", ") || "None")))));
   }
   const g = s.golden;
   if (g && g.trust_order) {
@@ -964,6 +988,14 @@ function goldenForm(content, guide, propose) {
       known.map((s) => el("option", { value: s, selected: s === pref }, s)));
     return el("tr", {}, el("td", {}, text), el("td", {}, ruleSel[u]), el("td", {}, preferSel[u]));
   });
+  const carry = el("input", { type: "checkbox", checked: content.carry_extra_columns !== false });
+  const extraSel = {};
+  const extraRows = (guide.extra_columns || []).map((x) => {
+    const cur = (content.extra_fields || {})[x.name] || content.extra_default_strategy || "most_recent";
+    extraSel[x.name] = x.carried ? el("select", { "aria-label": "Rule for extra column " + x.name }, GOLDEN_STRATEGIES.map(([k, t]) => el("option", { value: k, selected: k === cur }, t))) : null;
+    return el("tr", {}, el("td", {}, x.name), el("td", { class: "mono" }, x.carried ? x.column : ""), el("td", {}, x.sources.join(", ")),
+      el("td", {}, extraSel[x.name] || el("span", { class: "bad" }, "Not carried: rename the column (letters, digits, space, _ . - / ( ) only)")));
+  });
   const shared = el("input", { type: "number", min: "1", max: "1000", value: String(content.shared_value_limit || 3) });
   const why = el("input", { type: "text", maxlength: "300" });
   const err = errBox();
@@ -977,7 +1009,10 @@ function goldenForm(content, guide, propose) {
     }
     const dates = {};
     for (const [s, sel] of Object.entries(dateSel)) if (sel.value) dates[s] = sel.value;
-    const out = { ...content, source_trust: auto.checked ? [] : order, source_dates: dates, fields, field_trust: fieldTrust, shared_value_limit: Number(shared.value) };
+    const extraFields = {};
+    for (const [n, sel] of Object.entries(extraSel)) if (sel && sel.value !== "most_recent") extraFields[n] = sel.value;
+    const out = { ...content, source_trust: auto.checked ? [] : order, source_dates: dates, fields, field_trust: fieldTrust, shared_value_limit: Number(shared.value),
+      carry_extra_columns: carry.checked, extra_fields: extraFields };
     try { await propose(out, why.value); } catch (e) { fail(err, e.message); }
   };
   return el("div", { class: "golden-form" },
@@ -990,6 +1025,10 @@ function goldenForm(content, guide, propose) {
     el("h3", { class: "section" }, "3. How each field is chosen"),
     table(["Field", "Rule", "Preferred source"], fieldRows),
     el("dl", { class: "help" }, GOLDEN_STRATEGIES.map(([k, t]) => [el("dt", {}, t), el("dd", {}, guide.strategies[k] || "")]).flat()),
+    el("h3", { class: "section" }, "4. Your own columns"),
+    el("label", { class: "check" }, carry, el("span", {}, "Carry the sources' extra columns into the golden record (columns with the same name in different sources become one field)")),
+    extraRows.length ? table(["Column", "Golden-record column", "Sources", "Rule"], extraRows) : el("p", { class: "hint" }, "No connection keeps extra columns. Tick them in a connection's field mapping to carry them."),
+    el("h3", { class: "section" }, "5. Shared values"),
     field("A phone or email shared by more than this many people (an office line, an agent) is used only when nothing else exists", shared),
     field("Reason for this change (at least 10 characters)", why), err,
     el("div", { class: "row" }, btn("Propose these rules", save, "primary")));
@@ -1644,6 +1683,7 @@ async function viewPerson(pid, rid, person, reveal) {
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run " + rid, R(pid, rid)), crumb("People", R(pid, rid) + "/people"), person)),
   v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map(label).join(", ") + ". The golden record shows the best-supported value.") : null,
   el("h2", { class: "section" }, "Golden record"), golden.length ? kv(golden) : empty("No values."),
+  Object.keys(v.extra || {}).length ? [el("h3", { class: "section" }, "Other columns from the sources"), kv(Object.entries(v.extra).map(([k, val]) => [label(k), String(val)]))] : null,
   el("h2", { class: "section" }, "Source records"),
   table([...(writer && v.records.length > 1 ? [""] : []), "Source", "Record", "Name as written", "Date of birth", "Mobile", "Email", "City"], rows),
   writer && v.records.length > 1 ? el("div", { class: "row" }, btn("Split the ticked records into a new person", split, "", "split"),

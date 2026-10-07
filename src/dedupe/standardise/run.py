@@ -7,7 +7,7 @@ only a keyed token and the last four digits do. Set DEDUPE_TOKEN_KEY in producti
 """
 import argparse
 import json
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -34,7 +34,7 @@ SCHEMA = pa.schema([
     ("aadhaar_token", S), ("aadhaar_last4", S),
     ("passport_no", S), ("dl_no", S), ("voter_id", S),
     ("address_norm", S), ("address_pin", S), ("address_house", S), ("address_alt_norm", S), ("city", S), ("state", S),
-    ("record_date", S),
+    ("record_date", S), ("supplied_fields", S), ("invalid_fields", S),
 ])
 _GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O"}
 _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt",
@@ -98,10 +98,44 @@ def _record_date(raw) -> str | None:
     return d.isoformat() if d and date(1900, 1, 1) <= d <= dates.reference_date() + timedelta(days=1) else None
 
 
+# what a record of each source carries after cleaning: the basis for the per-source data-quality table on the run page (SQL over the
+# standardised file, so a run that reuses earlier standardised rows reports on all of its records)
+_PROFILE_SQL = {
+    "name": "name_clean IS NOT NULL",
+    "birth_date": "dob_precision = 'full' AND NOT coalesce(dob_placeholder, false)",
+    "birth_year_or_age": "birth_year_min IS NOT NULL",
+    "phone": "mobile IS NOT NULL OR mobile_alt IS NOT NULL",
+    "email": "email IS NOT NULL",
+    "address_pin": "address_pin IS NOT NULL",
+    "identifier": "coalesce(pan, aadhaar_token, passport_no, dl_no, voter_id) IS NOT NULL",
+    "record_date": "record_date IS NOT NULL",
+}
+STANDARDISE_VERSION = 1      # raise when standardisation changes what it writes for the same input: earlier runs' rows are then not reused
+
+
+def source_report(std_path: Path) -> dict:
+    """Per source: record count, how many records carry each kind of usable value, and how many supplied values failed validation
+    (counts only). Also the older 'validation' strings ('a/b valid')."""
+    con = crypto.connect()
+    src = crypto.rp(std_path)
+    fills = ", ".join(f"count(*) FILTER ({sql}) AS {f}" for f, sql in _PROFILE_SQL.items())
+    rows = con.execute(f"SELECT source_id, count(*) AS n, {fills} FROM {src} GROUP BY 1 ORDER BY 1").fetchall()
+    checks = con.execute(f"""
+        WITH s AS (SELECT source_id, unnest(string_split(supplied_fields, ',')) AS f, 0 AS bad FROM {src} WHERE supplied_fields <> ''
+                   UNION ALL SELECT source_id, unnest(string_split(invalid_fields, ',')), 1 FROM {src} WHERE invalid_fields <> '')
+        SELECT source_id, f, count(*) FILTER (bad = 0), count(*) FILTER (bad = 1) FROM s GROUP BY 1, 2""").fetchall()
+    supplied, invalid = defaultdict(dict), defaultdict(dict)
+    for s, f, n_supplied, n_bad in checks:
+        supplied[s][f] = n_supplied
+        if n_bad:
+            invalid[s][f] = n_bad
+    profile = {r[0]: {"records": r[1], "filled": dict(zip(_PROFILE_SQL, r[2:], strict=True)), "invalid": invalid[r[0]]} for r in rows}
+    validation = {s: {f: f"{n - invalid[s].get(f, 0)}/{n} valid" for f, n in supplied[s].items()} for s in profile}
+    return {"records": {s: p["records"] for s, p in profile.items()}, "validation": validation, "profile": profile}
+
+
 def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    seen, filled = Counter(), defaultdict(Counter)
-    raw_present = defaultdict(Counter)
     with crypto.open_writer(out_path, SCHEMA) as w:
         for batch in crypto.iter_batches(in_path, batch_size):
             # a canonical file without some fields (older files, other producers) is treated as having them all empty
@@ -110,18 +144,14 @@ def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
             for i in range(batch.num_rows):
                 raw = {c: cols[c][i] for c in _RAW_FIELDS}
                 row = standardise_row(raw)
+                # which values the source supplied, and which of them failed validation (a 9-digit phone, a PAN of the wrong shape):
+                # failed values are emptied and never matched on; the names (never the values) are kept for the data-quality report
+                given = [f for f in _VALIDATION if raw[f] and str(raw[f]).strip()]
+                row["supplied_fields"] = ",".join(given)
+                row["invalid_fields"] = ",".join(f for f in given if not _VALIDATION[f](raw, row))
                 rows.append(row)
-                src = row["source_id"]
-                seen[src] += 1
-                for raw_f, valid in _VALIDATION.items():
-                    if raw[raw_f] and str(raw[raw_f]).strip():
-                        raw_present[src][raw_f] += 1
-                        if valid(raw, row):
-                            filled[src][raw_f] += 1
             w.write_table(pa.Table.from_pylist(rows, schema=SCHEMA))
-    # data-quality report: of the values a source supplied, what share survived validation?
-    quality = {src: {f: f"{filled[src][f]}/{n} valid" for f, n in raw_present[src].items()} for src in seen}
-    return {"records": dict(seen), "validation": quality, "output": str(out_path)}
+    return {**source_report(out_path), "output": str(out_path)}
 
 
 def main() -> None:

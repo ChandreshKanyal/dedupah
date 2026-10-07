@@ -71,8 +71,13 @@ def _now(precision: str = "seconds") -> str:
 
 
 def pipeline_command(run_dir: Path, sources: Path, registry: Path) -> list[str]:
+    prev = run_dir / PREVIOUS_RUN
     return [sys.executable, "-m", "dedupe.pipeline", "--sources", str(sources), "--work", str(run_dir), "--registry-dir", str(registry),
-            "--model-path", str(run_dir / "model.json"), "--database-from-env"]
+            "--model-path", str(run_dir / "model.json"), "--database-from-env",
+            *(["--previous-run", prev.read_text(encoding="utf-8").strip()] if prev.exists() else [])]
+
+
+PREVIOUS_RUN = "previous_run.txt"     # written at launch: the project's latest successful run, whose work an incremental run reuses
 
 
 def headline(work: Path) -> dict:
@@ -89,6 +94,8 @@ def headline(work: Path) -> dict:
             "seconds": s.get("total_seconds"), "records_by_source": (s.get("ingest") or {}).get("records") or {},
             "scoring": {k: (s.get("scoring") or {}).get(k) for k in ("mode", "mode_reason")} if s.get("scoring") else None,
             "judgments": s.get("judgments"),
+            "source_quality": (s.get("standardise") or {}).get("profile"),
+            "incremental": s.get("incremental"),
             "golden": {k: (s.get("golden_record") or {}).get(k) for k in ("trust_order", "auto_ranked_sources", "sources_without_dates", "shared_values_passed_over",
                                                                      "values_with_source_conflict")} if s.get("golden_record") else None}
 
@@ -175,8 +182,10 @@ class RunJobs:
         return {"sources": sources}, used
 
     # ---- start -------------------------------------------------------------------------------------------------------
-    def start(self, project_id: str, sources: dict, used: list[dict], actor: str, reason: str = "", key: str | None = None) -> tuple[Run, bool]:
+    def start(self, project_id: str, sources: dict, used: list[dict], actor: str, reason: str = "", key: str | None = None,
+              full: bool = False) -> tuple[Run, bool]:
         """`sources` is the ingest configuration assembled from the chosen connections' live versions; `used` records which ones.
+        `full`: process every record from scratch instead of reusing the project's latest successful run for unchanged records.
         Returns (run, replayed). The run starts at once when there is room, otherwise it waits in the queue. Raises RunError when the queue is full."""
         with self._lock:
             if key is not None:
@@ -190,6 +199,7 @@ class RunJobs:
             run_dir = self.ws.run_dir(project_id, rid)
             run_dir.mkdir(parents=True)
             (run_dir / "sources.json").write_text(json.dumps(sources, indent=2, ensure_ascii=False), encoding="utf-8")
+            (run_dir / "run_options.json").write_text(json.dumps({"full": bool(full)}), encoding="utf-8")
             with self.engine.begin() as c:
                 c.execute(runs.insert().values(id=rid, project_id=project_id, created_at=_now("microseconds"), requested_by=actor, status="queued", idempotency_key=key,
                                                reason=reason, connections=json.dumps(used), summary="{}"))
@@ -213,6 +223,11 @@ class RunJobs:
         env = {k: v for k, v in os.environ.items() if k != "DEDUPE_DEV_AUTH_SECRET"}      # the child never needs the API's login secret
         env["DEDUPE_DATABASE_URL"] = self.ws.project_url(pid)
         env["DEDUPE_UPLOAD_DIR"] = str(self.ws.upload_dir)
+        opts = run_dir / "run_options.json"
+        full = json.loads(opts.read_text(encoding="utf-8")).get("full", False) if opts.exists() else False
+        prev = None if full else self.latest_succeeded(pid)
+        if prev is not None:                                                               # decided now, not when queued: the newest result wins
+            (run_dir / PREVIOUS_RUN).write_text(str(self.ws.run_dir(pid, prev.id)), encoding="utf-8")
         log = open(run_dir / "run.log", "wb")                                              # noqa: SIM115 - closed by the supervising thread
         try:
             proc = subprocess.Popen(  # nosec B603

@@ -18,7 +18,7 @@ import duckdb
 
 from dedupe import crypto
 
-from .config import GOLDEN_FIELDS, QUALITY, SHARED_FIELDS, SurvivorshipConfig
+from .config import EXTRA_NAME, GOLDEN_FIELDS, MAX_EXTRA_COLUMNS, QUALITY, SHARED_FIELDS, SurvivorshipConfig, extra_column
 
 _SEP = "\x1f"
 # standardised / canonical columns the rules read; files written before a column existed are read as if it were empty
@@ -59,13 +59,33 @@ def _source(con, path: Path, optional: dict) -> str:
     return f"(SELECT *{', ' + extra if extra else ''} FROM {crypto.rp(path)})"
 
 
+def _extras(con, canonical: Path, cfg: SurvivorshipConfig) -> tuple[dict[str, str], list[str]]:
+    """{source column name: golden column} for the sources' extra columns, and the names that cannot be carried (odd characters, too many)."""
+    if not cfg.carry_extra_columns:
+        return {}, []
+    names = [r[0] for r in con.execute(f"SELECT DISTINCT unnest(json_keys(attributes::JSON)) AS k FROM {crypto.rp(canonical)} "
+                                       "WHERE attributes IS NOT NULL AND json_valid(attributes) ORDER BY 1").fetchall()]
+    out, skipped = {}, []
+    for n in names:
+        col = extra_column(n)
+        if not EXTRA_NAME.fullmatch(n) or len(out) >= MAX_EXTRA_COLUMNS:
+            skipped.append(n)
+            continue
+        while col in out.values() or col in GOLDEN_FIELDS:      # 'Branch Code' and 'branch_code' are kept apart
+            col += "_2"
+        out[n] = col
+    return out, skipped
+
+
 def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clusters: Path, cfg: SurvivorshipConfig, out_dir: Path,
                  overrides: list | None = None) -> dict:
     """`overrides`: steward field overrides [{id, field, value, anchors: [(source_id, source_record_id), ...]}]. Each applies to the person
     holding most of its anchor records; a later one (higher id) replaces an earlier one for the same person and field; value None clears."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    cols = ", ".join(f"({GOLDEN_FIELDS[f]})::VARCHAR AS {f}" for f in GOLDEN_FIELDS)
-    quals = ", ".join(f"({QUALITY.get(f, '1')})::INT AS q_{f}" for f in GOLDEN_FIELDS)
+    extras, extras_skipped = _extras(con, canonical, cfg)
+    exprs = {**GOLDEN_FIELDS, **{c: f"nullif(trim(json_extract_string(k.attributes, '$.\"{n}\"')), '')" for n, c in extras.items()}}
+    cols = ", ".join(f"({exprs[f]})::VARCHAR AS {f}" for f in exprs)
+    quals = ", ".join(f"({QUALITY.get(f, '1')})::INT AS q_{f}" for f in exprs)
     con.execute(f"""CREATE OR REPLACE TABLE g_src AS
         SELECT c.cluster_id, s.source_id, s.source_record_id, {_rec_date_sql(cfg)} AS rec_date, {cols}, {quals}
         FROM {_source(con, std, _STD_OPTIONAL)} s
@@ -73,7 +93,7 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
         JOIN {crypto.rp(canonical)} k USING (source_id, source_record_id)""")
 
     # trust: the configured order first, then every other source by how many golden fields its records fill on average
-    filled = " + ".join(f"({f} IS NOT NULL)::INT" for f in GOLDEN_FIELDS)
+    filled = " + ".join(f"({f} IS NOT NULL)::INT" for f in GOLDEN_FIELDS)        # the standard fields only: comparable across sources
     profile = con.execute(f"SELECT source_id, avg({filled}) AS fill, count(rec_date) AS dated FROM g_src GROUP BY 1").fetchall()
     present = {r[0] for r in profile}
     auto = [s for s, _f, _d in sorted(profile, key=lambda r: (-r[1], r[0])) if s not in cfg.source_trust]
@@ -81,7 +101,8 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
 
     con.execute("DROP TABLE IF EXISTS g_values")
     first, shared_skipped = True, 0
-    for unit, members, strategy in cfg.units():
+    units = cfg.units() + [(c, [c], cfg.extra_fields.get(n, cfg.extra_default_strategy)) for n, c in extras.items()]
+    for unit, members, strategy in units:
         lead = members[0]
         order = [s for s in cfg.field_trust[unit] if s in present] + [s for s in trust if s not in cfg.field_trust[unit]] \
             if unit in cfg.field_trust else trust
@@ -91,7 +112,8 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
         shared = (f"{lead} IN (SELECT {lead} FROM g_src WHERE {lead} IS NOT NULL GROUP BY 1 "
                   f"HAVING count(DISTINCT cluster_id) > {int(cfg.shared_value_limit)})") if lead in SHARED_FIELDS else "false"
         con.execute(f"""CREATE OR REPLACE TEMP TABLE g_unit AS
-            WITH any_val AS (SELECT *, max(({lead} IS NOT NULL)::INT) OVER (PARTITION BY cluster_id) AS has_lead FROM g_src
+            WITH any_val AS (SELECT cluster_id, source_id, source_record_id, rec_date, {", ".join(members)}, {", ".join("q_" + m for m in members)},
+                                    max(({lead} IS NOT NULL)::INT) OVER (PARTITION BY cluster_id) AS has_lead FROM g_src
                              WHERE {" OR ".join(f"{m} IS NOT NULL" for m in members)}),
                  cand AS (SELECT *, {key} AS vkey, {completeness} AS completeness, {quality} AS quality, {_trust_case(order)} AS trust_rank,
                                  coalesce({shared}, false) AS shared
@@ -123,7 +145,7 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
                         [cid, o["field"], o["value"], str(o["id"])])
         applied += 1
     con.execute(f"COPY (SELECT * EXCLUDE (rec_date) FROM g_values ORDER BY cluster_id, field) TO '{out_dir / 'golden_values.parquet'}' ({crypto.fmt()})")
-    fields = ", ".join(f"max(value) FILTER (WHERE field = '{f}') AS {f}" for f in GOLDEN_FIELDS)
+    fields = ", ".join(f"max(value) FILTER (WHERE field = '{f}') AS {f}" for f in exprs)
     con.execute(f"""COPY (
         WITH w AS (SELECT cluster_id, {fields}, list(field ORDER BY field) FILTER (WHERE n_distinct > 1) AS conflict_fields FROM g_values GROUP BY 1),
              m AS (SELECT cluster_id, count(*) AS record_count, list(DISTINCT source_id ORDER BY source_id) AS sources FROM g_src GROUP BY 1)
@@ -138,4 +160,4 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
             # how the choice was made, so a person can see it and correct it in the golden-record rules
             "trust_order": trust, "auto_ranked_sources": auto,
             "sources_without_dates": sorted(s for s, _f, d in profile if d == 0),
-            "shared_values_passed_over": shared_skipped}
+            "shared_values_passed_over": shared_skipped, "extra_columns": extras, "extra_columns_skipped": extras_skipped}

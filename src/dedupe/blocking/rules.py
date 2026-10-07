@@ -53,6 +53,11 @@ DEFAULT_RULES = [
 # Off by default. name_city produced ~47% of all candidate pairs at 138k records and grows faster than the data, yet almost
 # none of its pairs carry enough evidence to merge or review (see PROGRESS.md section 20); removing it raised F1 slightly.
 OPTIONAL_RULES = [
+    # Measured 2026-10-07 (section 53, step 4): finds more true pairs (no IDs: 0.888 -> 0.931 of them) but they carry no evidence besides the
+    # name, so scoring rejects them (recall unchanged), and with IDs the extra pairs lowered recall 0.857 -> 0.763. Off by default.
+    Rule("name_undated", _simple("name_tokens_phon"),
+         "all name sounds (order-free) when one record has no birth date: links a record holding only a phone to one holding only a date of birth",
+         one_side="dob_year IS NULL AND birth_year_min IS NULL"),
     Rule("name_city", _combo("name_first_phon || '|' || name_last_phon || '|' || city", "name_first_phon", "name_last_phon", "city"),
          "first+last sound + city; links ID-less records (leads) to documents"),
 ]

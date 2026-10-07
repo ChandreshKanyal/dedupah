@@ -26,7 +26,7 @@ MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's o
 CREATE = Depends(require("projects.create"))
 DELETE_DATA = Depends(require("data.delete"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
-SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden")
+SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden", "source_quality", "incremental")
 
 
 class Strict(BaseModel):
@@ -71,6 +71,7 @@ class StartIn(Strict):
     connections: list[str] = Field(default_factory=list, max_length=20)
     from_run: str | None = Field(None, pattern=RUN_ID)
     reason: str = Field("", max_length=300)
+    full_rerun: bool = False     # process every record from scratch instead of reusing the latest successful run for unchanged records
 
 
 class RunView(BaseModel):
@@ -209,7 +210,7 @@ def start_run(request: Request, response: Response, body: StartIn, project_id: s
         raise HTTPException(422, "Connection ids must be distinct and well formed.")
     try:
         sources, used = sv.jobs.build_request(project_id, ids)
-        run, replayed = sv.jobs.start(project_id, sources, used, p.sub, body.reason, key)
+        run, replayed = sv.jobs.start(project_id, sources, used, p.sub, body.reason, key, full=body.full_rerun)
     except RunError as e:
         raise HTTPException(409, str(e)[:300]) from None
     if replayed:

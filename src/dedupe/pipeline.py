@@ -22,6 +22,7 @@ import pyarrow as pa
 
 from dedupe import crypto
 
+from . import incremental as inc
 from .blocking import DEFAULT_RULES, rules_by_name
 from .blocking import generate as block
 from .clustering import ClusterConfig, cluster
@@ -38,7 +39,10 @@ from .ingest import ingest
 from .review import build_queue
 from .scoring import score, train
 from .scoring.__main__ import load_tables
+from .scoring.levels import materialize, prepare_tf_tables
+from .scoring.model import Model
 from .standardise.run import run as standardise
+from .standardise.run import source_report
 from .store import JudgmentStore
 from .survivorship import build_golden
 
@@ -65,6 +69,7 @@ class PipelineConfig:
     blocking_rules: list | None = None  # names of the blocking rules to use (None = the defaults)
     registry_dir: Path | None = None  # person-ID registry kept across runs (None = <work>/identity)
     model_path: Path | None = None  # where the fitted model is saved (None = <work>/../models/fs_model.json)
+    previous_run: Path | None = None  # an earlier successful run of the same data: reuse its work for unchanged records (see dedupe.incremental)
 
 
 class _Meter:
@@ -157,24 +162,60 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         summary["configs"]["sources"] = {"source": "file", "version": None, "hash": content_hash(file_content), "path": str(cfg.sources)}
     else:
         raise ValueError("no sources configured: pass --sources, or activate a `sources` version in the config store")
+    tmp = work / ".duckdb_tmp"
+    con = crypto.connect({"memory_limit": cfg.memory_limit, "temp_directory": str(tmp)})
+    summary["fingerprints"] = inc.fingerprints()
+    prev = Path(cfg.previous_run) if cfg.previous_run else None
+    reuse, why_not = inc.check(prev, prev / "model.json" if prev else None, summary["configs"]["effective_settings"]["hash"])
     with meter.stage("ingest"):
         summary["ingest"] = ingest(sources_path, p["canonical"], cfg.batch_size)
+        inc.write_hashes(con, p["canonical"], work / inc.HASHES)          # before Aadhaar is erased: the fingerprint of the record as read
+    incr = {"previous_run": prev.name if prev else None, "used": reuse, "reason": why_not}
     with meter.stage("standardise"):
-        summary["standardise"] = standardise(p["canonical"], p["std"], cfg.batch_size)
+        if reuse:
+            d = inc.delta(con, prev, work / inc.HASHES)
+            changed, fresh = work / "changed_canonical.parquet", work / "changed_standardised.parquet"
+            inc.split_canonical(con, p["canonical"], changed)
+            standardise(changed, fresh, cfg.batch_size)
+            inc.merge_standardised(con, prev, fresh, work / inc.HASHES, p["std"])
+            changed.unlink()
+            fresh.unlink()
+            summary["standardise"] = {**source_report(p["std"]), "output": str(p["std"]), "reused_rows": d["unchanged"]}
+            incr["records"] = d
+        else:
+            summary["standardise"] = standardise(p["canonical"], p["std"], cfg.batch_size)
     if cfg.redact_aadhaar:
         with meter.stage("redact_aadhaar"):
             redact_aadhaar(p["canonical"])
-    tmp = work / ".duckdb_tmp"
-    con = crypto.connect({"memory_limit": cfg.memory_limit, "temp_directory": str(tmp)})
     with meter.stage("blocking"):
         gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con, rules=rules_by_name(cfg.blocking_rules))
         summary["blocking"] = {"records": gen["records"], "candidate_pairs": gen["candidate_pairs"], "all_pairs": gen["all_pairs"]}
         _drop(con, "rule_pairs", "k", "blocks")
     with meter.stage("scoring"):
         load_tables(con, p["std"], p["cand"])
-        model = train(con)
+        moved = (incr["records"]["new"] + incr["records"]["changed"] + incr["records"]["removed"]) / max(1, incr["records"]["unchanged"] + incr["records"]["changed"] + incr["records"]["removed"]) if reuse else 1.0
+        prev_mode = (json.loads((prev / "pipeline_summary.json").read_text(encoding="utf-8")).get("scoring") or {}).get("mode") if reuse else None
+        if reuse and moved <= inc.MAX_CHANGE_FOR_MODEL and prev_mode in ("id_anchored", "unsupervised_em"):
+            model = Model.load(prev / "model.json")
+            model.meta = {**model.meta, "reused_from_run": prev.name}
+            incr["pairs_reused"] = inc.reusable_pairs(con, prev, p["cand"].with_suffix(".index.parquet"))
+            prepare_tf_tables(con)
+            materialize(con, "todo", "cand_levels", with_tf=True)
+            fresh = work / "new_scored_pairs.parquet"
+            incr["pairs_scored"] = score(con, model, fresh)["pairs"]
+            inc.combine_scores(con, fresh, p["scored"])
+            fresh.unlink()
+            incr["model"] = "reused"
+            _drop(con, "reused", "todo", "changed_keys", "h_new", "h_old")
+        else:
+            model = train(con)
+            score(con, model, p["scored"])
+            incr["model"] = "learned"
+            if reuse:
+                incr["model_reason"] = (f"{moved:.0%} of records changed (more than {inc.MAX_CHANGE_FOR_MODEL:.0%})" if moved > inc.MAX_CHANGE_FOR_MODEL
+                                        else "the earlier run's scores were not meaningful")
         model.save(p["model"])
-        score(con, model, p["scored"])
+        summary["incremental"] = incr
         summary["scoring"] = {"seed_pairs": model.meta["seed_pairs"], "bias_bits": round(model.bias / 0.6931, 2), "mode": model.meta["scoring_mode"],
                               "mode_reason": model.meta["scoring_mode_reason"], "em": model.meta["em"]}
         _drop(con, "cand_levels", "candidates", "rand_pairs", *_tables_like(con, "tf_"))
@@ -222,7 +263,13 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
             from .evaluation.loaders import load_truth
             from .evaluation.metrics import evaluate
             truth, hh_truth, traps = load_truth(cfg.truth)
-            summary["eval_clusters"] = {k: v for k, v in evaluate(predictions(con, res), truth, hh_truth, traps).items() if k != "by_trap"}
+            pred = predictions(con, res)
+            # score only records that were read: a source left out of this run (or rows it refused) must not count as missed matches
+            absent = len(set(truth) - set(pred))
+            truth = {k: v for k, v in truth.items() if k in pred}
+            hh_truth = {k: v for k, v in hh_truth.items() if k in pred}
+            summary["eval_clusters"] = {**{k: v for k, v in evaluate(pred, truth, hh_truth, traps).items() if k != "by_trap"},
+                                        "truth_records_not_in_input": absent}
             imp = impact(con, cfg.truth, dcfg)
             summary["eval_decisions"] = {"zones": imp["zones"], "auto_merge_quality": imp["auto_merge_quality"]}
             thh, tper = truth_of_clusters(con, cfg.truth)
@@ -278,6 +325,7 @@ def main() -> None:
     ap.add_argument("--cap", type=int, default=50)
     ap.add_argument("--household-threshold", type=float, default=5.0)
     ap.add_argument("--keep-raw-aadhaar", action="store_true", help="do NOT erase raw Aadhaar from the canonical file")
+    ap.add_argument("--previous-run", type=Path, default=None, help="an earlier successful run of the same project: reuse its work for unchanged records")
     a = ap.parse_args()
     if a.database_from_env:
         url = os.environ.get("DEDUPE_DATABASE_URL")
@@ -286,7 +334,8 @@ def main() -> None:
         a.judgments_url = a.config_store_url = url
     s = run_pipeline(PipelineConfig(a.sources, a.work, decision_config=a.decision_config, survivorship_config=a.survivorship_config,
                                     judgments_url=a.judgments_url, config_store_url=a.config_store_url, truth=a.truth, blocking_cap=a.cap, household_threshold=a.household_threshold,
-                                    redact_aadhaar=not a.keep_raw_aadhaar, registry_dir=a.registry_dir, model_path=a.model_path))
+                                    redact_aadhaar=not a.keep_raw_aadhaar, registry_dir=a.registry_dir, model_path=a.model_path,
+                                    previous_run=a.previous_run))
     print(_fmt(s))
 
 

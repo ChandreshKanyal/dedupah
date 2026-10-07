@@ -143,3 +143,20 @@ def test_golden_record_guide_and_a_form_style_proposal(api):
     assert r.status_code == 200, r.text
     bad = content | {"field_trust": {"not_a_field": ["x"]}}
     assert c.post(P + "/config/survivorship/propose", json={"content": bad, "reason": "this one must be refused"}, headers=hdr(s, "analyst")).status_code == 422
+
+
+def test_extra_source_columns_show_on_the_person_masked(api, output):
+    c, s, _, run = api
+    pid, seg = duckdb.sql(f"SELECT cluster_id, extra_segment FROM '{output['out'] / 'golden' / 'golden_records.parquet'}' "
+                          "WHERE extra_segment IS NOT NULL AND length(extra_segment) > 3 LIMIT 1").fetchone()
+    v = c.get(f"{run}/people/{pid}", headers=hdr(s, "viewer")).json()
+    assert v["extra"]["segment"] != seg and v["extra"]["segment"].endswith(seg[-3:])     # unknown content: masked like an identifier
+
+
+def test_run_summary_profiles_each_source_without_personal_data(api):
+    c, s, _, run = api
+    q = c.get(run, headers=hdr(s, "viewer")).json()["summary"]["source_quality"]
+    crm, leads = q["bank_crm"], q["leads"]
+    assert crm["records"] > 0 and set(crm["filled"]) == {"name", "birth_date", "birth_year_or_age", "phone", "email", "address_pin", "identifier", "record_date"}
+    assert crm["filled"]["name"] <= crm["records"] and leads["filled"]["birth_date"] < leads["records"]    # leads carry an age, rarely a date
+    assert all(isinstance(n, int) for x in q.values() for n in x["invalid"].values())                     # counts only, never values

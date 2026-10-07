@@ -18,7 +18,7 @@
 
 ### NEXT (suggested order; confirm with the user before starting any of them)
 1. **User reviews the portal again** (Ctrl+F5 first). Expect small usability fixes; collect them before building anything new. Quickest tour: Review inbox -> Start reviewing.
-2. **Recall without identifiers** is only 0.43-0.50 on synthetic data (precision 0.99+). Almost every true pair that reached scoring was found, so the loss is pairs the blocking step never proposed. Next: measure blocking recall on the no-ID data, then add safe name/phone/email blocking keys for files without IDs (section 51).
+2. **Golden records and matching across any sources: phase in progress (section 53).** Steps 1-5 done; 6 (incremental runs) and 7 (odd data shapes) next.
 3. **Remaining review-section gaps** (section 52 "Not done"): assign/claim pairs to reviewers, ageing/SLA and reviewer statistics, comments on pairs; retire a connection or destination; search for connections and people; the Approvals page makes several requests per project (slow with many projects); light-theme users see a dark flash on load.
 4. **Erasure and retention:** deleting runs, projects and uploads now exists. Still waiting for the user's three answers: are we the processor; may backups expire by retention; build only the machinery and leave the legal rules to customer configuration.
 5. **Notifications** (email/chat) when a run fails or a schedule pauses.
@@ -1002,7 +1002,7 @@ The portal shows the Aurionpro logo (sign-in page: logo with tagline; top bar: n
 - `unsupervised_em`: otherwise, if there are 150+ candidate pairs and 15+ plausible matches, the Fellegi-Sunter model is fitted by EM: u (chance agreement) measured on random pairs and fixed, m (agreement for the same person) learned from a rough first guess (names sound alike plus other agreeing fields). Weights are tempered (x0.8) and capped (9 bits) because the independence assumption makes EM over-confident. Identifier and age-based levels keep their fixed weights.
 - `insufficient`: too small to learn from; weights stay 0, every pair is near 50%, the portal says so in red.
 The run overview, review queue and compare page show a notice for the last two modes.
-**Measured (SYNTHETIC, IDs removed from the sources, kyc_documents dropped):** 300 households: precision 0.991, 14 false of 1,224 auto-merged pairs; 100 households at double noise: precision 1.000, 4 false of 423; 40 households: precision 1.000, 0 false of 153. Recall is only 0.43-0.50: of the true pairs that reached scoring almost all were found (reject zone held 25 of ~1,250), so the loss is mostly pairs that blocking never proposed (without IDs there is little to link records whose name or phone changed). NOT yet separated or improved.
+**Measured (SYNTHETIC, IDs removed from the sources, kyc_documents dropped):** 300 households: precision 0.991, 14 false of 1,224 auto-merged pairs; 100 households at double noise: precision 1.000, 4 false of 423; 40 households: precision 1.000, 0 false of 153. Recall is only 0.43-0.50: of the true pairs that reached scoring almost all were found (reject zone held 25 of ~1,250), so the loss is mostly pairs that blocking never proposed (without IDs there is little to link records whose name or phone changed). **CORRECTED 2026-10-07 (section 53 step 4): that recall was a measurement error.** The test dropped the kyc_documents source from the input but the ground truth still held its ~500 records, so every one counted as a missed match. Measured on the records actually read: recall 0.88-0.89, precision 0.986-0.997 (seeds 101-103, 300 households, IDs removed).
 **Honest limits:** independence assumption; needs enough overlap between records; only tested on synthetic data; a file that is almost all duplicates makes EM see nearly no non-matches (the user's file: 40 people x 5 copies, all 355 pairs auto-merged, checked by hand as plausible). Odd inputs (empty file, one record, empty names, names only, 3 rows) complete without crashing (`tests/test_scoring_modes.py`).
 
 ## 52. Portal audit and fixes: flows, accessibility, a dedicated review section
@@ -1067,3 +1067,53 @@ proposes a normal versioned change (approval rules unchanged); the JSON editor i
 them; no personal data). The run overview gains "How the golden records were chosen" (trust order, which sources were ranked automatically,
 undated sources, conflicts, shared values passed over). Checked live in Edge, both themes, 0 console errors; one test proposal (version 1 of
 the demo project's golden-record rules, "phones from one source...") was left waiting for approval in `customer-master`.
+
+**Step 3 (done): the sources' own columns reach the golden record.** A connection's extra columns ("attributes", ticked in the field
+mapping) used to stop at the staging file. Now each becomes a golden-record column `extra_<name>` (lower case, other characters as _;
+same name in different sources = one field; 'Branch Code' and 'branch_code' kept apart with a _2 suffix), chosen like any field: rule
+`extra_default_strategy` (newest record) or per column in `extra_fields`; `carry_extra_columns: false` turns it off. Names with quotes or
+symbols, or beyond 60 columns, are skipped and listed (`extra_columns_skipped`). The person page shows them under "Other columns from the
+sources", MASKED like identifiers unless revealed (their content is unknown); exports carry them (they are ordinary golden_records columns).
+The rules form has a section "Your own columns" (carry on/off, rule per column, which columns cannot be carried and why).
+Not done: a steward cannot correct an extra column's golden value (field overrides cover the standard fields only).
+
+**Step 4 (done, with a correction): matching without identifiers.** Measuring blocking first showed blocking was NOT the problem: without
+IDs it proposes 88.8% of true pairs (91.2% reachable through other records). The 0.43-0.50 recall of section 51 came from the evaluation:
+records of the source left out of the run were still in the ground truth and counted as misses. Fix: the pipeline's evaluation scores only
+records that were read (`truth_records_not_in_input` says how many were left out). Corrected, no IDs, 300 households: seed 101 precision 0.997
+recall 0.894; 102: 0.986 / 0.886; 103: 0.987 / 0.881. With IDs (seed 101): 0.998 / 0.857 (more pairs go to the review queue, which this
+figure counts as not merged).
+Tried and NOT adopted: a name-only blocking rule for records without a birth date (`name_undated`, kept as an optional rule). It finds more
+true pairs (no IDs: 88.8% -> 93.1%; with IDs 81.9% -> 88.7%) but those pairs share nothing except the name, so scoring rejects them (recall
+unchanged without IDs) and with IDs the extra pairs lowered recall 0.857 -> 0.763. The remaining misses are record pairs with no shared
+evidence besides a (sometimes misspelt) name: one record has only a phone, the other only a date of birth. They cannot be merged safely
+without more data.
+
+**Step 5 (done, re-scoped after measuring): source reliability.** Planned: weigh evidence by source. Measured first (seed 101): wrong merges
+do not concentrate in a source (6 with IDs, 5 without, spread over source pairs); misses concentrate on pairs with the leads source (13-31%
+missed) because leads records are sparse (age instead of birth date), not because the source is wrong. Weighting by source would not change
+that, so it was not built. Built instead: a per-source data-quality profile in every run (standardisation counts, per source, how many
+records carry a usable name, birth date, birth year or age, phone, email, PIN, an ID, a record date, and how many supplied values failed
+validation; counts only, no values), shown on the run page as "Source data quality". It tells people which source to trust and why a
+source finds few duplicates. Tests: 3 new API tests (guide + form-style proposal, masked extra columns, source profile), 2 new golden tests.
+
+**Step 6 (done): incremental runs** (`src/dedupe/incremental.py`). Every run now stores a fingerprint per record as read
+(`record_hashes.parquet`, taken before Aadhaar is erased) and the fingerprints of its cleaning and comparison logic. A portal run hands the
+project's latest successful run to the pipeline (`--previous-run`, decided when the run starts, not when it was queued) unless "Full re-run"
+is ticked on the New run page. The pipeline then: copies the standardised rows of unchanged records and standardises only new or changed
+ones (the data-quality report is now computed from the standardised file, so it still covers every record: standardisation keeps per row
+which fields were supplied and which failed validation, names only); re-blocks ALL records; reuses the previous model and the previous
+scores of pairs whose two records are both unchanged, scoring only pairs that touch a new or changed record; clusters, golden records and
+households over all records as usual. The model is learned again when more than 30% of records are new, changed or removed, or when the
+earlier run could not score meaningfully. Reuse is refused (full run, with the reason on the run page) when the previous run lacks a file
+(runs made before this change), was made by different cleaning/comparison logic, or used different run settings. The run page shows
+"Work reused from the previous run" (records unchanged/new/changed/removed, pairs reused/scored, model reused or why it was learned again).
+**Measured (SYNTHETIC, 1,500 households, 10,434 records, 20 changed + 10 removed):** full re-run 15.9 s vs incremental 7.7 s (scoring
+6.7 s -> 0.25 s, standardise 1.7 s -> 0.24 s); precision/recall 0.9968/0.8549 full vs 0.9974/0.8553 incremental.
+Also fixed on the way: the golden-record stage had become slow after step 1 (each field's query carried ~110 columns through window
+functions): 25 s -> 3.2 s on 2,100 records by selecting only the columns each field needs; it is now the largest stage of an incremental
+run (about 4 s at 10k records).
+**Honest limits:** sources are still read in full every time (needed to see what changed; a database source could later read only rows
+changed since a timestamp); reused scores keep the term frequencies of the run that made them, so a common value becoming more common is
+only noticed by a full re-run; "same people as a full run" is not guaranteed because a full run re-learns the model (tests check precision
+and recall within 0.03 of a full run on synthetic data). Tests: `tests/test_incremental.py` (4).

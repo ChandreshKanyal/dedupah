@@ -47,6 +47,15 @@ QUALITY: dict[str, str] = {
 }
 SHARED_FIELDS = ("mobile", "mobile_alt", "email")   # values that several unrelated people can hold
 _IDENT = re.compile(r"[A-Za-z0-9_]+")
+# A source's extra columns (the connection's "attributes") are carried into the golden record under these names. Columns with the same name in
+# different sources are treated as the same field. A name outside this pattern (quotes, symbols, very long) is skipped and reported.
+EXTRA_NAME = re.compile(r"^[A-Za-z0-9 _.\-/()]{1,64}$")
+MAX_EXTRA_COLUMNS = 60
+
+
+def extra_column(name: str) -> str:
+    """The golden-record column for an extra source column: `extra_` + the name in lower case with anything else turned into _."""
+    return "extra_" + (re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "x")
 
 
 class SurvivorshipConfig(BaseModel):
@@ -59,6 +68,9 @@ class SurvivorshipConfig(BaseModel):
     fields: dict[str, Strategy] = {}             # field (or group) -> strategy; others use default_strategy
     groups: dict[str, list[str]] = {}            # fields that must come from ONE record; the FIRST member is the key field (a record without it
                                                  # is skipped unless no record of the person has it), e.g. address + city + state + pincode
+    carry_extra_columns: bool = True              # the sources' own extra columns become golden-record columns (extra_<name>)
+    extra_default_strategy: Strategy = "most_recent"
+    extra_fields: dict[str, Strategy] = {}        # extra column name (as in the source) -> strategy
     shared_value_limit: int = Field(3, ge=1, le=1000)   # a phone or email held by more than this many different people (an office line, an
                                                         # agent's number, a placeholder) only becomes a golden value when the person has no other
 
@@ -68,6 +80,9 @@ class SurvivorshipConfig(BaseModel):
         for s in names:
             if not _IDENT.fullmatch(s):
                 raise ValueError(f"bad source or attribute name {s!r}")
+        for n in self.extra_fields:
+            if not EXTRA_NAME.fullmatch(n):
+                raise ValueError(f"extra column name {n!r} has characters that cannot be carried into the golden record")
         for lst in [self.source_trust, *self.field_trust.values()]:
             if len(set(lst)) != len(lst):
                 raise ValueError(f"a source is listed twice in {lst}")

@@ -165,3 +165,25 @@ def test_config_rejects_bad_field_trust():
         SurvivorshipConfig(source_trust=["a", "a"])
     with pytest.raises(ValidationError):
         SurvivorshipConfig(groups={"g": ["address", "city"]}, field_trust={"city": ["a"]})
+
+
+def test_extra_source_columns_reach_the_golden_record(tmp_path):
+    cfg = SurvivorshipConfig(extra_fields={"Branch Code": "most_trusted_source"}, source_trust=["crm", "loans"])
+    recs = [{"cluster": "c", "source": "crm", "id": "1", "record_date": "2020-01-01", "attrs": {"Branch Code": "PUN01", "segment": "retail", "bad'name": "x"}},
+            {"cluster": "c", "source": "loans", "id": "2", "record_date": "2025-01-01", "attrs": {"Branch Code": "MUM07", "segment": "premium"}},
+            {"cluster": "d", "source": "loans", "id": "3", "attrs": {"segment": "  "}}]                               # blank is not a value
+    con, info, v = _build(tmp_path, recs, cfg)
+    assert info["extra_columns"] == {"Branch Code": "extra_branch_code", "segment": "extra_segment"} and info["extra_columns_skipped"] == ["bad'name"]
+    assert v["c", "extra_branch_code"][:2] == ("PUN01", "crm")        # its own rule: most trusted source
+    assert v["c", "extra_segment"][:2] == ("premium", "loans")         # default for extra columns: newest record
+    assert ("d", "extra_segment") not in v
+    row = con.execute(f"select extra_branch_code, extra_segment from '{tmp_path / 'golden' / 'golden_records.parquet'}' where cluster_id = 'c'").fetchone()
+    assert row == ("PUN01", "premium")
+
+
+def test_extra_columns_can_be_switched_off(tmp_path):
+    recs = [{"cluster": "c", "source": "crm", "id": "1", "attrs": {"segment": "retail"}}]
+    con, info, v = _build(tmp_path, recs, SurvivorshipConfig(carry_extra_columns=False))
+    assert info["extra_columns"] == {} and ("c", "extra_segment") not in v
+    with pytest.raises(ValidationError):
+        SurvivorshipConfig(extra_fields={"a'b": "most_recent"})

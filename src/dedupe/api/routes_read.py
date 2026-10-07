@@ -74,6 +74,7 @@ class PersonView(BaseModel):
     sources: list[str] | None = None
     conflict_fields: list[str] = []
     records: list[RecordView]
+    extra: dict[str, Any] = {}          # the sources' own extra columns in the golden record (masked unless revealed)
     unmasked: bool = False
 
 
@@ -269,13 +270,17 @@ def golden_record_guide(request: Request, project_id: str = PID, p: Principal = 
             continue
         c = act.content
         sources.append({"id": c["source_id"], "attributes": list(c.get("attributes") or []), "record_date_mapped": "record_date" in (c.get("fields") or {})})
+    from dedupe.survivorship.config import EXTRA_NAME, extra_column
+    names = sorted({a for s in sources for a in s["attributes"]})
+    extras = [{"name": a, "column": extra_column(a), "carried": bool(EXTRA_NAME.fullmatch(a)),
+               "sources": [s["id"] for s in sources if a in s["attributes"]]} for a in names]
     sv = _services(request)
     last, used = sv.jobs.latest_succeeded(project_id), None
     if last:
         f = sv.workspace.run_dir(project_id, last.id) / "pipeline_summary.json"
         g = (json.loads(f.read_text(encoding="utf-8")).get("golden_record") or {}) if f.exists() else {}
         used = {"run_id": last.id, **{k: g.get(k) for k in ("trust_order", "auto_ranked_sources", "sources_without_dates", "shared_values_passed_over")}}
-    return {"fields": list(GOLDEN_FIELDS), "strategies": STRATEGY_HELP, "sources": sources, "last_run": used}
+    return {"fields": list(GOLDEN_FIELDS), "strategies": STRATEGY_HELP, "sources": sources, "extra_columns": extras, "last_run": used}
 
 
 @router.get(PROJ + "/config/{name}/diff", response_model=list[str])
