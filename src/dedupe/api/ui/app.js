@@ -349,13 +349,14 @@ async function viewProject(pid, tab) {
   await refreshCache();
   const manage = can("project.access") || p.you_own;
   const actions = can("runs.start") ? [btn("New run", () => go("Projects", () => newRun(pid)), "primary", "play")] : [];
-  const tabList = [["overview", "Overview"], ["connections", "Connections"], ["runs", "Runs"], ...(can("results.export") ? [["results", "Results"]] : []), ["rules", "Rules"],
+  const tabList = [["overview", "Overview"], ["connections", "Connections"], ["runs", "Runs"], ...(can("runs.read") ? [["schedules", "Schedules"]] : []), ...(can("results.export") ? [["results", "Results"]] : []), ["rules", "Rules"],
     ...(can("judgment.approve") ? [["approvals", "Approvals"]] : []),
     ["activity", "Activity"], ...(manage ? [["access", "Access"], ["settings", "Settings"]] : [])];
   let body;
   if (tab === "overview") body = projectOverview(p, runs, connections);
   else if (tab === "connections") body = projectConnections(p, connections);
   else if (tab === "runs") body = runsTable(runs, false, pid);
+  else if (tab === "schedules") body = await schedulesPanel(p, connections);
   else if (tab === "results") body = await resultsPanel(p, runs);
   else if (tab === "rules") body = await rulesPanel(pid);
   else if (tab === "activity") body = await activityPanel(pid);
@@ -1004,6 +1005,64 @@ async function destinationDialog(p) {
     } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
   });
   if (res) { await viewProject(p.id, "results"); say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it, then it can be made live." : "Make it live to use it."), "good"); }
+}
+
+// ---- schedules: run the project's connections by themselves -----------------------------------------------------------------
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const ZONES = ["UTC", "Asia/Kolkata", "Asia/Dubai", "Asia/Singapore", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Australia/Sydney"];
+function scheduleWhen(s) {
+  const t = s.at_time;
+  if (s.frequency === "hourly") return "Every hour at :" + t.slice(3) + " (" + s.timezone + ")";
+  if (s.frequency === "weekly") return "Every " + WEEKDAYS[s.weekday] + " at " + t + " (" + s.timezone + ")";
+  return "Every day at " + t + " (" + s.timezone + ")";
+}
+async function schedulesPanel(p, connections) {
+  const list = await api("GET", "/projects/" + p.id + "/schedules");
+  const again = () => viewProject(p.id, "schedules");
+  const change = (s, patch, done) => run(async () => { await api("PATCH", "/projects/" + p.id + "/schedules/" + s.id, patch); await again(); say(done, "good"); });
+  const remove = (s) => run(async () => {
+    const ok = await dialog("Delete schedule " + s.name + "?", el("p", {}, "Runs it already started are kept. Nothing will start from it any more."), "Delete", async () => true, true);
+    if (!ok) return;
+    await api("DELETE", "/projects/" + p.id + "/schedules/" + s.id);
+    await again();
+    say("Schedule deleted.", "good");
+  });
+  const manage = can("runs.start");
+  const rows = list.map((s) => el("tr", {}, el("td", {}, el("strong", {}, s.name)), el("td", {}, s.connections.join(", ")), el("td", {}, scheduleWhen(s)),
+    el("td", {}, s.enabled ? when(s.next_run_at) : el("span", { class: "muted" }, "Paused")),
+    el("td", {}, s.last_run_id ? el("a", { href: "#", onclick: (e) => { e.preventDefault(); go("Projects", () => viewRun(p.id, s.last_run_id)); } }, label(s.last_status || "")) : (s.last_status ? label(s.last_status) : "")),
+    el("td", {}, s.enabled ? tag("On", "success") : el("span", {}, tag("Paused", "danger"), s.paused_reason ? el("div", { class: "muted" }, s.paused_reason) : null)),
+    el("td", { class: "actions-cell" }, manage ? [
+      s.enabled ? btn("Pause", () => change(s, { enabled: false }, "Schedule paused."), "small") : btn("Resume", () => change(s, { enabled: true }, "Schedule resumed."), "small primary"),
+      btn("Delete", () => remove(s), "small danger")] : null)));
+  return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Scheduled runs"),
+    manage ? btn("New schedule", () => run(() => scheduleDialog(p, connections)), "primary", "plus") : null),
+  el("p", { class: "hint" }, "A schedule starts an ordinary run of the chosen connections at the times you set, using each connection's live version at that moment. It never starts a new run while its last one is still going, runs once (not once per missed slot) after the server was off, and pauses itself after three failed runs in a row."),
+  rows.length ? table(["Name", "Connections", "When", "Next run", "Last run", "State", ""], rows) : empty("No schedules yet.", manage ? btn("New schedule", () => run(() => scheduleDialog(p, connections)), "primary", "plus") : null));
+}
+async function scheduleDialog(p, connections) {
+  const live = connections.filter((c) => c.live_version);
+  if (!live.length) { say("This project has no live connection to run yet.", "bad"); return; }
+  const name = el("input", { type: "text", maxlength: "100", "aria-label": "Name", placeholder: "for example Nightly sweep" });
+  const picks = checkList(live.map((c) => ({ name: c.id, description: label(c.type) + ", version " + c.live_version })), new Set(live.map((c) => c.id)), () => true, false);
+  const freq = el("select", { "aria-label": "How often" }, [["daily", "Every day"], ["weekly", "Every week"], ["hourly", "Every hour"]].map(([v, t]) => el("option", { value: v }, t)));
+  const at = el("input", { type: "text", maxlength: "5", value: "02:00", "aria-label": "Time", placeholder: "02:00" });
+  const day = el("select", { "aria-label": "Day of the week" }, WEEKDAYS.map((d, i) => el("option", { value: String(i) }, d)));
+  const dayField = field("Day of the week", day);
+  dayField.hidden = true;
+  const zones = el("datalist", { id: "zones" }, ZONES.map((z) => el("option", { value: z })));
+  const browserZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (_) { return "UTC"; } })();
+  const zone = el("input", { type: "text", list: "zones", value: browserZone, maxlength: "40", "aria-label": "Time zone" });
+  const err = el("p", { class: "bad", hidden: true });
+  freq.addEventListener("change", () => { dayField.hidden = freq.value !== "weekly"; });
+  const created = await dialog("New schedule", el("div", {}, field("Name", name), el("h3", { class: "section" }, "Connections to read"), picks.node, field("How often", freq), dayField,
+    field(freq.value === "hourly" ? "Minutes past the hour (the hour is ignored), 24-hour clock" : "Time, 24-hour clock (for example 02:30)", at), field("Time zone (a name such as Asia/Kolkata)", zone), zones, err), "Save schedule", async () => {
+    try {
+      return await api("POST", "/projects/" + p.id + "/schedules", { name: name.value.trim(), connections: picks.values(), frequency: freq.value, at_time: at.value.trim(),
+        weekday: freq.value === "weekly" ? Number(day.value) : null, timezone: zone.value.trim() });
+    } catch (e) { err.textContent = e.message; err.hidden = false; return undefined; }
+  });
+  if (created) { await viewProject(p.id, "schedules"); say("Schedule saved. Next run: " + when(created.next_run_at) + ".", "good"); }
 }
 
 // ---- audit log ------------------------------------------------------------------------------------------------------------

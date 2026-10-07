@@ -61,6 +61,8 @@ class ApiSettings:
     project_database_url: str | None = None             # template with {project}: one server database per project (production)
     max_concurrent_runs: int = 1                        # runs going at once; the rest wait in the queue (a big run needs the machine's memory)
     max_queued_runs: int = 20                           # runs allowed to wait
+    scheduler_enabled: bool = True                      # start scheduled runs while the API is up (turn off on a second API process)
+    scheduler_interval_s: int = 30                      # how often due schedules are looked for
     export_limit_per_min: int = 6                       # file downloads and database writes of results per person per minute
 
     @property
@@ -97,7 +99,8 @@ class ApiSettings:
             work=Path(os.environ.get("DEDUPE_WORK_DIR", "data/staging")),
             upload_max_bytes=_int("DEDUPE_UPLOAD_MAX_BYTES", 50_000_000), project_database_url=os.environ.get("DEDUPE_PROJECT_DATABASE_URL") or None,
             max_concurrent_runs=_int("DEDUPE_MAX_CONCURRENT_RUNS", 1), max_queued_runs=_int("DEDUPE_MAX_QUEUED_RUNS", 20),
-            export_limit_per_min=_int("DEDUPE_EXPORT_LIMIT_PER_MIN", 6),
+            export_limit_per_min=_int("DEDUPE_EXPORT_LIMIT_PER_MIN", 6), scheduler_enabled=_bool("DEDUPE_SCHEDULER", True),
+            scheduler_interval_s=_int("DEDUPE_SCHEDULER_INTERVAL_S", 30),
         )
         s.validate()
         return s
@@ -141,6 +144,8 @@ class ApiSettings:
                 problems.append("CORS origin '*' is not allowed")
             if not self.project_database_url or "{project}" not in self.project_database_url or self.project_database_url.startswith("sqlite"):
                 problems.append("production needs DEDUPE_PROJECT_DATABASE_URL: a server database URL template containing {project}")
+        if not (5 <= self.scheduler_interval_s <= 3600):
+            problems.append("DEDUPE_SCHEDULER_INTERVAL_S must be between 5 and 3600")
         if not (1 <= self.max_concurrent_runs <= 16) or not (1 <= self.max_queued_runs <= 1000):
             problems.append("DEDUPE_MAX_CONCURRENT_RUNS must be 1-16 and DEDUPE_MAX_QUEUED_RUNS 1-1000")
         if self.max_token_lifetime_s < 60 or self.max_page_size < 1 or self.max_body_bytes < 1024 or self.upload_max_bytes < 1024:

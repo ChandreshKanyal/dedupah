@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from dedupe import crypto
 from dedupe.workspace import ConnectionHealth, RunJobs, Uploads, Workspace
+from dedupe.workspace.schedules import SchedulerThread, Schedules
 
 from .accounts import AccountStore
 from .auth import Principal, TokenVerifier
@@ -28,6 +29,7 @@ from .routes_connections import router as connections_router
 from .routes_projects import router as projects_router
 from .routes_read import router as read_router
 from .routes_results import router as results_router
+from .routes_schedules import router as schedules_router
 from .routes_ui import router as ui_router
 from .routes_write import router as write_router
 from .seclog import EVENTS, SecurityLog
@@ -47,6 +49,7 @@ class Services:
     jobs: RunJobs
     accounts: AccountStore                         # local users and custom roles (main database)
     health: ConnectionHealth                       # connection checks (main database)
+    schedules: Schedules                           # scheduled runs (main database)
     reviews: dict = field(default_factory=dict)    # (project, run, reveal) -> ReviewService, built on first use
 
 
@@ -95,8 +98,17 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     jobs = RunJobs(ws, command, **limits) if command else RunJobs(ws, **limits)
     health = ConnectionHealth(ws.engine)
     accounts = AccountStore(ws.engine)
+
+    def still_active(sub: str) -> bool:                    # local accounts: a disabled or removed person's schedules stop; other sign-ins cannot be asked
+        if settings.auth_mode != "local":
+            return True
+        u = accounts.get(sub)
+        return u is not None and not u.disabled
+
+    schedules = Schedules(jobs, still_active)
     sv = Services(settings, verifier or TokenVerifier(settings, accounts=accounts), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws,
-                  Uploads(ws.engine, ws.upload_dir), jobs, accounts, health)
+                  Uploads(ws.engine, ws.upload_dir), jobs, accounts, health, schedules)
+
     def run_finished(run):
         sv.seclog.record("run_finished", status=None, object_ref=f"{run.project_id}/{run.id}", project_id=run.project_id,
                          detail={"exit_code": run.exit_code, "outcome": run.status})
@@ -105,6 +117,8 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
             for used in run.connections:
                 sv.health.record(run.project_id, used["id"], used.get("version"), "run", ok=run.status == "succeeded", rows=rows.get(used["id"]),
                                  error=None if run.status == "succeeded" else "the run did not finish", actor=run.requested_by)
+
+        sv.schedules.on_run_finished(run)
 
     jobs.on_finish = run_finished
 
@@ -115,7 +129,13 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
             log.warning("LOCAL PASSWORD SIGN-IN IS ON. Prefer your identity provider (DEDUPE_AUTH_MODE=oidc) for real data.")
         if settings.auth_mode == "dev":
             log.warning("DEV AUTHENTICATION IS ON: tokens are signed with a shared secret. Never use this with real data.")
+        scheduler = None
+        if settings.scheduler_enabled:
+            scheduler = SchedulerThread(sv.schedules, settings.scheduler_interval_s, on_error=lambda e: log.error("scheduler tick failed (%s)", type(e).__name__))
+            scheduler.start()
         yield
+        if scheduler is not None:
+            scheduler.stop()
 
     docs = settings.docs_enabled
     app = FastAPI(title="Dedupe API", version="0.1.0", lifespan=lifespan, docs_url="/docs" if docs else None,
@@ -174,5 +194,6 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     app.include_router(write_router)
     app.include_router(connections_router)
     app.include_router(results_router)
+    app.include_router(schedules_router)
     app.include_router(ui_router)
     return app

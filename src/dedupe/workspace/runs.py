@@ -157,6 +157,19 @@ class RunJobs:
                 runs.c.status == "queued", (runs.c.created_at < run.created_at) | ((runs.c.created_at == run.created_at) & (runs.c.id < run.id)))).scalar() or 0
         return ahead + 1
 
+    def build_request(self, project_id: str, ids: list[str]) -> tuple[dict, list[dict]]:
+        """The ingest configuration and the list of versions used, from the LIVE versions of the project's chosen connections right now.
+        Raises RunError for a connection that has no approved live version."""
+        configs = self.ws.stores(project_id)[1]
+        sources, used = [], []
+        for cid in ids:
+            act = configs.active(f"connection/{cid}")
+            if act is None:
+                raise RunError(f"Connection {cid!r} has no approved live version yet.")
+            sources.append(act.content)
+            used.append({"id": cid, "version": act.version})
+        return {"sources": sources}, used
+
     # ---- start -------------------------------------------------------------------------------------------------------
     def start(self, project_id: str, sources: dict, used: list[dict], actor: str, reason: str = "", key: str | None = None) -> tuple[Run, bool]:
         """`sources` is the ingest configuration assembled from the chosen connections' live versions; `used` records which ones.

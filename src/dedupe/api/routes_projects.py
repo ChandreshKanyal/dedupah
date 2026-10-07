@@ -173,7 +173,7 @@ def project_runs(request: Request, project_id: str = PID, limit: int = Query(50,
 @router.post("/projects/{project_id}/runs", response_model=RunView, status_code=202)
 def start_run(request: Request, response: Response, body: StartIn, project_id: str = PID, key: str | None = Depends(_key), p: Principal = START):
     """Start a run over the live versions of the chosen connections (or the same connections as an earlier run)."""
-    ps = project_scope(request, project_id)
+    project_scope(request, project_id)
     sv = _services(request)
     ids = list(body.connections)
     if body.from_run:
@@ -185,15 +185,9 @@ def start_run(request: Request, response: Response, body: StartIn, project_id: s
         raise HTTPException(422, "Choose at least one connection.")
     if len(set(ids)) != len(ids) or any(not _valid(c) for c in ids):
         raise HTTPException(422, "Connection ids must be distinct and well formed.")
-    sources, used = [], []
-    for cid in ids:
-        act = ps.configs.active(f"connection/{cid}")
-        if act is None:
-            raise HTTPException(409, f"Connection {cid!r} has no approved live version yet.")
-        sources.append(act.content)
-        used.append({"id": cid, "version": act.version})
     try:
-        run, replayed = sv.jobs.start(project_id, {"sources": sources}, used, p.sub, body.reason, key)
+        sources, used = sv.jobs.build_request(project_id, ids)
+        run, replayed = sv.jobs.start(project_id, sources, used, p.sub, body.reason, key)
     except RunError as e:
         raise HTTPException(409, str(e)[:300]) from None
     if replayed:
