@@ -277,3 +277,36 @@ details.advanced summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .rule.off strong { color: var(--muted); }
 .conds .cond { margin: 6px 0; }
 .conds select, .conds input { max-width: 320px; }
+
+/* ---- logos, source catalogue and symbols ------------------------------------------------------------------------------ */
+/* Brand logos sit on a light chip in both themes, so dark marks (Snowflake, Oracle) stay readable on the dark background. */
+img.logo-chip { display: inline-block; width: 20px; height: 20px; flex: none; padding: 2px; border-radius: 4px; background: #ffffff; border: 1px solid var(--border); object-fit: contain; vertical-align: middle; }
+img.logo-chip.big { width: 36px; height: 36px; padding: 5px; border-radius: 8px; }
+.type-cell { display: inline-flex; align-items: center; gap: 8px; }
+.page-icon { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; flex: none; border-radius: 8px; background: var(--bg-selected); color: var(--selected-text); }
+.page-icon svg { width: 18px; height: 18px; }
+.tag { display: inline-flex; align-items: center; gap: 4px; }
+.tag svg.icon { width: 12px; height: 12px; stroke-width: 2.25; }
+.stat .label { display: flex; align-items: center; gap: 6px; }
+.stat .label svg { width: 14px; height: 14px; color: var(--link); }
+.tabs button svg { width: 14px; height: 14px; }
+.empty { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.empty-icon svg { width: 28px; height: 28px; color: var(--border-strong); }
+button.tile.source { align-items: center; }
+.tile-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.source-search { width: min(480px, 100%) !important; }
+.source-group h2.section { display: flex; align-items: center; gap: 8px; }
+.count-badge { min-width: 22px; padding: 0 7px; border-radius: 10px; background: var(--bg-selected); color: var(--selected-text); font-size: 12px; font-weight: 600; line-height: 20px; text-align: center; }
+.legend { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; font-size: 12px; }
+.source-facts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.source-facts a { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.source-facts a svg { width: 14px; height: 14px; }
+.notice svg, .hint svg { width: 14px; height: 14px; vertical-align: -2px; }
+.fields.settings { max-width: 980px; }
+.fields .field.full { grid-column: 1 / -1; }
+.field .help { color: var(--muted); font-size: 12px; line-height: 17px; }
+.field > label svg { width: 12px; height: 12px; vertical-align: -1px; margin-right: 4px; color: var(--warn); }
+input.mono { font-family: var(--mono); font-size: 12px; }
+code { padding: 1px 5px; border-radius: 4px; background: var(--bg-subtle); border: 1px solid var(--border); font-family: var(--mono); font-size: 12px; }
+#nav a svg, #new-menu svg { width: 16px; height: 16px; }
+@media (max-width: 520px) { img.logo-chip.big { width: 30px; height: 30px; } .source-facts a { margin-left: 0; } }

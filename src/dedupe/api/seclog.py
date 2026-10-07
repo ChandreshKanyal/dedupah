@@ -11,10 +11,13 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 from pathlib import Path
 
 from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, create_engine, event, select, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from dedupe.schema import create_and_upgrade
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
@@ -22,6 +25,7 @@ from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_ap
 EVENTS = ("auth_failed", "login", "permission_denied", "rate_limited", "request_rejected", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "export", "config_change",
           "judgment_change", "data_deleted", "server_error", "startup")
 
+_WRITE_LOCK = threading.Lock()
 _meta = MetaData()
 security_log = Table(
     "security_log", _meta,
@@ -106,6 +110,20 @@ class SecurityLog:
                object_ref: str = "", detail: dict | None = None, request_id: str = "", client_ip: str = "", project_id: str | None = None) -> int:
         if event_name not in EVENTS:
             raise ValueError(f"unknown security event {event_name!r}")
+        # The chain needs the newest row's id and hash: two requests writing at once would both read the same newest row. PostgreSQL locks the
+        # table; SQLite takes its write lock only at the insert, so writers in this process queue on a lock, and a clash with another process
+        # (same id taken in between) is retried.
+        for attempt in range(8):
+            try:
+                with _WRITE_LOCK:
+                    return self._append(event_name, actor, roles, method, route, status, object_ref, detail, request_id, client_ip, project_id)
+            except IntegrityError:
+                if attempt == 7:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
+        raise RuntimeError("unreachable")
+
+    def _append(self, event_name, actor, roles, method, route, status, object_ref, detail, request_id, client_ip, project_id) -> int:
         with self.engine.begin() as conn:
             if self.engine.dialect.name == "postgresql":
                 conn.execute(text("LOCK TABLE security_log IN EXCLUSIVE MODE"))

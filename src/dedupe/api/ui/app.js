@@ -56,6 +56,27 @@ const PATHS = {
   split: "M6 4v5a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4V4 M12 13v7",
   next: "M9 6l6 6-6 6",
   prev: "M15 6l-6 6 6 6",
+  x: "M6 6l12 12 M18 6 6 18",
+  alert: "M12 4 2.5 20h19z M12 10v4 M12 17h.01",
+  info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 11v5 M12 8h.01",
+  clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7v5l3 2",
+  key: "M14 10a4 4 0 1 0-1.2 2.9L20 20 M17 17l2-2 M15 15l2-2",
+  lock: "M6 11h12v9H6z M8 11V8a4 4 0 0 1 8 0v3",
+  link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1 M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  external: "M14 4h6v6 M20 4l-9 9 M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+  plug: "M9 3v5 M15 3v5 M6 8h12v3a6 6 0 0 1-12 0z M12 17v4",
+  star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
+  layers: "M12 3 3 8l9 5 9-5z M3 13l9 5 9-5 M3 17.5l9 5 9-5",
+  chart: "M4 20V10 M10 20V4 M16 20v-7 M22 20H2",
+  calendar: "M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5",
+  user: "M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M4 21a8 8 0 0 1 16 0",
+  filter: "M3 5h18l-7 8v6l-4 2v-8z",
+  grid: "M4 4h7v7H4z M13 4h7v7h-7z M4 13h7v7H4z M13 13h7v7h-7z",
+  book: "M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z M4 19V5 M8 7h7",
+  zap: "M13 2 4 14h7l-1 8 9-12h-7z",
+  merge: "M6 3v6a6 6 0 0 0 6 6h0a6 6 0 0 1 6 6 M18 3v4 M6 21v-4",
+  home2: "M3 10.5 12 3l9 7.5 M5 9v11h14V9 M10 20v-5h4v5",
+  terminal: "M4 5h16v14H4z M8 10l3 2-3 2 M13 15h4",
 };
 function icon(name) {
   const s = document.createElementNS(SVG, "svg");
@@ -212,6 +233,7 @@ function dispatch(path) {
       return viewRun(b, d, e);
     }
     if (c === "connections" && d) return viewConnection(b, d);
+    if (c === "add-data") return addDataPage(b);
     if (c === "new-run") return newRun(b, 2);
     return viewProject(b, c);
   }
@@ -225,6 +247,8 @@ const SECTIONS = [["/review/decisions", "Decisions"], ["/review", "Review inbox"
 function here(path) {
   writeAddress(path);
   const sec = path === "/" ? "Home" : (SECTIONS.find(([p]) => path.startsWith(p)) || [null, ""])[1];
+  sectionIcon = (NAV.flatMap(([, items]) => items).find(([name]) => name === sec) || [null, null, "home"])[2];
+  if (/\/connections|\/add-data/.test(path)) sectionIcon = "plug";
   for (const a of $("nav").querySelectorAll("a")) {
     if (a.dataset.name === sec) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
@@ -310,7 +334,7 @@ const NAV = [
 ];
 const NEW_MENU = [
   ["New project", "projects.create", "folder", () => newProject()], ["New run", "runs.start", "play", () => newRun()],
-  ["Add data", "sources.manage", "database", () => pickProject("Add data", "Choose the project this data belongs to.", (pid) => go(() => viewProject(pid, "connections")))],
+  ["Add data", "sources.manage", "database", () => pickProject("Add data", "Choose the project this data belongs to.", (pid) => go(() => addDataPage(pid)))],
 ];
 function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
 function go(fn) {
@@ -346,15 +370,17 @@ function buildNav() {
 
 // ---- page building blocks ------------------------------------------------------------------------------------------------
 function show(...nodes) {
-  $("view").replaceChildren(...nodes.filter((n) => n != null && n !== false));
+  $("view").replaceChildren(...nodes.flat(3).filter((n) => n != null && n !== false));      // flat: an array would otherwise print as text
   const h1 = $("view").querySelector("h1");
   document.title = (h1 ? h1.textContent + " - " : "") + "Aurionpro Dedupe";
   if (focusNext && h1) { h1.setAttribute("tabindex", "-1"); h1.focus(); }
   focusNext = false;
 }
-function page(title, subtitle, actions, crumbsNode, extra) {
+let sectionIcon = "home";            // the menu symbol of the screen's section, shown beside its title (set by here())
+function page(title, subtitle, actions, crumbsNode, extra, mark) {
   return el("div", { class: "page-head" },
-    el("div", {}, crumbsNode ? el("div", { class: "crumbs" }, crumbsNode) : null, el("div", { class: "title-row" }, el("h1", {}, title), extra || null), subtitle ? el("p", {}, subtitle) : null),
+    el("div", {}, crumbsNode ? el("div", { class: "crumbs" }, crumbsNode) : null,
+      el("div", { class: "title-row" }, mark || el("span", { class: "page-icon" }, icon(sectionIcon)), el("h1", {}, title), extra || null), subtitle ? el("p", {}, subtitle) : null),
     el("div", { class: "actions" }, actions || []));
 }
 const crumb = (text, path) => el("button", { type: "button", onclick: link(path) }, text);
@@ -365,8 +391,26 @@ const head = (cols) => el("thead", {}, el("tr", {}, cols.map((h) => el("th", { s
 const table = (cols, rows, cls) => el("div", { class: "scroll" + (cls ? " " + cls : "") }, el("table", {}, head(cols), el("tbody", {}, rows)));
 const wide = (cols, rows) => table(cols, rows, "wide");
 const kv = (pairs) => el("table", { class: "kv" }, el("tbody", {}, pairs.filter(Boolean).map(([k, v]) => el("tr", {}, el("th", { scope: "row" }, k), el("td", {}, v)))));
-const empty = (text, ...buttons) => el("div", { class: "empty" }, el("div", {}, text), buttons.filter(Boolean).length ? el("div", { class: "row" }, buttons) : null);
-const tag = (text, kind) => el("span", { class: "tag" + (kind ? " " + kind : "") }, text);
+const empty = (text, ...buttons) => el("div", { class: "empty" }, el("span", { class: "empty-icon" }, icon("layers")), el("div", {}, text),
+  buttons.filter(Boolean).length ? el("div", { class: "row" }, buttons) : null);
+// Every coloured tag carries a symbol as well as a colour, so its meaning does not depend on seeing the colour.
+const TAG_ICON = { success: "check", danger: "x", warn: "alert", info: "info" };
+const tag = (text, kind) => el("span", { class: "tag" + (kind ? " " + kind : "") }, TAG_ICON[kind] ? icon(TAG_ICON[kind]) : null, text);
+// Logos of the products a connection reads from (served from /ui/logos; decorative: the product's name is always written next to them).
+const TYPE_LOGO = { upload: "upload", csv: "csv", tsv: "tsv", xlsx: "xlsx", excel: "xlsx", xls: "xls", json: "json", jsonl: "jsonl", xml: "xml", fixed_width: "fixedwidth",
+  parquet: "parquet", avro: "avro", orc: "orc", folder: "folder", postgres: "postgresql", mysql: "mysql", mariadb: "mariadb", sqlserver: "sqlserver", azure_sql: "azuresql",
+  oracle: "oracle", db2: "db2", rds: "aws", aurora: "aws", sqlite: "sqlite", duckdb: "duckdb", sql: "sql", snowflake: "snowflake", redshift: "aws", bigquery: "bigquery",
+  databricks: "databricks", sftp: "sftp", s3: "aws", gcs: "gcs", azure_blob: "azure", salesforce: "salesforce", hubspot: "hubspot", dynamics365: "dynamics",
+  rest_api: "restapi", mongodb: "mongodb", gsheet: "googlesheets", google_sheets: "googlesheets" };
+const TYPE_TITLE = { upload: "Uploaded file", csv: "CSV", tsv: "TSV", xlsx: "Excel", excel: "Excel", xls: "Old Excel (.xls)", json: "JSON", jsonl: "JSON Lines", xml: "XML",
+  fixed_width: "Fixed-width text", parquet: "Parquet", avro: "Avro", orc: "ORC", folder: "Folder of files", postgres: "PostgreSQL", mysql: "MySQL", mariadb: "MariaDB",
+  sqlserver: "SQL Server", azure_sql: "Azure SQL", oracle: "Oracle", db2: "IBM Db2", rds: "Amazon RDS", aurora: "Amazon Aurora", sqlite: "SQLite", duckdb: "DuckDB",
+  sql: "Database (URL)", snowflake: "Snowflake", redshift: "Amazon Redshift", bigquery: "BigQuery", databricks: "Databricks", sftp: "SFTP", s3: "Amazon S3",
+  gcs: "Google Cloud Storage", azure_blob: "Azure Blob Storage", salesforce: "Salesforce", hubspot: "HubSpot", dynamics365: "Dynamics 365", rest_api: "REST API",
+  mongodb: "MongoDB", gsheet: "Google Sheets", google_sheets: "Google Sheets" };
+const typeTitle = (t) => TYPE_TITLE[t] || label(t);
+const logo = (type, size) => el("img", { class: "logo-chip" + (size ? " " + size : ""), src: "/ui/logos/" + (TYPE_LOGO[type] || "database") + ".svg", alt: "", width: "20", height: "20" });
+const typeCell = (type) => el("span", { class: "type-cell" }, logo(type), typeTitle(type));
 function field(text, input) {
   if (!input.id) input.id = "f" + (++uid);
   if (input.matches && input.matches("input, select, textarea")) input.removeAttribute("aria-label");      // the visible label names it
@@ -378,15 +422,23 @@ function linkRow(first, onopen, ...cells) {
   const b = el("button", { type: "button", class: "link", onclick: (e) => { e.stopPropagation(); open(); } }, first);
   return el("tr", { class: "click", onclick: (e) => { if (!e.target.closest("button, a, input, label")) open(); } }, el("td", {}, b), cells);
 }
-const stat = (text, value, onclick) => (onclick ? el("button", { type: "button", class: "stat", onclick }, el("span", { class: "label" }, text), el("span", { class: "value" }, value))
-  : el("div", { class: "stat" }, el("span", { class: "label" }, text), el("span", { class: "value" }, value)));
+// A symbol for each kind of number, chosen from the label's words, so every stat card has one without each screen naming it.
+const STAT_ICONS = [[/review|waiting|inbox|queue/i, "inbox"], [/household/i, "home2"], [/people|person|customer|member|user/i, "users"],
+  [/record|row/i, "database"], [/pair|match|merge/i, "merge"], [/source|connection/i, "plug"], [/run/i, "play"], [/project/i, "folder"],
+  [/second|time|duration|minute|ago|last/i, "clock"], [/golden/i, "star"], [/precision|recall|rate|%|score|quality/i, "chart"], [/decision|approv/i, "check"],
+  [/schedule/i, "calendar"], [/rule/i, "sliders"]];
+const statIcon = (text) => (STAT_ICONS.find(([re]) => re.test(String(text))) || [null, "grid"])[1];
+const stat = (text, value, onclick) => (onclick ? el("button", { type: "button", class: "stat", onclick }, el("span", { class: "label" }, icon(statIcon(text)), text), el("span", { class: "value" }, value))
+  : el("div", { class: "stat" }, el("span", { class: "label" }, icon(statIcon(text)), text), el("span", { class: "value" }, value)));
 const tile = (ic, title, text, onclick, pressed) => el("button", { type: "button", class: "tile", onclick, "aria-pressed": pressed == null ? null : String(!!pressed) },
-  el("span", { class: "tile-icon" }, icon(ic)), el("span", {}, el("strong", {}, title), el("span", { class: "muted" }, text)));
+  ic instanceof Node ? ic : el("span", { class: "tile-icon" }, icon(ic)), el("span", {}, el("strong", {}, title), el("span", { class: "muted" }, text)));
+const TAB_ICON = { overview: "grid", connections: "plug", runs: "play", schedules: "calendar", results: "download", decisions: "list", rules: "sliders",
+  activity: "clock", access: "users", settings: "sliders", review: "inbox", people: "users", log: "terminal", decision: "merge", survivorship: "star" };
 // Tabs with the keyboard pattern people expect: Left/Right move between tabs, Home/End jump, the panel is labelled by its tab.
 function tabs(list, current, pick) {
   const bar = el("div", { class: "tabs", role: "tablist" }, list.map(([key, text]) =>
     el("button", { type: "button", role: "tab", id: "tab-" + key, "aria-selected": key === current ? "true" : "false", "aria-controls": "tabpanel",
-      tabindex: key === current ? "0" : "-1", onclick: () => run(() => pick(key)) }, text)));
+      tabindex: key === current ? "0" : "-1", onclick: () => run(() => pick(key)) }, TAB_ICON[key] ? icon(TAB_ICON[key]) : null, text)));
   bar.addEventListener("keydown", (e) => {
     const all = [...bar.querySelectorAll("[role=tab]")];
     const i = all.indexOf(document.activeElement);
@@ -711,7 +763,7 @@ async function newRun(pid, step, chosen) {
   if (step === 2) {
     const all = can("config.read") ? await api("GET", P(pid) + "/connections") : [];
     const live = all.filter((c) => c.live_version);
-    const tiles = live.map((c) => tile(TYPE_ICON[c.type] || "database", c.id, label(c.type) + ", " + c.fields_mapped + " fields mapped, version " + c.live_version,
+    const tiles = live.map((c) => tile(logo(c.type, "big"), c.id, typeTitle(c.type) + ", " + c.fields_mapped + " fields mapped, version " + c.live_version,
       () => { if (chosen.has(c.id)) chosen.delete(c.id); else chosen.add(c.id); to(2); }, chosen.has(c.id)));
     show(page("New run", "Project " + projectName(pid) + ". Choose the connections to read; only live connections are listed.",
       [btn("Back", () => (cache.projects.length > 1 ? to(1) : go(() => viewProject(pid)))), btn("Next", () => (chosen.size ? to(3) : say("Choose at least one connection.", "bad")), "primary")], back), bar,
@@ -1237,20 +1289,60 @@ function goldenForm(content, guide, propose) {
 }
 
 // ---- connections (they belong to a project) -------------------------------------------------------------------------------
-const TYPE_ICON = { upload: "upload", csv: "file", tsv: "file", xlsx: "sheet", excel: "sheet", parquet: "columns", gsheet: "cloud", google_sheets: "cloud", sql: "server" };
-const ADD_TILES = [
-  ["upload", "Upload a file", "CSV or Excel from your computer. Checked and stored encrypted."],
-  ["xlsx", "Excel on the server", "An .xlsx workbook in an approved data folder."],
-  ["csv", "CSV on the server", "A CSV or TSV file in an approved data folder."],
-  ["sql", "SQL database", "PostgreSQL, MySQL, SQL Server and more, read-only."],
-  ["gsheet", "Google Sheets", "A sheet shared by link or with an access token."],
-  ["parquet", "Parquet on the server", "A Parquet file in an approved data folder."],
-];
+// The most used sources, shown first on the Connections tab; every other one is on the "All sources" page.
+const POPULAR = ["upload", "xlsx", "csv", "postgres", "oracle", "sqlserver", "mysql", "sftp", "s3", "salesforce"];
+const TESTED = { live: ["Tested here", "success", "Read from real files or a real server in the test suite."],
+  simulated: ["Tested with a stand-in", "info", "Checked against a local server that speaks the same protocol, not the vendor's own service."],
+  unverified: ["Built from the vendor's documentation", "warn", "Not yet run against the real service. Test it with your administrator before relying on it."] };
+let connectorCatalogue = null;
+async function catalogue() {
+  if (!connectorCatalogue) connectorCatalogue = await api("GET", "/connectors");
+  return connectorCatalogue;
+}
+function sourceTile(c, onpick) {
+  const t = TESTED[c.tested];
+  const b = el("button", { type: "button", class: "tile source", onclick: onpick, "data-search": (c.title + " " + c.summary + " " + c.type + " " + c.group).toLowerCase() },
+    el("img", { class: "logo-chip big", src: "/ui/logos/" + c.logo + ".svg", alt: "", width: "32", height: "32" }),
+    el("span", {}, el("strong", {}, c.title), el("span", { class: "muted" }, c.summary),
+      el("span", { class: "tile-tags" }, t ? tag(t[0], t[1]) : null, c.installed ? null : tag("Driver not installed", "danger"))));
+  return b;
+}
+async function addDataPage(pid) {
+  here(P(pid) + "/add-data");
+  const cat = await catalogue();
+  const pick = (type) => run(() => connectionWizard(pid, type));
+  const q = el("input", { type: "search", placeholder: "Search sources: oracle, excel, s3, salesforce...", "aria-label": "Search sources", class: "source-search" });
+  const sections = cat.groups.map((g) => {
+    const items = cat.catalogue.filter((c) => c.group === g);
+    return el("section", { class: "source-group", "data-group": g }, el("h2", { class: "section" }, g, el("span", { class: "count-badge" }, String(items.length))),
+      el("div", { class: "tiles" }, items.map((c) => sourceTile(c, () => pick(c.type)))));
+  });
+  const none = el("p", { class: "muted", hidden: true }, "No source matches. Try another word, or use REST API or Other database (connection URL) for anything not listed.");
+  q.addEventListener("input", () => {
+    const words = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const s of sections) {
+      let n = 0;
+      for (const t of s.querySelectorAll(".tile")) { const ok = words.every((w) => t.dataset.search.includes(w)); t.hidden = !ok; if (ok) n++; }
+      s.hidden = !n;
+      shown += n;
+    }
+    none.hidden = shown > 0;
+  });
+  const legend = el("div", { class: "legend" }, Object.values(TESTED).map(([text, kind, help]) => el("span", {}, tag(text, kind), " ", el("span", { class: "muted" }, help))));
+  show(page("Add data", "Choose where the data comes from. " + cat.catalogue.length + " kinds of source: files, databases, warehouses, cloud storage and applications. "
+    + "Every source is read-only, and passwords are never typed here: they stay in environment variables on the server.",
+  [btn("Back to connections", () => go(() => viewProject(pid, "connections")), "", "prev")],
+  crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), "Add data")),
+  el("div", { class: "row" }, icon("search"), q), legend, none, sections);
+  q.focus();
+}
 async function projectConnections(p, connections) {
   const pid = p.id;
   const uploads = can("sources.manage") ? await api("GET", P(pid) + "/uploads") : [];
   const manage = can("sources.manage");
-  const rows = connections.map((c) => linkRow(c.id, () => viewConnection(pid, c.id), el("td", {}, el("span", { class: "title-row" }, icon(TYPE_ICON[c.type] || "database"), label(c.type))),
+  const cat = manage ? await catalogue() : null;
+  const rows = connections.map((c) => linkRow(c.id, () => viewConnection(pid, c.id), el("td", {}, typeCell(c.type)),
     el("td", { class: "num" }, c.fields_mapped), el("td", {}, c.live_version ? "Version " + c.live_version : el("span", { class: "muted" }, "Not live")),
     el("td", {}, c.latest_status === "active" ? "" : statusTag(c.latest_status)),
     el("td", {}, c.last_check ? tag(c.last_check.ok ? "OK" : "Failed", c.last_check.ok ? "success" : "danger") : el("span", { class: "muted" }, "never")), el("td", {}, when(c.updated_at)),
@@ -1263,8 +1355,10 @@ async function projectConnections(p, connections) {
     say(u.filename + " was deleted.", "good");
   };
   return el("div", {},
-    can("sources.manage") ? el("h2", { class: "section" }, "Add data") : null,
-    can("sources.manage") ? el("div", { class: "tiles" }, ADD_TILES.map(([t, title, text]) => tile(TYPE_ICON[t], title, text, () => run(() => connectionWizard(pid, t))))) : null,
+    manage ? el("div", { class: "title-row" }, el("h2", { class: "section" }, "Add data"),
+      btn("All " + cat.catalogue.length + " sources", () => go(() => addDataPage(pid)), "", "grid")) : null,
+    manage ? el("div", { class: "tiles" }, POPULAR.map((t) => cat.catalogue.find((c) => c.type === t)).filter(Boolean)
+      .map((c) => sourceTile(c, () => run(() => connectionWizard(pid, c.type))))) : null,
     el("div", { class: "title-row" }, el("h2", { class: "section" }, "This project's connections"), copy),
     rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Last check", "Updated", ...(manage ? [""] : [])], rows)
       : empty(can("sources.manage") ? "No connections yet. Add your first data source above; it belongs to this project only." : "No connections yet. Someone who manages data sources adds them."),
@@ -1349,9 +1443,10 @@ async function viewConnection(pid, cid) {
   ].filter(Boolean);
   const changes = pending && live ? await api("GET", base + "/diff?old=" + live.version + "&new=" + latest.version) : null;
   const shown = c.live || c.latest;
-  show(page(cid, label(shown.connector.type) + " connection. " + (live ? "Live version " + live.version + "." : "Not live yet."),
+  show(page(cid, typeTitle(shown.connector.type) + " connection. " + (live ? "Live version " + live.version + "." : "Not live yet."),
     can("sources.manage") ? [btn("Edit", () => run(() => editConnection(pid, cid)), "", "edit")] : [],
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), cid), statusTag(latest.status)),
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), cid), statusTag(latest.status),
+    logo(shown.connector.type, "big")),
   pending ? el("div", { class: "notice", role: "note" }, el("strong", {}, "Version " + latest.version + " waits to be made live. "),
     live ? (changes && changes.length ? "Compared with live version " + live.version + ": " + changes.join("; ") + "." : "It reads the same as the live version.") : "There is no live version yet.") : null,
   el("h2", { class: "section" }, "Versions"),
@@ -1420,8 +1515,56 @@ function withKeys(content, keys) {
   }
   return out;
 }
+// A connector's settings form, built from the catalogue: the right control for each setting, help under it, settings that only apply to another
+// choice hidden (show_if), rarely needed ones under "More settings", secrets only as the NAME of an environment variable.
+function settingsForm(spec, conn, changed, rerender) {
+  const value = (s) => (conn[s.name] !== undefined ? conn[s.name] : s.default);
+  const visible = (s) => Object.entries(s.show_if || {}).every(([k, vals]) => vals.includes(value(spec.settings.find((x) => x.name === k)) || ""));
+  const control = (s) => {
+    let i;
+    if (s.kind === "select") {
+      i = el("select", {}, s.required || s.default != null ? null : el("option", { value: "" }, "(not set)"),
+        s.choices.map((c) => el("option", { value: c, selected: c === value(s) }, c === "\t" ? "Tab" : c)));
+    } else if (s.kind === "textarea") {
+      i = el("textarea", { rows: "3", placeholder: s.placeholder || "", spellcheck: "false" }, value(s) || "");
+    } else {
+      i = el("input", { type: s.kind === "number" ? "number" : "text", value: value(s) || "", placeholder: s.placeholder || (s.kind === "env" ? "DEDUPE_SRC_..." : ""),
+        spellcheck: "false", autocomplete: "off", class: s.kind === "env" || s.kind === "path" ? "mono" : null });
+    }
+    const set = () => { changed(); if (i.value !== "") conn[s.name] = i.value; else delete conn[s.name]; };
+    i.addEventListener(s.kind === "select" ? "change" : "input", () => {
+      set();
+      if (s.kind === "select" && spec.settings.some((x) => x.show_if && x.show_if[s.name])) rerender();
+    });
+    if (s.kind === "env") i.addEventListener("blur", () => { if (i.value && !/^DEDUPE_SRC_[A-Z0-9_]{1,60}$/.test(i.value)) fail(err, "Use a variable name such as DEDUPE_SRC_CRM_PASSWORD.", i); else fail(err, "", i); });
+    const err = errBox();
+    const box = field(s.label + (s.required ? " *" : ""), i);
+    if (s.kind === "env") box.querySelector("label").prepend(icon("key"));
+    if (s.help) box.append(el("span", { class: "help" }, s.help));
+    box.append(err);
+    if (s.kind === "textarea") box.classList.add("full");
+    return box;
+  };
+  for (const s of spec.settings) if (conn[s.name] === undefined && s.default != null && s.name !== "upload_id") conn[s.name] = s.default;
+  const shown = spec.settings.filter((s) => s.name !== "upload_id" && visible(s));
+  const main = shown.filter((s) => !s.advanced);
+  const more = shown.filter((s) => s.advanced);
+  const t = TESTED[spec.tested];
+  return [
+    el("div", { class: "source-facts" }, t ? tag(t[0], t[1]) : null, t ? el("span", { class: "muted" }, t[2]) : null,
+      spec.docs ? el("a", { href: spec.docs, target: "_blank", rel: "noopener noreferrer" }, icon("book"), "Driver documentation", icon("external")) : null),
+    spec.installed ? null : el("div", { class: "notice bad", role: "note" }, icon("alert"), " This server does not have the driver for " + spec.title + " yet. Ask the administrator to run ",
+      el("code", {}, spec.install), ", then restart the service."),
+    spec.note ? el("div", { class: "notice warn", role: "note" }, icon("info"), " " + spec.note) : null,
+    el("p", { class: "hint" }, icon("lock"), " Read-only. Passwords, keys and tokens are never typed here: give the name of an environment variable on the server "
+      + "that holds them (it must start with DEDUPE_SRC_). Fields marked * are required."),
+    el("div", { class: "fields settings" }, main.map(control)),
+    more.length ? el("details", { class: "advanced" }, el("summary", {}, "More settings (" + more.length + ")"), el("div", { class: "fields settings" }, more.map(control))) : null,
+  ];
+}
 async function connectionWizard(pid, type, preset, startStep) {
-  const opts = await api("GET", "/connectors");
+  const opts = await catalogue();
+  const spec = opts.catalogue.find((c) => c.type === type || c.aliases.includes(type));
   const root = P(pid);
   const state = { source: preset || { source_id: "", connector: { type }, record_id: null, fields: {}, attributes: [] }, info: null, step: 1, uploadName: null,
     sample: null, reason: null, decision: null, keys: null };
@@ -1435,10 +1578,10 @@ async function connectionWizard(pid, type, preset, startStep) {
   };
   const render = () => {
     const bar = steps(["Connect", "Map columns", "Preview and save"], state.step, (n) => run(() => goStep(n)));
-    const known = ADD_TILES.find((t) => t[0] === type);
-    const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (known ? known[1] : label(type)),
-      opts.connectors[kind()] ? "Settings: " + opts.connectors[kind()].help : "", [btn("Cancel", () => go(() => (preset ? viewConnection(pid, state.source.source_id) : viewProject(pid, "connections"))))],
-      crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), preset ? state.source.source_id : "Add data"));
+    const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (spec ? spec.title : typeTitle(type)),
+      spec ? spec.summary : "", [btn("Cancel", () => go(() => (preset ? viewConnection(pid, state.source.source_id) : addDataPage(pid))))],
+      crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), preset ? state.source.source_id : "Add data"),
+      null, logo(kind(), "big"));
     if (state.step === 1) show(header, bar, connectStep());
     else if (state.step === 2) show(header, bar, mapStep());
     else show(header, bar, previewStep(), out);
@@ -1473,8 +1616,9 @@ async function connectionWizard(pid, type, preset, startStep) {
   function connectStep() {
     const parts = [el("div", { class: "fields" }, idField())];
     if (kind() === "upload") {
-      const input = el("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx", hidden: true });
-      const status = el("div", { role: "status" }, state.source.connector.upload_id ? "Uploaded " + (state.uploadName || state.source.connector.upload_id) + "." : "CSV, TSV or Excel (.xlsx). The first row must hold the column names.");
+      const input = el("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx,.json,.jsonl,.ndjson,.parquet", hidden: true });
+      const status = el("div", { role: "status" }, state.source.connector.upload_id ? "Uploaded " + (state.uploadName || state.source.connector.upload_id) + "."
+        : "CSV, TSV, Excel (.xlsx), JSON, JSON Lines or Parquet. A text or Excel file's first row must hold the column names.");
       const zone = el("div", { class: "dropzone" }, icon("upload"), el("strong", {}, "Drop a file here"), btn("Choose a file", () => input.click(), "small"), status);
       const send = (f) => run(async () => {
         status.textContent = "Uploading and checking " + f.name + "...";
@@ -1490,14 +1634,16 @@ async function connectionWizard(pid, type, preset, startStep) {
       zone.addEventListener("dragleave", () => zone.classList.remove("over"));
       zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("over"); if (e.dataTransfer.files[0]) send(e.dataTransfer.files[0]); });
       parts.push(zone, input);
-    } else {
+    } else if (spec) {
+      parts.push(...settingsForm(spec, state.source.connector, () => { state.info = null; }, () => render()));
+    } else {                                     // a type the catalogue does not describe (an old connection): plain text settings
       const grid = el("div", { class: "fields" });
-      for (const k of opts.connectors[kind()].settings) {
+      for (const k of (opts.connectors[kind()] || { settings: [] }).settings) {
         const i = el("input", { type: "text", value: state.source.connector[k] || "" });
         i.addEventListener("input", () => { state.info = null; if (i.value) state.source.connector[k] = i.value; else delete state.source.connector[k]; });
         grid.append(field(label(k), i));
       }
-      parts.push(el("p", { class: "hint" }, "Passwords and tokens are never entered here. Give the name of an environment variable that starts with DEDUPE_SRC_."), grid);
+      parts.push(grid);
     }
     parts.push(el("div", { class: "row" }, btn(state.info ? "Next: map columns" : "Open the source and suggest a mapping", () => goStep(2), "primary", "next")));
     return el("div", {}, parts);

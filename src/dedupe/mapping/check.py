@@ -11,7 +11,9 @@ import duckdb
 import pyarrow as pa
 
 from dedupe.connectors import create
+from dedupe.connectors.catalogue import BY_TYPE, allowed_settings
 from dedupe.connectors.guard import ConnectorConfigError
+from dedupe.connectors.records import DriverMissing
 
 from .canonical import CANONICAL_FIELDS
 from .config import IngestConfig, MappingError, SourceConfig, compile_select
@@ -20,20 +22,9 @@ from .suggest import contradicts, record_id_column, suggest
 
 ENV_PREFIX = "DEDUPE_SRC_"
 _ENV_NAME = re.compile(r"^DEDUPE_SRC_[A-Z0-9_]{1,60}$")
-_FILE = {"path", "type"}
-ALLOWED_SETTINGS = {
-    "csv": _FILE | {"delimiter", "encoding"}, "tsv": _FILE | {"delimiter", "encoding"}, "xlsx": _FILE | {"sheet"}, "excel": _FILE | {"sheet"},
-    "parquet": _FILE, "gsheet": {"type", "spreadsheet_id", "gid", "token_env"}, "google_sheets": {"type", "spreadsheet_id", "gid", "token_env"},
-    **{t: {"type", "url_env", "table", "schema", "query"} for t in ("sql", "postgres", "mysql", "rds")},
-    "upload": {"type", "upload_id"},
-}
-SETTING_HELP = {
-    "csv": "path (a file inside an allowed data folder), delimiter, encoding", "tsv": "path, delimiter, encoding", "xlsx": "path, sheet",
-    "parquet": "path", "gsheet": f"spreadsheet_id, gid, token_env (an environment variable name starting with {ENV_PREFIX})",
-    "upload": "upload_id (a file uploaded on the Connections screen)",
-    "sql": f"url_env (an environment variable name starting with {ENV_PREFIX} that holds the database URL), and one of table (+ schema) or query (one SELECT)",
-}
-_TEXT_LIMIT = 500
+ALLOWED_SETTINGS = allowed_settings()          # from the connector catalogue: each type's form fields are its whole allow-list
+SETTING_HELP = {t: ", ".join(s["name"] for s in c["settings"]) for t, c in BY_TYPE.items()}
+_TEXT_LIMIT = 2000
 
 
 class SourceProblem(ValueError):
@@ -48,12 +39,19 @@ def check_connector_settings(conf: dict) -> None:
     if extra:
         raise SourceProblem(f"these settings are not allowed for a {ctype} source: {extra}. Allowed: {SETTING_HELP.get(ctype, '')}. "
                             "Passwords and tokens are never stored here: put them in an environment variable and give its name")
-    for k in ("url_env", "token_env"):
-        if k in conf and not _ENV_NAME.match(str(conf[k])):
-            raise SourceProblem(f"{k} must be an environment variable name starting with {ENV_PREFIX} (capital letters, digits, underscore)")
     for k, v in conf.items():
         if not isinstance(v, str) or len(v) > _TEXT_LIMIT or "\x00" in v:
             raise SourceProblem(f"setting {k!r} must be short text")
+        if k.endswith("_env") and v and not _ENV_NAME.match(v):          # every secret-carrying setting names a variable, never holds the secret
+            raise SourceProblem(f"{k} must be an environment variable name starting with {ENV_PREFIX} (capital letters, digits, underscore)")
+    spec = BY_TYPE[ctype]
+    for s in spec["settings"]:
+        shown = all(conf.get(k, next((x["default"] for x in spec["settings"] if x["name"] == k), None)) in vals for k, vals in (s["show_if"] or {}).items())
+        if s["required"] and shown and not conf.get(s["name"]) and not s["default"] and not (s["name"] != "url_env" and conf.get("url_env") and s["name"] in _DB_FORM):
+            raise SourceProblem(f"{s['label']} is required")
+
+
+_DB_FORM = {"host", "database", "username", "password_env", "account", "project", "dataset", "http_path", "token_env"}
 
 
 def _open(conf: dict):
@@ -65,6 +63,8 @@ def _open(conf: dict):
         return conn
     except SourceProblem:
         raise
+    except DriverMissing as e:
+        raise SourceProblem(str(e)) from None
     except FileNotFoundError:
         raise SourceProblem("the file was not found") from None
     except ConnectorConfigError as e:

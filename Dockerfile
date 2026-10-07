@@ -17,10 +17,14 @@ CMD ["pytest", "-q"]
 FROM base AS runtime
 COPY pyproject.toml ./
 RUN mkdir -p src/dedupe && touch src/dedupe/__init__.py \
-    && pip install -e ".[api,postgres]"
+    && pip install -e ".[api,connectors]"
+# DuckDB extensions for cloud storage and Excel, installed at build time so the server needs no internet access to read S3 / Azure / GCS.
+# SQL Server additionally needs Microsoft's ODBC Driver 18 (see learn.microsoft.com/sql/connect/odbc/linux-mac) plus the "sqlserver" extra.
+ENV DEDUPE_DUCKDB_EXTENSIONS=/opt/duckdb_extensions
+RUN python -c "import duckdb; c = duckdb.connect(); c.execute(\"SET extension_directory = '/opt/duckdb_extensions'\"); [c.execute('INSTALL ' + e) for e in ('httpfs', 'azure', 'aws', 'excel')]"
 COPY src ./src
 COPY configs ./configs
-RUN pip install -e ".[api,postgres]" --no-deps \
+RUN pip install -e ".[api,connectors]" --no-deps \
     && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin dedupe \
     && mkdir /data && chown dedupe /data
 USER 10001

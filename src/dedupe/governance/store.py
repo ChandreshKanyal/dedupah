@@ -25,7 +25,7 @@ from sqlalchemy.engine import Engine
 from dedupe.decision.config import DecisionConfig
 from dedupe.mapping.config import IngestConfig, SourceConfig
 from dedupe.results.config import DestinationConfig
-from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
+from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only, serialized
 from dedupe.survivorship.config import SurvivorshipConfig
 
 from .settings import MatchingSettings
@@ -231,7 +231,7 @@ class ConfigStore:
             raise ConfigError("a change needs a reason")
         content = canonical(name, content)
         chash = content_hash(content)
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             vs = [v for k, v in self._replay(self._rows(conn, name)).items()]
             if any(v.content_hash == chash and v.status in ("active", "approved", "proposed") for v in vs):
                 same = next(v for v in vs if v.content_hash == chash and v.status in ("active", "approved", "proposed"))
@@ -242,7 +242,7 @@ class ConfigStore:
             return new
 
     def approve(self, name: str, version: int, actor: str, reason: str = "") -> None:
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             v = self._version(conn, name, version)
             if v.declined_by or v.status in ("active", "superseded"):
                 raise ConfigError(f"{name} v{version} is {v.status}: it cannot be approved")
@@ -253,7 +253,7 @@ class ConfigStore:
     def decline(self, name: str, version: int, actor: str, reason: str) -> None:
         if not reason:
             raise ConfigError("declining needs a reason")
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             v = self._version(conn, name, version)
             if v.status in ("active", "superseded", "declined"):
                 raise ConfigError(f"{name} v{version} is {v.status}: it cannot be declined")
@@ -261,7 +261,7 @@ class ConfigStore:
 
     def activate(self, name: str, version: int, actor: str, reason: str = "") -> None:
         """Make an approved version the one every later run uses."""
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             v = self._version(conn, name, version)
             if v.status == "active":
                 return
@@ -278,7 +278,7 @@ class ConfigStore:
         needed because that exact content was already approved once. Returns the new version number."""
         if not reason:
             raise ConfigError("a rollback needs a reason")
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             vs = self._replay(self._rows(conn, name))
             old = vs.get((name, to_version))
             if old is None or old.activated_at is None:

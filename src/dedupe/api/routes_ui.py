@@ -42,6 +42,22 @@ def ui_image(name: str):
     return _serve(name + ".png")
 
 
+LOGOS = UI / "logos"
+_LOGO_NAMES = {p.stem for p in LOGOS.glob("*.svg")} if LOGOS.is_dir() else set()
+
+
+@router.get("/ui/logos/{name}.svg", dependencies=[Depends(public())], include_in_schema=False)
+def ui_logo(name: str):
+    """Connector logos: only the files shipped in ui/logos (checked for active content when they were fetched)."""
+    if name not in _LOGO_NAMES:
+        raise HTTPException(404, "Not found")
+    key = "logos/" + name
+    if key not in _cache:
+        _cache[key] = (LOGOS / f"{name}.svg").read_bytes()
+    return Response(_cache[key], media_type="image/svg+xml", headers={"Content-Security-Policy": CSP, "Cache-Control": "public, max-age=86400",
+                                                                       "X-Content-Type-Options": "nosniff"})
+
+
 @router.get("/ui/style.css", dependencies=[Depends(public())], include_in_schema=False)
 def ui_style():
     return _serve("style.css")

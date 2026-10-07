@@ -22,7 +22,7 @@
 **New direction (2026-10-07, section 55):** the user wants images, ID-card OCR and face matching added and "any data" handled by type.
 Research and a phased plan are in [docs/RESEARCH_MULTIMODAL.md](docs/RESEARCH_MULTIMODAL.md) (A: smarter tabular engine; B: documents
 and images; C: faces). The user said "begin" with A. **A1 done (section 56): column types from values.** Next: A2 attribute behaviour
-profiles (confirm with the user first).
+profiles (confirm with the user first). **Section 57 (connector catalogue, 38 source types with logos) done after A1.**
 0. **Pending with the user:** (a) `git push` the local commits (GitHub private repo `ChandreshKanyal/dedupah` has only up to 476e033;
    NEVER add Claude co-author lines, author email chandreshkanyal@gmail.com); (b) the user's portal review of section 54 (Ctrl+F5 after
    a portal restart); (c) decline the walk-through proposals left waiting in the demo `customer-master` project (two matching-rules
@@ -1294,3 +1294,77 @@ suggestion. Every later Phase A step (and images later) starts from knowing what
 3. The screen warned on correct mappings (phone → second phone, token → reference key), and at 80% where the suggestions use 90%.
    - Fix: the server now sends `contradicts` per column, using the same rule as the suggestions (`contradicts()` in `suggest.py`). The
      screen only shows those.
+
+## 57. Connector catalogue: every common source type, with logos (2026-10-07)
+The user asked for every connection type a data platform offers (RDS, PostgreSQL, MySQL, "everything"), built to each vendor's documentation,
+with logos and icons for each (Excel, CSV ...) and more symbols across the portal.
+
+**What:** 38 source types, described once in `connectors/catalogue.py`. The screens build their forms from it, and the settings check uses
+it as its allow-list.
+- **Files on the server:** CSV, TSV, .xlsx, old .xls (xlrd, date cells to ISO), JSON (with records_path), JSON Lines, XML (defusedxml: no
+  DTD or entities; record_tag; nested elements become dotted columns, repeated ones are joined), fixed-width (mainframe layouts), Parquet,
+  Avro, ORC (not on Windows), and a folder of files (pattern, union of columns, `source_file` on each row).
+- **Databases:** PostgreSQL, MySQL, MariaDB, SQL Server and Azure SQL (ODBC 18 always encrypted, or pymssql), Oracle (oracledb thin),
+  IBM Db2, Amazon RDS / Aurora (engine choice), SQLite and DuckDB files (read-only), and any SQLAlchemy URL.
+  - Form settings build the URL with `URL.create`, following each driver's documented format (pinned in tests).
+  - `url_env` still works for every database type.
+- **Warehouses:** Snowflake, Redshift, BigQuery, Databricks SQL.
+- **Storage and transfer:**
+  - SFTP (paramiko): the host key is REQUIRED and checked, with RejectPolicy and no trust on first use. The file is downloaded into the
+    workspace, read, then deleted.
+  - Amazon S3 and S3-compatible stores, Google Cloud Storage (HMAC keys), Azure Blob / ADLS: read through DuckDB httpfs/azure with a
+    temporary secret built from environment variables. Local files are switched off on that connection.
+- **Applications:** a generic REST API (bearer / basic / API key / OAuth2 client credentials; next-link, page, offset or cursor paging;
+  same-host redirects and next links; size caps; 429/5xx retries honouring Retry-After), plus:
+  - Salesforce (client credentials at My Domain, SOQL, nextRecordsUrl);
+  - HubSpot (CRM v3 objects, paging.next.after);
+  - Dynamics 365 / Dataverse (Entra client credentials, OData nextLink);
+  - MongoDB (no $where, $function or $accumulator in filters; secondaryPreferred reads);
+  - Google Sheets.
+- **Uploads** now also take JSON, JSON Lines and Parquet.
+
+**Safety, shared by every connector:**
+- Every `*_env` setting must name a DEDUPE_SRC_ variable; a secret is never typed into the portal.
+- `check_host` refuses cloud metadata addresses (also after DNS resolution) and follows the optional DEDUPE_SOURCE_HOSTS allow-list.
+- https only; plain http only in tests via DEDUPE_SOURCES_ALLOW_HTTP, which is refused in production.
+- Missing drivers give one clear sentence naming the pip extra to install.
+- Optional extras in pyproject: files, sqlserver, oracle, db2, redshift, snowflake, bigquery, databricks, mongodb, sftp, connectors.
+- The Docker image installs the connectors extra and pre-installs the DuckDB extensions (so it needs no internet at run time).
+
+**How each was checked, shown honestly on screen as a badge:**
+- "Tested here": real files; a real PostgreSQL 16 via pgserver, including the read-only transaction refusing nextval; a real paramiko SFTP
+  server, where a wrong host key and a wrong password are both refused.
+- "Tested with a stand-in": S3 via moto's S3 server (moto does not check signatures); REST, Salesforce, HubSpot and Dynamics against a
+  local server answering like the documented APIs; MongoDB via mongomock.
+- "Built from the vendor's documentation": MySQL, MariaDB, SQL Server, Oracle, Db2, Redshift, Snowflake, BigQuery, Databricks, GCS,
+  Azure. Their URLs and settings are pinned in tests, but they have NOT been run against those services.
+
+**Screens:**
+- An "Add data" catalogue page (`#/projects/{p}/add-data`): 6 groups, search, logo tiles with a tested badge and "Driver not installed".
+- The Connections tab shows the 10 most used sources plus "All 38 sources".
+- Forms are generated from the catalogue: the right control per setting, help text, show_if (e.g. cursor paging shows its fields),
+  "More settings", a key symbol on secret fields with a DEDUPE_SRC_ check, a docs link, a driver notice and a lock note.
+- Logos appear in connection lists, connection pages and the New run tiles.
+- **Logos** (`ui/logos`, 44 SVGs from `scripts/fetch_logos.py`, checked for active content, served by a fixed route):
+  - Simple Icons (CC0, brand colours) and devicon (MIT): Oracle, SQL Server, AWS, Azure, Salesforce.
+  - Our own neutral badges for file types and monograms (Db2, Dynamics 365) where no free logo exists. Licences are noted in
+    `logos/LICENSES.md`.
+- **More symbols everywhere:**
+  - tags carry a symbol (check, x, alert, info), so meaning never rests on colour alone;
+  - stat cards get an icon from their label, project and run tabs get icons, and page titles show their section's icon;
+  - empty states get an icon.
+
+**Bugs found on the way, fixed:**
+1. `show()` printed an array as text (the catalogue page). It now flattens like `el()`.
+2. Simultaneous writes to the hash-chained logs took the same next id (SQLite locks only at the insert). Found as 500 errors during rate
+   limiting.
+   - The security log now queues writers on a lock and retries; tested with 200 parallel writes giving one valid chain.
+   - The judgment and configuration stores serialise their write transactions (`serialized()`).
+3. `ui_walkthrough.py` matched the project's Delete button too (selector made exact).
+
+Tests: `test_connectors_catalogue.py` (22) and `test_connectors_remote.py` (8). Live check in Edge, dark and light: 0 problems.
+**Honest limits:**
+- The "vendor documentation" connectors need a real trial before any customer relies on them.
+- IAM database auth for RDS is not supported.
+- Columns of JSON, API and MongoDB sources are discovered from the first 1,000 records.
+- Kafka and other streams are out of scope (batch platform).

@@ -22,9 +22,11 @@ Kinds
 The store works on SQLite (development, tests) and PostgreSQL (production) through SQLAlchemy; the URL comes from the
 DEDUPE_DATABASE_URL environment variable (credentials never live in config files).
 """
+import contextlib
 import hashlib
 import json
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +61,17 @@ judgments = Table(
 )
 
 Key = tuple  # (source_id, source_record_id)
+
+
+# Hash-chained tables read their newest row and then append: two writers at once would both read the same row. PostgreSQL takes a table lock
+# inside the transaction; SQLite locks only at the first write, so the writers of this process queue here first.
+WRITE_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def serialized(engine: Engine):
+    with WRITE_LOCK, engine.begin() as conn:
+        yield conn
 
 
 class JudgmentError(ValueError):
@@ -176,7 +189,7 @@ class JudgmentStore:
 
     def _decide_pair(self, kind, a, b, actor, reason, evidence, requires_approval) -> int:
         subject = _canon_pair(a, b)
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             mine, opposite = [], []
             for j in self._rows_for_subject(conn, subject):
                 if j.status in ("active", "pending_approval") and j.kind in PAIR_KINDS:
@@ -209,18 +222,18 @@ class JudgmentStore:
     def split(self, parts: list[list[Key]], actor: str, reason: str, evidence: dict | None = None, requires_approval: bool = False) -> int:
         if not reason:
             raise JudgmentError("a split needs a reason")
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             return self._append(conn, "split", actor, _canon_split(parts), reason, evidence, None, requires_approval)
 
     def override_field(self, field: str, value: str | None, anchors: list[Key], actor: str, reason: str, evidence: dict | None = None,
                        requires_approval: bool = False) -> int:
         if not reason:
             raise JudgmentError("a field override needs a reason")
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             return self._append(conn, "field_override", actor, _canon_override(field, value, anchors), reason, evidence, None, requires_approval)
 
     def revoke(self, judgment_id: int, actor: str, reason: str = "") -> int:
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             j = self._get(conn, judgment_id)
             if j.kind in META_KINDS:
                 raise JudgmentError("only decisions can be revoked")
@@ -229,7 +242,7 @@ class JudgmentStore:
             return self._append(conn, "revoke", actor, "{}", reason, None, judgment_id)
 
     def approve(self, judgment_id: int, actor: str, reason: str = "") -> int:
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             j = self._get(conn, judgment_id)
             if not j.requires_approval or j.status != "pending_approval":
                 raise JudgmentError(f"judgment {judgment_id} is not waiting for approval (status: {j.status})")
@@ -240,7 +253,7 @@ class JudgmentStore:
     def decline(self, judgment_id: int, actor: str, reason: str) -> int:
         if not reason:
             raise JudgmentError("declining needs a reason")
-        with self.engine.begin() as conn:
+        with serialized(self.engine) as conn:
             j = self._get(conn, judgment_id)
             if not j.requires_approval or j.status != "pending_approval":
                 raise JudgmentError(f"judgment {judgment_id} is not waiting for approval (status: {j.status})")

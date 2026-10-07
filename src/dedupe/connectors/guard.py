@@ -69,6 +69,72 @@ def check_select_only(query: str) -> str:
     return query
 
 
+# ---- network hosts (databases, SFTP, REST APIs, object storage endpoints) ----------------------------------------------
+_HOST = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$")
+# Cloud instance metadata services hand out the server's own credentials: no source may ever point there.
+_METADATA = ("169.254.", "fd00:ec2::254", "metadata.google.internal", "metadata.azure.com", "100.100.100.200")
+
+
+def allow_insecure_http() -> bool:
+    """Plain http and any host, for local tests only (never in production)."""
+    return os.environ.get("DEDUPE_SOURCES_ALLOW_HTTP") == "1" and not _production()
+
+
+def check_host(host: str, what: str = "host") -> str:
+    """A host name or IP address: well formed, not a cloud metadata address (also after DNS resolution), and inside DEDUPE_SOURCE_HOSTS when that
+    allow-list is set (comma separated; '*.example.com' allows sub-domains). Production deployments should set the allow-list."""
+    import ipaddress
+    import socket
+    h = (host or "").strip().strip("[]")
+    try:
+        ipaddress.ip_address(h)
+        is_ip = True
+    except ValueError:
+        is_ip = False
+    if not h or (not is_ip and not _HOST.match(h)):
+        raise ConnectorConfigError(f"{what} must be a host name or an IP address")
+    low = h.lower().rstrip(".")
+    if low.startswith(_METADATA) or low in _METADATA:
+        raise ConnectorConfigError(f"{what} points at a cloud metadata service, which is never allowed")
+    allowed = [a.strip().lower() for a in os.environ.get("DEDUPE_SOURCE_HOSTS", "").split(",") if a.strip()]
+    if allowed and not any(low == a or (a.startswith("*.") and low.endswith(a[1:])) for a in allowed):
+        raise ConnectorConfigError(f"this {what} is not on the list of hosts sources may connect to (DEDUPE_SOURCE_HOSTS)")
+    try:
+        addrs = {i[4][0] for i in socket.getaddrinfo(h, None)} if not is_ip else {h}
+    except OSError:
+        return h                                    # unknown name: the driver reports that it cannot connect
+    for a in addrs:
+        ip = ipaddress.ip_address(a.split("%")[0])
+        if ip.is_link_local or str(ip) in _METADATA:
+            raise ConnectorConfigError(f"{what} resolves to a link-local or metadata address, which is never allowed")
+    return h
+
+
+def check_url(url: str, what: str = "URL") -> str:
+    """An https URL (http only in local tests) whose host passes check_host; no user name or password inside the URL."""
+    u = urlparse(url or "")
+    if u.scheme not in ("https", "http") or (u.scheme == "http" and not allow_insecure_http()):
+        raise ConnectorConfigError(f"{what} must start with https://")
+    if u.username or u.password:
+        raise ConnectorConfigError(f"{what} must not contain a user name or password: use the credential settings")
+    check_host(u.hostname or "", what + " host")
+    return url
+
+
+class SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to the same scheme and host, so a credential header never travels to another server."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        a, b = urlparse(req.full_url), urlparse(newurl)
+        if (a.scheme, a.hostname, a.port) != (b.scheme, b.hostname, b.port):
+            raise URLError("a redirect to another host was refused")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def same_host_opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(SameHostRedirect)
+
+
 # ---- Google Sheets ---------------------------------------------------------------------------------------------------
 _SHEET_ID = re.compile(r"[A-Za-z0-9_-]{10,100}")
 _GID = re.compile(r"\d{1,20}")

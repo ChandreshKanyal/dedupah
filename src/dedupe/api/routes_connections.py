@@ -13,6 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
+from dedupe.connectors.catalogue import GROUPS
+from dedupe.connectors.catalogue import C as CATALOGUE
+from dedupe.connectors.catalogue import public as catalogue_public
 from dedupe.governance.diff import describe_changes
 from dedupe.governance.store import ConfigError
 from dedupe.mapping.canonical import CANONICAL_FIELDS
@@ -110,6 +113,7 @@ def _summary(configs, name: str) -> dict:
 @router.get("/connectors")
 def options(p: Principal = MANAGE):
     return {"connectors": {t: {"settings": sorted(ALLOWED_SETTINGS[t] - {"type"}), "help": h} for t, h in SETTING_HELP.items()},
+            "catalogue": [catalogue_public(c) for c in CATALOGUE], "groups": GROUPS,
             "canonical_fields": list(CANONICAL_FIELDS), "field_help": CANONICAL_FIELDS, "field_groups": FIELD_GROUPS}
 
 

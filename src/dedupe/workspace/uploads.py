@@ -22,7 +22,7 @@ from dedupe.connectors.base import to_string_table
 from dedupe.schema import create_and_upgrade
 
 UPLOAD_ID = r"^U[0-9a-f]{12}$"
-KINDS = {".csv": "csv", ".tsv": "tsv", ".txt": "csv", ".xlsx": "xlsx"}
+KINDS = {".csv": "csv", ".tsv": "tsv", ".txt": "csv", ".xlsx": "xlsx", ".json": "json", ".jsonl": "jsonl", ".ndjson": "jsonl", ".parquet": "parquet"}
 MAX_COLUMNS = 300
 MAX_ROWS = 2_000_000
 MAX_HEADER = 100
@@ -101,8 +101,12 @@ def _sniff(path: Path, filename: str) -> str:
         return "xlsx"
     if ext == ".xls" or head.startswith(b"\xd0\xcf\x11\xe0"):
         raise UploadError("old .xls files are not supported: save the sheet as .xlsx or CSV")
-    if ext not in KINDS or KINDS[ext] == "xlsx":
-        raise UploadError("upload a .csv, .tsv or .xlsx file")
+    if head.startswith(b"PAR1"):
+        if ext not in (".parquet", ""):
+            raise UploadError("the file content is Parquet but its name says otherwise")
+        return "parquet"
+    if ext not in KINDS or KINDS[ext] in ("xlsx", "parquet"):
+        raise UploadError("upload a .csv, .tsv, .xlsx, .json, .jsonl or .parquet file")
     if b"\x00" in head:
         raise UploadError("the file is not text")
     try:
@@ -161,6 +165,14 @@ def _excel_batches(path: Path):
         fh.close()
 
 
+def _reader_batches(path: Path, kind: str):
+    """JSON, JSON Lines and Parquet uploads, through the same readers as server files (nested fields become dotted columns)."""
+    from dedupe.connectors.files import read_local
+    r = read_local(kind, path, {})
+    yield _header(r.columns())
+    yield from r.read_batches(BATCH)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -190,7 +202,7 @@ class Uploads:
                     digest.update(chunk)
             uid = "U" + uuid.uuid4().hex[:12]
             out = self.path(uid)
-            batches = _excel_batches(raw) if kind == "xlsx" else _text_batches(raw, kind)
+            batches = _excel_batches(raw) if kind == "xlsx" else _reader_batches(raw, kind) if kind in ("json", "jsonl", "parquet") else _text_batches(raw, kind)
             try:
                 names = next(batches)
             except UploadError:

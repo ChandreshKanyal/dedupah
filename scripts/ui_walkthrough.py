@@ -79,7 +79,7 @@ with sync_playwright() as pw:
 
     # a project, every tab
     page.click("#nav a[data-name='Projects']"); wait(page)
-    page.get_by_role("button", name="Customer master").click(); wait(page)
+    page.get_by_role("button", name="Customer master", exact=True).click(); wait(page)
     tabs = page.locator("[role=tab]").all_inner_texts()
     print("project tabs:", tabs)
     for t in tabs:
