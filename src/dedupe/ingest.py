@@ -44,6 +44,15 @@ def ingest(config_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
     dupes = con.execute(
         f"SELECT source_id, count(*) - count(DISTINCT source_record_id) AS d FROM {crypto.rp_param()} "
         "GROUP BY 1 HAVING d > 0", [str(out_path)]).fetchall()
+    if dupes:
+        # A record id used twice in one source (a re-export, a bad key column) would make every later join ambiguous. The first row
+        # keeps the id, later ones become '<id>#2', '#3'... in file order; the count is reported so the source can be fixed.
+        tmp = out_path.with_name(out_path.stem + ".dedup.parquet")
+        con.execute(f"""COPY (SELECT * EXCLUDE (n, file_row_number) REPLACE (CASE WHEN n > 1 THEN source_record_id || '#' || n ELSE source_record_id END
+                                                                         AS source_record_id)
+            FROM (SELECT *, row_number() OVER (PARTITION BY source_id, source_record_id ORDER BY file_row_number) AS n
+                  FROM {crypto.rp(out_path, row_numbers=True)}) ORDER BY file_row_number) TO '{tmp}' ({crypto.fmt()})""")
+        tmp.replace(out_path)
     return {"records": stats, "total": sum(stats.values()), "duplicate_source_record_ids": dict(dupes),
             "output": str(out_path)}
 

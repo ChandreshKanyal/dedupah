@@ -100,9 +100,10 @@ def require_in_production(env: str) -> None:
 _CFG = f"encryption_config={{footer_key: '{KEY_NAME}'}}"
 
 
-def rp(path) -> str:
-    """read_parquet('<path>') that also decrypts when a key is set."""
-    return f"read_parquet('{path}', {_CFG})" if enabled() else f"read_parquet('{path}')"
+def rp(path, row_numbers: bool = False) -> str:
+    """read_parquet('<path>') that also decrypts when a key is set; `row_numbers` adds file_row_number (the row's position in the file)."""
+    opts = ([_CFG] if enabled() else []) + (["file_row_number = true"] if row_numbers else [])
+    return f"read_parquet('{path}'{''.join(', ' + o for o in opts)})"
 
 
 def rp_param() -> str:

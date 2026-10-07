@@ -96,6 +96,7 @@ def headline(work: Path) -> dict:
             "judgments": s.get("judgments"),
             "source_quality": (s.get("standardise") or {}).get("profile"),
             "incremental": s.get("incremental"),
+            "duplicate_record_ids": (s.get("ingest") or {}).get("duplicate_source_record_ids") or {},
             "golden": {k: (s.get("golden_record") or {}).get(k) for k in ("trust_order", "auto_ranked_sources", "sources_without_dates", "shared_values_passed_over",
                                                                      "values_with_source_conflict")} if s.get("golden_record") else None}
 

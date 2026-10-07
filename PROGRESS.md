@@ -5,11 +5,12 @@
 
 ## >>> RESUME HERE (latest state: end of session 1, after the portal audit) <<<
 
-**One-line status:** a working, branded (Aurionpro) portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; run queue and schedules; results export to files and databases; a dedicated Review section for the human in the loop; deleting runs and projects; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported). **349 tests + 3 skipped, ruff and bandit clean, two live click-throughs in Edge with 0 problems.** EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
+**One-line status:** a working, branded (Aurionpro) portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; run queue and schedules; results export to files and databases; a dedicated Review section for the human in the loop; deleting runs and projects; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported). **377 tests + 3 skipped, ruff and bandit clean, live click-throughs in Edge with 0 problems (section 53 adds golden-record rules, incremental runs, messy-data handling).** EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| b40b181..(this) | **Golden records and matching across any sources ("fix all and thoroughly").** Golden values by record date, automatic/chosen source trust, per-field trust and quality, from a form; customer columns carried; no-ID recall measured correctly (0.89); per-source data quality; incremental runs; awkward data shapes handled | 53 |
 | bdd3186 | **Portal audit and fixes.** Three audits (flows, accessibility/design, human-in-the-loop) found ~70 problems, 11 blockers; all blockers fixed. Screen addresses with Back/Forward/reload; Review section (Review inbox, decide-and-next compare page with keys S/D/U/N/P and Undo, Decisions list with undo, split a person, correct a golden value, bulk decide, score filter, paging); Approvals with evidence; delete runs / projects / unused uploads (new permission `data.delete`); rename project; edit schedules; rules editor starts from defaults; newest-first audit log; accessibility (keyboard rows, labels, dialogs, focus, contrast; accent is now the brand teal); browser-tab icon | 52 |
 | f89eb7f | Results tab and "Get the results" button on the run page | - |
 | cd11c18 | **Scoring when a file has no identifiers** (the user's Trial file scored an obvious duplicate 48.6%): learns weights from the data itself (EM) when IDs cannot teach them, says which mode scored a run, odd inputs never break a run | 51 |
@@ -18,7 +19,7 @@
 
 ### NEXT (suggested order; confirm with the user before starting any of them)
 1. **User reviews the portal again** (Ctrl+F5 first). Expect small usability fixes; collect them before building anything new. Quickest tour: Review inbox -> Start reviewing.
-2. **Golden records and matching across any sources: phase in progress (section 53).** Steps 1-5 done; 6 (incremental runs) and 7 (odd data shapes) next.
+2. **Next accuracy work (optional):** pairs that share only a name (one record has the phone, the other the birth date) are the remaining misses without IDs; they need more data, not more rules (section 53 step 4). Golden-record stage is now the slowest part of an incremental run.
 3. **Remaining review-section gaps** (section 52 "Not done"): assign/claim pairs to reviewers, ageing/SLA and reviewer statistics, comments on pairs; retire a connection or destination; search for connections and people; the Approvals page makes several requests per project (slow with many projects); light-theme users see a dark flash on load.
 4. **Erasure and retention:** deleting runs, projects and uploads now exists. Still waiting for the user's three answers: are we the processor; may backups expire by retention; build only the machinery and leave the legal rules to customer configuration.
 5. **Notifications** (email/chat) when a run fails or a schedule pauses.
@@ -1117,3 +1118,33 @@ run (about 4 s at 10k records).
 changed since a timestamp); reused scores keep the term frequencies of the run that made them, so a common value becoming more common is
 only noticed by a full re-run; "same people as a full run" is not guaranteed because a full run re-learns the model (tests check precision
 and recall within 0.03 of a full run on synthetic data). Tests: `tests/test_incremental.py` (4).
+
+**Step 7 (done): data in awkward shapes** (`src/dedupe/standardise/oddities.py`, used by standardisation). Tested the old cleaning on
+common real-world shapes first and found: two phones in one cell were LOST; a phone stored as `9876543210.0` (a number column) was lost;
+a phone in scientific notation was turned into a WRONG number (9.87654321E9 -> 9876543219); `17-May-90`, `1990-05-17 00:00:00`,
+`May 17, 1990` and Excel serial dates were not read; emails with a stray space (`name@example. com`, 39 of 200 rows in the user's Trial
+file) were lost; placeholder names ("Unknown", "Test", "NA"), company rows, joint names ("Rahul & Anita Sharma") and "Rahul S/O Ramesh"
+went through as ordinary people. Now:
+- phones: every valid mobile in a cell is kept (first = main, next = alternate); `.0` removed; scientific notation read exactly when it
+  still holds 9+ significant digits, otherwise refused (`phone_digits_lost`: never guess digits);
+- emails: first real address in a cell; spaces around `.`/`@` repaired; placeholders judged by the part before the @ only (test@, none@,
+  na@...); a domain alone (example.com) is NOT a placeholder, because test files give each person their own address there;
+- names: placeholder names emptied; "S/O, D/O, W/O, C/O, son of..." split into name and father's/husband's name (used when no father's name
+  is given); joint names keep the first person; company names (Pvt, Ltd, LLP, Traders, Enterprises, Trust, Hospital, HUF...) are flagged
+  `organisation` and, like a header line repeated inside the data, kept OUT of matching (`skip_matching`: still in the output, never paired);
+- dates: a time part, two-digit years with a month name, "May 17, 1990" and Excel serial numbers are read;
+- duplicate record ids within a source: later copies become `<id>#2`, `#3`... in file order (nothing lost, nothing joined twice); count reported.
+Per record the flags are stored (names, never values); the run page shows "Unusual data found and how it was handled" per source.
+STANDARDISE_VERSION raised to 2 (earlier runs are not reused by incremental runs).
+**Checked:** synthetic benchmark unchanged (seed 101, 300 households: with IDs 0.9977/0.8575, without 0.9965/0.8941) and NO synthetic
+person flagged as company or placeholder; on the user's Trial file usable emails rose from 155 to 194 of 200 and nothing was flagged.
+Live portal (Edge): two runs of the demo project, the second reused the first (8,178 records unchanged, 12,430 pair scores reused,
+7.4 s); new sections render. Fixed on the way: the run-finished message showed a stray "null" (and two other panels could): `fill()`.
+**Honest limits:** the company and placeholder word lists are hand-written for Indian data and will need tuning on real files (a person
+named after a word in the list would be flagged; nothing is deleted, the record is only kept out of matching and counted); joint names keep
+only the first person; scientific-notation phones with fewer than 9 digits are dropped, not repaired. Tests: `tests/test_oddities.py` (13).
+
+**Phase result (section 53, all on SYNTHETIC data):** golden records now choose by each record's own date, an automatic or chosen source
+order, per-field trust and value quality, set from a form; customers' own columns reach the golden record; matching without identifiers is
+measured correctly (recall ~0.89, precision ~0.99); every run reports per-source data quality and unusual data; repeat runs reuse unchanged
+records' work (about 2x faster at 10k records, more as data grows); awkward data shapes are handled instead of silently lost.

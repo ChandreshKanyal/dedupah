@@ -26,7 +26,7 @@ MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's o
 CREATE = Depends(require("projects.create"))
 DELETE_DATA = Depends(require("data.delete"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
-SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden", "source_quality", "incremental")
+SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden", "source_quality", "incremental", "duplicate_record_ids")
 
 
 class Strict(BaseModel):

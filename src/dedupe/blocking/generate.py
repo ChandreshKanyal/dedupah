@@ -22,9 +22,12 @@ def generate(std_path: Path, out_path: Path, rules: list[Rule] | None = None, ca
     con.execute(f"""CREATE OR REPLACE TABLE records AS
         SELECT row_number() OVER (ORDER BY source_id, source_record_id) - 1 AS rid, * FROM {crypto.rp(std_path)}""")
     con.execute("CREATE OR REPLACE TABLE rule_pairs (rule VARCHAR, l BIGINT, r BIGINT)")
+    skip = "skip_matching" in [r[0] for r in con.execute("DESCRIBE records").fetchall()]
     stats = {}
     for rule in rules:
         con.execute(f"CREATE OR REPLACE TEMP TABLE k AS SELECT DISTINCT rid, key FROM ({rule.sql})")
+        if skip:                          # companies and repeated header lines: in the output, but never paired with anyone
+            con.execute("DELETE FROM k WHERE rid IN (SELECT rid FROM records WHERE skip_matching)")
         con.execute("CREATE OR REPLACE TEMP TABLE blocks AS SELECT key, count(*) n FROM k GROUP BY key HAVING count(*) > 1")
         capped = con.execute(f"SELECT count(*), coalesce(sum(n), 0) FROM blocks WHERE n > {cap}").fetchone()
         one_side = ""

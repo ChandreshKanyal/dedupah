@@ -102,14 +102,16 @@ function initTheme() {
 
 // ---- messages and dialogs ----------------------------------------------------------------------------------------------
 // One message at a time, fixed to the corner so it is seen wherever the page is scrolled. It may carry one action (for example Undo).
+// replaceChildren prints a null or false as text: fill() leaves them out, like el() does
+const fill = (node, ...kids) => node.replaceChildren(...kids.flat(3).filter((k) => k != null && k !== false));
 function say(msg, kind, action) {
   const b = $("banner");
   b.hidden = !msg;
   b.className = kind || "";
   b.setAttribute("role", kind === "bad" ? "alert" : "status");
   if (!msg) { b.replaceChildren(); return; }
-  b.replaceChildren(el("span", { class: "msg" }, msg), action ? btn(action.label, action.fn, "small", action.icon) : null,
-    btn("Dismiss", () => say(""), "small ghost"));
+  b.replaceChildren(...[el("span", { class: "msg" }, msg), action ? btn(action.label, action.fn, "small", action.icon) : null,
+    btn("Dismiss", () => say(""), "small ghost")].filter(Boolean));          // replaceChildren would print a null as the text "null"
 }
 // A button that cannot be pressed twice: it is disabled while its action runs, so a double click never starts two runs or writes rows twice.
 function btn(text, onclick, cls, ic, attrs) {
@@ -789,6 +791,18 @@ function scoringNotice(s) {
     "There are too few identifiers and too little data to learn how much each field matters, so every pair sits near 50% and goes to review. " +
     "Add records or identifiers, or decide these pairs by hand.");
 }
+// What the cleaning noticed in awkward data (standardise/oddities.py), in words, with what it did about it.
+const ODDITY = {
+  multi_phone: ["Two or more phone numbers in one cell", "The first became the main number, the next the alternate"],
+  multi_email: ["Two or more emails in one cell", "The first real one was used"],
+  phone_digits_lost: ["Phone stored as a rounded number (like 9.87654E+09)", "Not used: the missing digits cannot be recovered. Store phones as text in the source"],
+  placeholder_name: ["Placeholder name (Unknown, Test, NA...)", "Treated as no name; never matched on"],
+  placeholder_email: ["Placeholder email (test@, none@...)", "Treated as no email; never matched on"],
+  joint_name: ["Two people in one name (Rahul & Anita Sharma)", "The first person was kept"],
+  relation_in_name: ["Relation inside the name (Rahul S/O Ramesh)", "Name and father's name separated"],
+  organisation: ["Looks like a company, not a person", "Kept in the results as its own record, never matched with a person"],
+  header_row: ["Header line repeated inside the data", "Kept out of matching"],
+};
 function runOverview(r) {
   const s = r.summary;
   const j = s.judgments;
@@ -819,6 +833,16 @@ function runOverview(r) {
       table(["Source", ["Records"], ...cols.map(([, t]) => [t]), "Rejected values"], Object.entries(q).map(([src, x]) => el("tr", {}, el("td", { class: "mono" }, src),
         el("td", { class: "num" }, num(x.records)), cols.map(([k]) => el("td", { class: "num" }, pct(x.filled[k] || 0, x.records))),
         el("td", {}, Object.entries(x.invalid || {}).map(([f, n]) => label(f) + " " + num(n)).join(", ") || "None")))));
+    const oddRows = Object.entries(q).flatMap(([src, x]) => Object.entries(x.oddities || {}).map(([k, n]) => el("tr", {}, el("td", { class: "mono" }, src),
+      el("td", {}, (ODDITY[k] || [label(k), ""])[0]), el("td", { class: "num" }, num(n)), el("td", {}, (ODDITY[k] || ["", ""])[1]))));
+    for (const [src, n] of Object.entries(s.duplicate_record_ids || {})) {
+      oddRows.push(el("tr", {}, el("td", { class: "mono" }, src), el("td", {}, "The same record id used more than once"), el("td", { class: "num" }, num(n)),
+        el("td", {}, "Later copies were renamed <id>#2, #3... so none is lost. Fix the id column in the source")));
+    }
+    if (oddRows.length) {
+      parts.push(el("h2", { class: "section" }, "Unusual data found and how it was handled"),
+        table(["Source", "What", ["Records"], "What was done"], oddRows));
+    }
   }
   const g = s.golden;
   if (g && g.trust_order) {
@@ -865,7 +889,7 @@ async function rulesPanel(p, name) {
   const view = async (v) => {
     const [content, changes] = await Promise.all([api("GET", base + "/versions/" + v.version),
       live && live.version !== v.version ? api("GET", base + "/diff?old=" + live.version + "&new=" + v.version) : null]);
-    result.replaceChildren(el("h3", { class: "section" }, "Version " + v.version + (live && live.version !== v.version ? ": what changes compared with live version " + live.version : "")),
+    fill(result, el("h3", { class: "section" }, "Version " + v.version + (live && live.version !== v.version ? ": what changes compared with live version " + live.version : "")),
       changes ? (changes.length ? el("ul", { class: "plain" }, changes.map((c) => el("li", {}, c))) : el("p", { class: "muted" }, "No difference.")) : null,
       el("pre", { class: "log", tabindex: "0" }, JSON.stringify(content.content, null, 2)));
     result.scrollIntoView({ block: "nearest" });
@@ -1242,7 +1266,7 @@ async function connectionWizard(pid, type, preset) {
     const doPreview = () => run(async () => {
       const r = await api("POST", root + "/connections/preview", state.source);
       const cols = Object.keys(r.rows[0] || {}).filter((c) => c !== "attributes" && r.rows.some((row) => row[c] != null));
-      out.replaceChildren(el("h3", { class: "section" }, "Fields filled in " + r.sample_size + " sample rows"),
+      fill(out, el("h3", { class: "section" }, "Fields filled in " + r.sample_size + " sample rows"),
         table(["Field", ["Rows filled"]], Object.entries(r.filled).map(([f, n]) => el("tr", {}, el("td", {}, label(f)), el("td", { class: "num" }, n + " of " + r.sample_size)))),
         r.rows.length ? el("h3", { class: "section" }, "Standardised sample (values are shortened)") : null,
         r.rows.length ? wide(cols, r.rows.map((row) => el("tr", {}, cols.map((c) => el("td", {}, row[c] == null ? "" : row[c]))))) : null);

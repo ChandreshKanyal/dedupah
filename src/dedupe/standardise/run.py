@@ -17,6 +17,7 @@ from dedupe import crypto
 
 from . import dates
 from . import identifiers as ids
+from . import oddities as odd
 from .addresses import parse_address
 from .names import parse_name
 
@@ -34,7 +35,7 @@ SCHEMA = pa.schema([
     ("aadhaar_token", S), ("aadhaar_last4", S),
     ("passport_no", S), ("dl_no", S), ("voter_id", S),
     ("address_norm", S), ("address_pin", S), ("address_house", S), ("address_alt_norm", S), ("city", S), ("state", S),
-    ("record_date", S), ("supplied_fields", S), ("invalid_fields", S),
+    ("record_date", S), ("supplied_fields", S), ("invalid_fields", S), ("oddities", S), ("skip_matching", B),
 ])
 _GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O"}
 _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt",
@@ -53,11 +54,18 @@ _VALIDATION = {
 
 
 def standardise_row(r: dict) -> dict:
-    name = parse_name(r["full_name"])
-    father, related = parse_name(r["father_name"]), parse_name(r["related_name"])
-    d = dates.parse_dob(r["dob"])
+    # awkward shapes first (several values in a cell, placeholders, companies, joint names, odd dates): see oddities.py
+    name_raw, father_in_name, flags = odd.name(r["full_name"])
+    name = parse_name(name_raw)
+    father, related = parse_name(r["father_name"] or father_in_name), parse_name(r["related_name"])
+    d = dates.parse_dob(odd.dob_text(r["dob"]))
     by_min, by_max = dates.birth_year_range(d[1], r.get("age"), r.get("record_date"))
-    em, em_key, em_dom = ids.email(r["email"])
+    mains, f1 = odd.phones(r["mobile"])
+    alts, f2 = odd.phones(r["mobile_alt"])
+    phone_list = list(dict.fromkeys(mains + alts))
+    email_raw, f3 = odd.email(r["email"])
+    flags |= f1 | f2 | f3
+    em, em_key, em_dom = ids.email(email_raw)
     pan, pan_fixed = ids.pan(r["pan"])
     tok, last4 = ids.aadhaar(r["aadhaar"])
     if not tok:                       # the customer's vault reference key: same strength as the keyed token, separate namespace
@@ -79,7 +87,7 @@ def standardise_row(r: dict) -> dict:
         "dob": d[0], "dob_year": d[1], "dob_month": d[2], "dob_day": d[3], "dob_precision": d[4], "dob_placeholder": d[5] if d[4] else None,
         "birth_year_min": by_min, "birth_year_max": by_max,
         "gender": _GENDER.get((r["gender"] or "").strip().lower()),
-        "mobile": ids.phone(r["mobile"]), "mobile_alt": ids.phone(r["mobile_alt"]),
+        "mobile": phone_list[0] if phone_list else None, "mobile_alt": phone_list[1] if len(phone_list) > 1 else None,
         "email": em, "email_key": em_key, "email_domain": em_dom,
         "pan": pan, "pan_repaired": pan_fixed if pan else None,
         # PAN's 5th character is the initial of the holder's surname *at issue time*: a soft signal only
@@ -89,6 +97,9 @@ def standardise_row(r: dict) -> dict:
         "address_norm": addr.norm, "address_pin": addr.pin, "address_house": addr.house,
         "address_alt_norm": alt.norm, "city": addr.city, "state": addr.state,
         "record_date": _record_date(r.get("record_date")),
+        "oddities": ",".join(sorted(flags)),
+        # not a person (a company) or not a record (a repeated header line): kept in the output, never matched with anyone
+        "skip_matching": bool(flags & {"organisation", "header_row"}),
     }
 
 
@@ -110,7 +121,7 @@ _PROFILE_SQL = {
     "identifier": "coalesce(pan, aadhaar_token, passport_no, dl_no, voter_id) IS NOT NULL",
     "record_date": "record_date IS NOT NULL",
 }
-STANDARDISE_VERSION = 1      # raise when standardisation changes what it writes for the same input: earlier runs' rows are then not reused
+STANDARDISE_VERSION = 2      # raise when standardisation changes what it writes for the same input: earlier runs' rows are then not reused
 
 
 def source_report(std_path: Path) -> dict:
@@ -124,12 +135,18 @@ def source_report(std_path: Path) -> dict:
         WITH s AS (SELECT source_id, unnest(string_split(supplied_fields, ',')) AS f, 0 AS bad FROM {src} WHERE supplied_fields <> ''
                    UNION ALL SELECT source_id, unnest(string_split(invalid_fields, ',')), 1 FROM {src} WHERE invalid_fields <> '')
         SELECT source_id, f, count(*) FILTER (bad = 0), count(*) FILTER (bad = 1) FROM s GROUP BY 1, 2""").fetchall()
+    flagged = con.execute(f"""SELECT source_id, f, count(*) FROM (SELECT source_id, unnest(string_split(oddities, ',')) AS f FROM {src}
+                              WHERE oddities <> '') GROUP BY 1, 2""").fetchall()
+    odd_counts = defaultdict(dict)
+    for s, f, n in flagged:
+        odd_counts[s][f] = n
     supplied, invalid = defaultdict(dict), defaultdict(dict)
     for s, f, n_supplied, n_bad in checks:
         supplied[s][f] = n_supplied
         if n_bad:
             invalid[s][f] = n_bad
-    profile = {r[0]: {"records": r[1], "filled": dict(zip(_PROFILE_SQL, r[2:], strict=True)), "invalid": invalid[r[0]]} for r in rows}
+    profile = {r[0]: {"records": r[1], "filled": dict(zip(_PROFILE_SQL, r[2:], strict=True)), "invalid": invalid[r[0]],
+                      "oddities": odd_counts[r[0]]} for r in rows}
     validation = {s: {f: f"{n - invalid[s].get(f, 0)}/{n} valid" for f, n in supplied[s].items()} for s in profile}
     return {"records": {s: p["records"] for s, p in profile.items()}, "validation": validation, "profile": profile}
 
