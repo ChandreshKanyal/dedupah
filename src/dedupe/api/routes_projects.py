@@ -25,7 +25,7 @@ START = Depends(require("runs.start"))
 MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's owner manages its members and settings
 CREATE = Depends(require("projects.create"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
-SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source")
+SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source", "scoring")
 
 
 class Strict(BaseModel):

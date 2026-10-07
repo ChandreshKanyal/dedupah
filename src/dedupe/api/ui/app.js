@@ -512,7 +512,7 @@ async function viewRun(pid, rid, tab) {
   const base = "/projects/" + pid + "/runs/" + rid;
   let body;
   if (tab === "overview") body = runOverview(r);
-  else if (tab === "review") body = await reviewQueue(pid, rid, base, "open");
+  else if (tab === "review") body = el("div", {}, scoringNotice(r.summary), await reviewQueue(pid, rid, base, "open"));
   else if (tab === "log") body = await runLogPanel(pid, rid);
   else body = peopleLookup(base);
   show(top, tabs(tabList, tab, (t) => viewRun(pid, rid, t)), body);
@@ -523,9 +523,22 @@ async function runLogPanel(pid, rid) {
     log.available ? el("p", { class: "hint" }, "The end of the log" + (log.truncated ? " (older lines are cut)" : "") + ". Anything that looks like personal data is removed.") : null,
     log.available ? el("pre", { class: "log" }, log.lines.join("\n")) : empty("No log was kept for this run."));
 }
+// How the match scores of a run were learned. ID-backed scores need no remark; the others say plainly how far to trust them.
+function scoringNotice(s) {
+  const sc = s && s.scoring;
+  if (!sc || sc.mode === "id_anchored") return null;
+  if (sc.mode === "unsupervised_em") {
+    return el("div", { class: "notice info", role: "note" }, el("strong", {}, "Scores learned from the data itself. "),
+      "This data has too few identifiers (PAN, Aadhaar, document numbers) to learn from, so the scoring found its own pattern. " +
+      "Scores are usually sensible but less certain than ID-backed ones: look over a sample of automatic merges before relying on them.");
+  }
+  return el("div", { class: "notice bad", role: "alert" }, el("strong", {}, "Scores are not meaningful for this run. "),
+    "There are too few identifiers and too little data to learn how much each field matters, so every pair sits near 50% and goes to review. " +
+    "Add records or identifiers, or decide these pairs by hand.");
+}
 function runOverview(r) {
   const s = r.summary;
-  const parts = [el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("People found", num(s.people)), stat("Households", num(s.households)),
+  const parts = [scoringNotice(s), el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("People found", num(s.people)), stat("Households", num(s.households)),
     stat("Pairs merged automatically", num(s.auto_merged_pairs)), stat("Items to review", num(s.review_items)), stat("Time taken", s.seconds == null ? "" : s.seconds.toFixed(1) + " s"))];
   const rowsOf = (id) => (s.records_by_source || {})[id];
   const srcRows = r.connections.length ? r.connections.map((c) => el("tr", {}, el("td", {}, c.id), el("td", {}, "Version " + c.version), el("td", { class: "num" }, num(rowsOf(c.id)))))
@@ -562,7 +575,7 @@ function personBlock(p) {
 async function viewCompare(pid, rid, base, l, r, reveal) {
   let path = base + "/people/" + l + "/compare/" + r;
   if (reveal) path += "?unmask=true&reason=" + encodeURIComponent(reveal);
-  const c = await api("GET", path);
+  const [c, runInfo] = await Promise.all([api("GET", path), api("GET", "/projects/" + pid + "/runs/" + rid)]);
   const note = el("textarea", { class: "plain", maxlength: "300", "aria-label": "Decision note", placeholder: "Optional note, kept with the decision." });
   const decide = (kind) => run(async () => {
     const out = await api("POST", base + "/decisions/" + kind, { person_l: l, person_r: r, reason: note.value }, { "Idempotency-Key": uuid() });
@@ -583,6 +596,7 @@ async function viewCompare(pid, rid, base, l, r, reveal) {
     (c.hard_conflicts.length ? ". Conflicting identifiers: " + c.hard_conflicts.join(", ") : ""), actions,
   crumbs(crumb(projectName(pid), () => go("Projects", () => viewProject(pid))), crumb(rid, () => viewRun(pid, rid, "review")), l + " and " + r)),
   c.unmasked ? el("p", { class: "hint" }, "Identifiers are shown in full. This view is logged.") : null,
+  scoringNotice(runInfo.summary),
   el("div", { class: "cols" }, c.persons.map(personBlock)),
   el("h2", { class: "section" }, "Evidence"),
   el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the same person"), el("div", { class: "body" }, why(c.why_match))),

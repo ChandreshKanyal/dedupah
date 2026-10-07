@@ -196,3 +196,6 @@ ul.plain li { margin: 3px 0; }
 .logo-on-light { display: none !important; }
 html[data-theme="light"] .logo-on-light { display: block !important; }
 html[data-theme="light"] .logo-on-dark { display: none !important; }
+
+.notice { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--info-border); border-radius: 6px; background: var(--info-bg); }
+.notice.bad { border-color: var(--danger-border); background: var(--danger-bg); }

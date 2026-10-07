@@ -175,7 +175,8 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         model = train(con)
         model.save(p["model"])
         score(con, model, p["scored"])
-        summary["scoring"] = {"seed_pairs": model.meta["seed_pairs"], "bias_bits": round(model.bias / 0.6931, 2)}
+        summary["scoring"] = {"seed_pairs": model.meta["seed_pairs"], "bias_bits": round(model.bias / 0.6931, 2), "mode": model.meta["scoring_mode"],
+                              "mode_reason": model.meta["scoring_mode_reason"], "em": model.meta["em"]}
         _drop(con, "cand_levels", "candidates", "rand_pairs", *_tables_like(con, "tf_"))
     with meter.stage("decisions"):
         summary["decisions"] = decide(con, p["scored"], dcfg, p["decisions"])

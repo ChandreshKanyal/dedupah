@@ -16,6 +16,7 @@ import numpy as np
 from .comparisons import COMPARISONS, DOB, STRONG_ID
 from .levels import level_counts, level_matrix, materialize, prepare_tf_tables
 from .model import Model
+from .unsupervised import fit_em, fixed_levels, readiness
 
 ALPHA = 0.5
 TF_FLOOR = 1e-6
@@ -117,28 +118,36 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
     L = level_matrix(con, "cand_levels")
 
     pos, neg = seed_masks(L)
-    seeded = pos | neg
-    soft = [j for j, c in enumerate(COMPARISONS) if c.name not in STRONG_ID]
-    X, labels = _design(L[seeded], soft)
-    y = pos[seeded].astype(np.float64)
-    coef, bias = fit_logistic(X, y)
-
-    weights = {c.name: [0.0] * c.n_levels for c in COMPARISONS}
-    for (j, l), w in zip(labels, coef, strict=True):
-        weights[COMPARISONS[j].name][l] = float(w)
-    for name, bits in STRONG_BITS.items():
-        for l, b in bits.items():
-            weights[name][l] = b * LN2
+    mode, mode_reason = readiness(L, int(pos.sum()), int(neg.sum()))
     age_levels = {lvl: AGE_M[label] for lvl, label in DOB.labels().items() if label in AGE_M}
     if len(age_levels) != len(AGE_M):
         raise ValueError(f"AGE_M labels {sorted(AGE_M)} must all exist on the DOB comparison")
     age_total = sum(u_rand["dob"][lvl] for lvl in age_levels)
-    for lvl, m in age_levels.items():
-        weights["dob"][lvl] = float(np.log(m / max(u_rand["dob"][lvl] / age_total, U_FLOOR)))
+    age_w = {lvl: float(np.log(m / max(u_rand["dob"][lvl] / age_total, U_FLOOR))) for lvl, m in age_levels.items()}
+    info = {}
+    if mode == "unsupervised_em":
+        weights, bias, info = fit_em(L, u_rand, fixed_levels(STRONG_BITS, age_w))
+    else:
+        weights = {c.name: [0.0] * c.n_levels for c in COMPARISONS}
+        bias = 0.0
+        if mode == "id_anchored":
+            seeded = pos | neg
+            soft = [j for j, c in enumerate(COMPARISONS) if c.name not in STRONG_ID]
+            X, labels = _design(L[seeded], soft)
+            y = pos[seeded].astype(np.float64)
+            coef, bias = fit_logistic(X, y)
+            for (j, l), w in zip(labels, coef, strict=True):
+                weights[COMPARISONS[j].name][l] = float(w)
+        for name, bits in STRONG_BITS.items():
+            for l, b in bits.items():
+                weights[name][l] = b * LN2
+        for lvl, w in age_w.items():
+            weights["dob"][lvl] = w
     # the intercept is the prior for pairs with no identifier evidence; identifier-based pairs are scored as
     # intercept + identifier weight + other evidence (the identifier is evidence beyond the seeds' own prior)
     model = Model(weights=weights, bias=float(bias), u_random=u_rand,
                   meta={"random_pairs": random_pairs, "candidate_pairs": int(len(L)),
                         "seed_pairs": {"same_person": int(pos.sum()), "different_people": int(neg.sum())},
+                        "scoring_mode": mode, "scoring_mode_reason": mode_reason, "em": info,
                         "regularisation_l2": L2, "strong_id_bits": STRONG_BITS})
     return model

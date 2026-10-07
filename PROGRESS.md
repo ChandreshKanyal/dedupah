@@ -980,3 +980,14 @@ Design choice: the grant's role is recorded and shown, but membership alone deci
 
 ### 2026-10-07 - Company branding
 The portal shows the Aurionpro logo (sign-in page: logo with tagline; top bar: name only) instead of the "Dedupe" text. Four transparent PNGs in `src/dedupe/api/ui/` (`logo-*`, `wordmark-*`; light/dark theme variants, cut from the supplied artwork), served from a whitelist route in `routes_ui.py` (CSP unchanged: images from this origin). Page title is "Aurionpro". The accent colour is still blue; the logo's teal could replace it if wanted.
+
+## 51. Scoring when the data has no identifiers (found by the user's own file)
+**Problem found:** a user's Excel file with no PAN/Aadhaar/document numbers scored 48.6% for an obvious duplicate (same mobile, email, address, surname). The scoring learned its weights only from pairs that identifiers prove, found none, and left every weight at 0 without saying so. 318 of 355 pairs went to review, none auto-merged.
+**Fix (`scoring/unsupervised.py`, `scoring/train.py`):** three modes, chosen per run and recorded in the model, the run summary and the portal:
+- `id_anchored`: at least 20 same-person and 20 different-people pairs proven by identifiers (the old route, unchanged).
+- `unsupervised_em`: otherwise, if there are 150+ candidate pairs and 15+ plausible matches, the Fellegi-Sunter model is fitted by EM: u (chance agreement) measured on random pairs and fixed, m (agreement for the same person) learned from a rough first guess (names sound alike plus other agreeing fields). Weights are tempered (x0.8) and capped (9 bits) because the independence assumption makes EM over-confident. Identifier and age-based levels keep their fixed weights.
+- `insufficient`: too small to learn from; weights stay 0, every pair is near 50%, the portal says so in red.
+The run overview, review queue and compare page show a notice for the last two modes.
+**Measured (SYNTHETIC, IDs removed from the sources, kyc_documents dropped):** 300 households: precision 0.991, 14 false of 1,224 auto-merged pairs; 100 households at double noise: precision 1.000, 4 false of 423; 40 households: precision 1.000, 0 false of 153. Recall is only 0.43-0.50: of the true pairs that reached scoring almost all were found (reject zone held 25 of ~1,250), so the loss is mostly pairs that blocking never proposed (without IDs there is little to link records whose name or phone changed). NOT yet separated or improved.
+**Honest limits:** independence assumption; needs enough overlap between records; only tested on synthetic data; a file that is almost all duplicates makes EM see nearly no non-matches (the user's file: 40 people x 5 copies, all 355 pairs auto-merged, checked by hand as plausible). Odd inputs (empty file, one record, empty names, names only, 3 rows) complete without crashing (`tests/test_scoring_modes.py`).
+
