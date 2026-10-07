@@ -21,7 +21,7 @@ from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, se
 from .projects import Workspace
 
 RUN_ID = r"^R[0-9a-f]{12}$"
-STATES = ("queued", "running", "succeeded", "failed", "interrupted")
+STATES = ("queued", "running", "succeeded", "failed", "interrupted", "cancelled")
 ACTIVE = ("queued", "running")
 
 _meta = MetaData()
@@ -63,8 +63,8 @@ class Run:
     summary: dict = field(default_factory=dict)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _now(precision: str = "seconds") -> str:
+    return datetime.now(timezone.utc).isoformat(timespec=precision)       # run creation uses microseconds so same-second runs keep their order
 
 
 def pipeline_command(run_dir: Path, sources: Path, registry: Path) -> list[str]:
@@ -92,6 +92,8 @@ class RunJobs:
         self.ws, self._command = workspace, command
         self.engine = workspace.engine
         self._threads: dict[str, threading.Thread] = {}
+        self._procs: dict[str, subprocess.Popen] = {}
+        self._cancelled: set[str] = set()
         self._lock = threading.Lock()
         _meta.create_all(self.engine)
         if recover:
@@ -151,7 +153,7 @@ class RunJobs:
             run_dir.mkdir(parents=True)
             (run_dir / "sources.json").write_text(json.dumps(sources, indent=2, ensure_ascii=False), encoding="utf-8")
             with self.engine.begin() as c:
-                c.execute(runs.insert().values(id=rid, project_id=project_id, created_at=_now(), requested_by=actor, status="queued", idempotency_key=key,
+                c.execute(runs.insert().values(id=rid, project_id=project_id, created_at=_now("microseconds"), requested_by=actor, status="queued", idempotency_key=key,
                                                reason=reason, connections=json.dumps(used), summary="{}"))
             self._launch(project_id, rid)
         return self.get(project_id, rid), False
@@ -172,6 +174,7 @@ class RunJobs:
             return
         with self.engine.begin() as c:
             c.execute(update(runs).where(runs.c.id == rid).values(status="running", started_at=_now()))
+        self._procs[rid] = proc                                                            # already inside the caller's lock (start())
         t = threading.Thread(target=self._supervise, args=(pid, rid, proc, log), daemon=True, name=f"run-{rid}")
         self._threads[rid] = t
         t.start()
@@ -182,10 +185,13 @@ class RunJobs:
         self._finish(pid, rid, code)
 
     def _finish(self, pid: str, rid: str, code: int) -> None:
-        summary = headline(self.ws.run_dir(pid, rid)) if code == 0 else {}
+        cancelled = rid in self._cancelled
+        self._cancelled.discard(rid)
+        self._procs.pop(rid, None)
+        status = "cancelled" if cancelled else ("succeeded" if code == 0 else "failed")
+        summary = headline(self.ws.run_dir(pid, rid)) if status == "succeeded" else {}
         with self.engine.begin() as c:
-            c.execute(update(runs).where(runs.c.id == rid).values(status="succeeded" if code == 0 else "failed", finished_at=_now(), exit_code=code,
-                                                                  summary=json.dumps(summary)))
+            c.execute(update(runs).where(runs.c.id == rid).values(status=status, finished_at=_now(), exit_code=code, summary=json.dumps(summary)))
         self.on_finish(self.get(pid, rid))
 
     def wait(self, project_id: str, run_id: str, timeout: float = 60.0) -> Run | None:
@@ -193,6 +199,30 @@ class RunJobs:
         if t is not None:
             t.join(timeout)
         return self.get(project_id, run_id)
+
+    def cancel(self, project_id: str, run_id: str, actor: str) -> Run:
+        """Stop a run that is still queued or running (SIGTERM, then SIGKILL after a grace period). The child's own
+        process group is not a single pipeline stage's unit of work, so the result is always a clean 'cancelled' run,
+        never mistaken for a crash."""
+        with self._lock:
+            run = self.get(project_id, run_id)
+            if run is None:
+                raise RunError("no such run")
+            if run.status not in ACTIVE:
+                raise RunError("this run has already finished")
+            self._cancelled.add(run_id)
+            proc = self._procs.get(run_id)
+            if proc is None:                                            # defensive: should not happen, start() launches synchronously
+                with self.engine.begin() as c:
+                    c.execute(update(runs).where(runs.c.id == run_id).values(status="cancelled", finished_at=_now()))
+                self._cancelled.discard(run_id)
+                return self.get(project_id, run_id)
+        proc.terminate()                                                  # our own child process
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        return self.wait(project_id, run_id, timeout=15) or self.get(project_id, run_id)
 
     # ---- bring in results made elsewhere ---------------------------------------------------------------------------------
     def import_results(self, project_id: str, folder: Path, actor: str, reason: str = "imported") -> Run:

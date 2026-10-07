@@ -6,21 +6,23 @@ and returns 202 at once; its results stay readable afterwards. The caller choose
 import json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from dedupe.workspace import PROJECT_ID, RUN_ID, RunError, WorkspaceError
 
 from .auth import Principal
 from .guards import _context, _services, authenticated, require
+from .roles import ROLES
 from .routes_read import CONFIG_NAMES, PID, RID
 from .routes_write import _key
-from .scope import project_scope
+from .scope import can_see, project_scope
 
 router = APIRouter()
 ANY = Depends(authenticated())
 SEE_RUNS = Depends(require("runs.read"))
 START = Depends(require("runs.start"))
+MANAGE_ACCESS = Depends(require("project.access"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
 SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds")
 
@@ -33,6 +35,19 @@ class ProjectIn(Strict):
     id: str = Field(pattern=PROJECT_ID)
     name: str = Field(min_length=1, max_length=120)
     description: str = Field("", max_length=500)
+
+
+class GrantIn(Strict):
+    subject: str = Field(min_length=1, max_length=200)
+    role: str = Field(min_length=1, max_length=40)
+
+
+class GrantView(BaseModel):
+    project_id: str
+    subject: str
+    role: str
+    granted_by: str
+    granted_at: str
 
 
 class StartIn(Strict):
@@ -81,11 +96,11 @@ def _project_view(sv, proj) -> ProjectView:
 def home(request: Request, p: Principal = ANY):
     """Counts and recent activity for the start page. Only what the caller's roles allow is filled in."""
     sv = _services(request)
-    projects = sv.workspace.list()
+    projects = [x for x in sv.workspace.list() if can_see(sv, p, x.id)]
     out = {"projects": len(projects), "connections": len(sv.connections.names("connection/")), "recent_runs": [], "open_review_items": None,
            "pending_approvals": None}
     if "runs.read" in p.permissions:
-        out["recent_runs"] = [_run_view(r) for r in sv.jobs.recent(limit=8)]
+        out["recent_runs"] = [_run_view(r) for r in sv.jobs.recent(limit=50) if can_see(sv, p, r.project_id)][:8]
     if "queue.read" in p.permissions:
         latest = [sv.jobs.latest_succeeded(x.id) for x in projects]
         out["open_review_items"] = sum((r.summary.get("review_items") or 0) for r in latest if r)
@@ -100,7 +115,7 @@ def home(request: Request, p: Principal = ANY):
 @router.get("/projects", response_model=list[ProjectView])
 def list_projects(request: Request, p: Principal = ANY):
     sv = _services(request)
-    return [_project_view(sv, x) for x in sv.workspace.list()]
+    return [_project_view(sv, x) for x in sv.workspace.list() if can_see(sv, p, x.id)]
 
 
 @router.post("/projects", response_model=ProjectView, status_code=201)
@@ -129,7 +144,7 @@ def get_project(request: Request, project_id: str = PID, p: Principal = ANY):
 @router.get("/runs", response_model=list[RunView])
 def recent_runs(request: Request, limit: int = Query(20, ge=1), p: Principal = SEE_RUNS):
     sv = _services(request)
-    return [_run_view(r) for r in sv.jobs.recent(limit=min(limit, sv.settings.max_page_size))]
+    return [_run_view(r) for r in sv.jobs.recent(limit=sv.settings.max_page_size * 4) if can_see(sv, p, r.project_id)][:min(limit, sv.settings.max_page_size)]
 
 
 @router.get("/projects/{project_id}/runs", response_model=list[RunView])
@@ -192,4 +207,53 @@ def run_detail(request: Request, project_id: str = PID, run_id: str = RID, p: Pr
         out["configs"] = {k: {x: v.get(x) for x in ("source", "version", "hash")} for k, v in (s.get("configs") or {}).items() if k != "effective_settings"}
         out["peak_memory_mb"] = s.get("peak_memory_mb")
     return out
+
+
+@router.post("/projects/{project_id}/runs/{run_id}/cancel", response_model=RunView)
+def cancel_run(request: Request, project_id: str = PID, run_id: str = RID, p: Principal = START):
+    """Stop a queued or running run. It ends as 'cancelled' (never 'failed'), so a deliberate stop is not mistaken for a crash."""
+    project_scope(request, project_id)
+    sv = _services(request)
+    try:
+        run = sv.jobs.cancel(project_id, run_id, p.actor)
+    except RunError as e:
+        raise HTTPException(404 if "no such" in str(e) else 409, "Not found." if "no such" in str(e) else str(e)) from None
+    sv.seclog.record("run_cancelled", actor=p.actor, roles=p.roles, status=200, object_ref=f"{project_id}/{run_id}", detail={"action": "cancel"},
+                     **_context(request))
+    return _run_view(run)
+
+
+# ---- who may work in a project (business-unit scoping) -------------------------------------------------------------------
+@router.get("/projects/{project_id}/access", response_model=list[GrantView])
+def list_access(request: Request, project_id: str = PID, p: Principal = MANAGE_ACCESS):
+    project_scope(request, project_id)
+    return [GrantView(**g.__dict__) for g in _services(request).workspace.members(project_id)]
+
+
+@router.post("/projects/{project_id}/access", response_model=GrantView, status_code=201)
+def grant_access(request: Request, body: GrantIn, project_id: str = PID, p: Principal = MANAGE_ACCESS):
+    """Make a person a member of the project. The first grant turns the project from open to members-only."""
+    project_scope(request, project_id)
+    if body.role not in ROLES:
+        raise HTTPException(422, "Unknown role.")
+    sv = _services(request)
+    try:
+        g = sv.workspace.grant(project_id, body.subject, body.role, p.actor)
+    except WorkspaceError as e:
+        raise HTTPException(422, str(e)) from None
+    sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=201, object_ref=project_id,
+                     detail={"action": "grant_access", "subject": body.subject, "role": body.role}, **_context(request))
+    return GrantView(**g.__dict__)
+
+
+@router.delete("/projects/{project_id}/access/{subject}/{role}", status_code=204)
+def revoke_access(request: Request, project_id: str = PID, subject: str = Path(min_length=1, max_length=200), role: str = Path(min_length=1, max_length=40),
+                  p: Principal = MANAGE_ACCESS):
+    project_scope(request, project_id)
+    sv = _services(request)
+    if not sv.workspace.revoke(project_id, subject, role):
+        raise HTTPException(404, "Not found.")
+    sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=204, object_ref=project_id,
+                     detail={"action": "revoke_access", "subject": subject, "role": role}, **_context(request))
+    return Response(status_code=204)
 

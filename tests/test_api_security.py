@@ -182,7 +182,7 @@ def all_routes(app):
 
 
 SAMPLE = {"person_id": "P000000001", "person_l": "P000000001", "person_r": "P000000002", "name": "decision", "version": "1", "judgment_id": "1",
-          "action_id": "abcdef012345", "project_id": "demo", "run_id": "R000000000000", "connection_id": "crm"}
+          "action_id": "abcdef012345", "project_id": "demo", "run_id": "R000000000000", "connection_id": "crm", "subject": "alice", "role": "steward"}
 
 
 def concrete(path):

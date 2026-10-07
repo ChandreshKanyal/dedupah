@@ -20,6 +20,7 @@ PERMISSIONS = {
     "runs.start": "start a pipeline run",
     "sources.manage": "connect sources and edit field mappings",
     "logs.read": "read the security / access log and verify its integrity",
+    "project.access": "grant or revoke who may work in a project",
 }
 
 _READ = {"queue.read", "person.read", "runs.read", "config.read"}
@@ -30,7 +31,7 @@ ROLES: dict[str, frozenset] = {
     "approver": frozenset(_READ | {"judgment.approve", "config.approve", "config.activate"}),
     "rule_admin": frozenset(_READ | {"config.propose"}),
     "auditor": frozenset(_READ | {"pii.unmask", "logs.read"}),
-    "platform_admin": frozenset({"runs.read", "runs.start", "sources.manage", "config.read", "logs.read"}),
+    "platform_admin": frozenset({"runs.read", "runs.start", "sources.manage", "config.read", "logs.read", "project.access"}),
 }
 
 if not all(p in PERMISSIONS for perms in ROLES.values() for p in perms):

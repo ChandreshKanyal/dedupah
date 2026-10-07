@@ -22,6 +22,14 @@ projects = Table(
     Column("created_by", String(200), nullable=False),
     Column("created_at", String(40), nullable=False),
 )
+project_grants = Table(
+    "project_grants", _meta,
+    Column("project_id", String(40), primary_key=True),
+    Column("subject", String(200), primary_key=True),
+    Column("role", String(40), primary_key=True),
+    Column("granted_by", String(200), nullable=False),
+    Column("granted_at", String(40), nullable=False),
+)
 
 
 class WorkspaceError(ValueError):
@@ -35,6 +43,15 @@ class Project:
     description: str
     created_by: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class Grant:
+    project_id: str
+    subject: str
+    role: str
+    granted_by: str
+    granted_at: str
 
 
 def _now() -> str:
@@ -116,3 +133,39 @@ class Workspace:
                 url = self.project_url(pid)
                 self._stores[pid] = (JudgmentStore.open(url), ConfigStore.open(url))
             return self._stores[pid]
+
+    # ---- per-project access (business-unit scoping) --------------------------------------------------------------------
+    # A project with NO grants at all stays open to anyone holding the matching global role (today's behaviour, so
+    # existing deployments and the demo workspace are unaffected). The moment a project has at least one grant row,
+    # it becomes "scoped": only its members (plus platform_admin and auditor, who always see everything) may act on
+    # it. This is enforced in dedupe.api.scope, which calls `members()`/`roles_for()` below.
+    def grant(self, pid: str, subject: str, role: str, actor: str) -> Grant:
+        subject, role = (subject or "").strip(), (role or "").strip()
+        if not subject or len(subject) > 200:
+            raise WorkspaceError("a grant needs a subject (username) of up to 200 characters")
+        if not role or len(role) > 40:
+            raise WorkspaceError("a grant needs a role name")
+        now = _now()
+        with self.engine.begin() as c:
+            c.execute(project_grants.delete().where(
+                (project_grants.c.project_id == pid) & (project_grants.c.subject == subject) & (project_grants.c.role == role)))
+            c.execute(project_grants.insert().values(project_id=pid, subject=subject, role=role, granted_by=actor, granted_at=now))
+        return Grant(pid, subject, role, actor, now)
+
+    def revoke(self, pid: str, subject: str, role: str) -> bool:
+        with self.engine.begin() as c:
+            r = c.execute(project_grants.delete().where(
+                (project_grants.c.project_id == pid) & (project_grants.c.subject == subject) & (project_grants.c.role == role)))
+            return r.rowcount > 0
+
+    def members(self, pid: str) -> "list[Grant]":                  # quoted: this class has its own `list` method
+        with self.engine.connect() as c:
+            rows = c.execute(select(project_grants).where(project_grants.c.project_id == pid)
+                              .order_by(project_grants.c.subject, project_grants.c.role))
+            return [Grant(r.project_id, r.subject, r.role, r.granted_by, r.granted_at) for r in rows]
+
+    def roles_for(self, pid: str, subject: str) -> frozenset[str]:
+        with self.engine.connect() as c:
+            rows = c.execute(select(project_grants.c.role).where(
+                (project_grants.c.project_id == pid) & (project_grants.c.subject == subject)))
+            return frozenset(r.role for r in rows)

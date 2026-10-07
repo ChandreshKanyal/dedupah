@@ -309,13 +309,34 @@ async function viewProject(pid, tab) {
   await refreshCache();
   const actions = can("runs.start") ? [p.latest_run && p.latest_run.connections.length ? btn("Run again", () => run(() => startRun(pid, [], p.latest_run.id)), "", "refresh") : null,
     btn("New run", () => go("Runs", () => newRun(pid)), "primary", "play")] : [];
-  const tabList = [["runs", "Runs"], ["rules", "Rules and settings"], ...(can("judgment.approve") ? [["approvals", "Approvals"]] : [])];
+  const tabList = [["runs", "Runs"], ["rules", "Rules and settings"], ...(can("judgment.approve") ? [["approvals", "Approvals"]] : []),
+    ...(can("project.access") ? [["access", "Access"]] : [])];
   let body;
   if (tab === "runs") body = runsTable(runs, false);
   else if (tab === "rules") body = await rulesPanel(pid);
+  else if (tab === "access") body = await accessPanel(pid);
   else body = await decisionApprovals(pid, () => viewProject(pid, "approvals"));
   show(page(p.name, p.description || "Project " + p.id, actions, crumbs(crumb("Projects", () => go("Projects", viewProjects)), p.name)),
     tabs(tabList, tab, (t) => viewProject(pid, t)), body);
+}
+
+const GRANT_ROLES = ["viewer", "steward", "approver", "rule_admin", "auditor", "platform_admin"];
+async function accessPanel(pid) {
+  const members = await api("GET", "/projects/" + pid + "/access");
+  const who = el("input", { type: "text", maxlength: "200", "aria-label": "Username" });
+  const role = el("select", { "aria-label": "Role" }, GRANT_ROLES.map((x) => el("option", { value: x }, label(x))));
+  const err = el("p", { class: "bad", hidden: true });
+  const add = async () => {
+    try { await api("POST", "/projects/" + pid + "/access", { subject: who.value.trim(), role: role.value }); await viewProject(pid, "access"); }
+    catch (e) { err.textContent = e.message; err.hidden = false; }
+  };
+  const drop = (g) => run(async () => { await api("DELETE", "/projects/" + pid + "/access/" + encodeURIComponent(g.subject) + "/" + encodeURIComponent(g.role)); await viewProject(pid, "access"); });
+  return el("div", {},
+    el("p", { class: "hint" }, members.length ? "This project is members-only: only the people below, platform admins and auditors can open it. Remove the last person to open it to everyone again."
+      : "This project is open: anyone whose role allows the action can use it. Add a person to make it members-only."),
+    members.length ? table(["Person", "Role", "Added by", "Added", ""], members.map((g) => el("tr", {}, el("td", {}, g.subject), el("td", {}, label(g.role)), el("td", {}, g.granted_by),
+      el("td", {}, when(g.granted_at)), el("td", {}, btn("Remove", () => drop(g)))))) : null,
+    el("h3", { class: "section" }, "Add a person"), el("div", { class: "row" }, field("Username (the sign-in name from your identity provider)", who), field("Role", role), btn("Add", add, "primary")), err);
 }
 
 // ---- runs --------------------------------------------------------------------------------------------------------------
@@ -323,6 +344,15 @@ async function viewRuns() {
   await refreshCache();
   show(page("Runs", "Every run of every project. Open a run to review its results.", can("runs.start") ? [btn("New run", () => go("Runs", () => newRun()), "primary", "play")] : []),
     runsTable(cache.runs, true));
+}
+async function cancelRun(pid, rid) {
+  const ok = await dialog("Cancel this run?", el("p", {}, "The run stops now and keeps no results. Nothing else is changed; you can start it again."), "Cancel run", async () => true, true);
+  if (!ok) return;
+  stopTimer();
+  await api("POST", "/projects/" + pid + "/runs/" + rid + "/cancel");
+  await refreshCache();
+  say("The run was cancelled.", "good");
+  await viewRun(pid, rid);
 }
 async function startRun(pid, connections, fromRun, reason) {
   const r = await api("POST", "/projects/" + pid + "/runs", { connections, from_run: fromRun || null, reason: reason || "" }, { "Idempotency-Key": uuid() });
@@ -363,6 +393,7 @@ async function viewRun(pid, rid, tab) {
   const going = r.status === "running" || r.status === "queued";
   const actions = [];
   if (going) actions.push(btn("Refresh", () => run(() => viewRun(pid, rid, tab)), "", "refresh"));
+  if (going && can("runs.start")) actions.push(btn("Cancel run", () => run(() => cancelRun(pid, rid)), "danger"));
   if (can("runs.start") && !going && r.connections.length) actions.push(btn("Run again", () => run(() => startRun(pid, [], rid)), "", "refresh"));
   const top = page("Run " + rid, "Started " + when(r.started_at || r.created_at) + " by " + r.requested_by + (r.finished_at ? ". Finished " + when(r.finished_at) + "." : "."), actions,
     crumbs(crumb("Projects", () => go("Projects", viewProjects)), crumb(projectName(pid), () => go("Projects", () => viewProject(pid))), rid), statusTag(r.status));
@@ -374,6 +405,7 @@ async function viewRun(pid, rid, tab) {
     show(top, empty("This run is in progress. Its results appear here when it finishes; earlier runs stay readable meanwhile."));
     return;
   }
+  if (r.status === "cancelled") { show(top, empty("This run was cancelled before it finished, so it has no results. Start it again from the button above.")); return; }
   if (r.status !== "succeeded") { show(top, empty("This run did not finish successfully (exit code " + r.exit_code + "), so it has no results. The run log is kept on the server.")); return; }
   const tabList = [["overview", "Overview"], ...(can("queue.read") ? [["review", "Review queue"]] : []), ...(can("person.read") ? [["people", "People"]] : [])];
   const base = "/projects/" + pid + "/runs/" + rid;
@@ -714,7 +746,7 @@ async function connectionWizard(type, preset) {
 async function viewAudit(event) {
   const rows = await api("GET", "/security/events?limit=200" + (event ? "&event=" + event : ""));
   const filter = el("select", { "aria-label": "Event", onchange: () => run(() => viewAudit(filter.value)) }, el("option", { value: "" }, "All events"),
-    ["auth_failed", "permission_denied", "rate_limited", "pii_unmasked", "run_started", "run_finished", "config_change", "judgment_change", "server_error", "startup"]
+    ["auth_failed", "permission_denied", "rate_limited", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "config_change", "judgment_change", "server_error", "startup"]
       .map((e) => el("option", { value: e, selected: e === event }, label(e))));
   const verify = () => run(async () => {
     const v = await api("GET", "/security/verify");
