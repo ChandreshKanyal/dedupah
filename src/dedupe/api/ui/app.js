@@ -508,14 +508,26 @@ async function viewRun(pid, rid, tab) {
       : "This run did not finish successfully (exit code " + r.exit_code + "), so it has no results. The end of its log is below."), await runLogPanel(pid, rid));
     return;
   }
-  const tabList = [["overview", "Overview"], ...(can("queue.read") ? [["review", "Review queue"]] : []), ...(can("person.read") ? [["people", "People"]] : []), ["log", "Log"]];
+  const gotoResults = can("results.export") && tab !== "results" ? btn("Get the results", () => run(() => viewRun(pid, rid, "results")), "primary", "upload") : null;
+  if (gotoResults) top.querySelector(".actions")?.prepend(gotoResults);
+  const tabList = [["overview", "Overview"], ["results", "Results"], ...(can("queue.read") ? [["review", "Review queue"]] : []), ...(can("person.read") ? [["people", "People"]] : []), ["log", "Log"]];
   const base = "/projects/" + pid + "/runs/" + rid;
   let body;
   if (tab === "overview") body = runOverview(r);
   else if (tab === "review") body = el("div", {}, scoringNotice(r.summary), await reviewQueue(pid, rid, base, "open"));
   else if (tab === "log") body = await runLogPanel(pid, rid);
+  else if (tab === "results") body = await runResults(pid, rid);
   else body = peopleLookup(base);
   show(top, tabs(tabList, tab, (t) => viewRun(pid, rid, t)), body);
+}
+// The results of one finished run, right on the run page: the three datasets, each as a file or into a database.
+async function runResults(pid, rid) {
+  if (!can("results.export")) {
+    return empty("Your role cannot take results out of the portal. You can still read them here (Overview, Review queue, People). Ask an administrator for the results.export permission if you need files.");
+  }
+  const p = await api("GET", "/projects/" + pid);
+  return el("div", {}, el("p", { class: "hint" }, "Results contain personal data. Every download or database write asks for a reason and is recorded in the project's activity."),
+    ...(await datasetCards(p, rid)));
 }
 async function runLogPanel(pid, rid) {
   const log = await api("GET", "/projects/" + pid + "/runs/" + rid + "/log?lines=200");
