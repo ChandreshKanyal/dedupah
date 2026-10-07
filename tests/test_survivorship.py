@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from dedupe.survivorship import GOLDEN_FIELDS, SurvivorshipConfig, build_golden
 
-STD_COLS = ["name_clean", "father_name_clean", "dob", "dob_placeholder", "dob_precision", "gender", "mobile", "mobile_alt", "email", "city", "state", "address_pin", "pan", "aadhaar_token", "aadhaar_last4",
+STD_COLS = ["name_clean", "name_first_is_initial", "record_date", "father_name_clean", "dob", "dob_placeholder", "dob_precision", "gender", "mobile", "mobile_alt", "email", "city", "state", "address_pin", "pan", "aadhaar_token", "aadhaar_last4",
             "passport_no", "dl_no", "voter_id"]
 CAN_COLS = ["marital_status", "address", "occupation", "annual_income"]
 
@@ -108,3 +108,60 @@ def test_config_validation():
     with pytest.raises(ValidationError):
         SurvivorshipConfig(default_strategy="whatever")
     assert len(SurvivorshipConfig.load("configs/survivorship_default.json").units()) == len(GOLDEN_FIELDS) - 3   # address block merges 4 fields into 1
+
+
+def test_record_date_field_makes_most_recent_work_without_per_source_settings(tmp_path):
+    """Portal projects name their sources freely: the mapped record date must drive 'most recent' with no source named in the rules."""
+    cfg = SurvivorshipConfig(fields={"mobile": "most_recent"})
+    recs = [{"cluster": "c", "source": "zeta_old", "id": "1", "mobile": "9800000001", "record_date": "2019-03-01"},
+            {"cluster": "c", "source": "alpha_new", "id": "2", "mobile": "9800000002", "record_date": "2025-11-20"},
+            {"cluster": "c", "source": "beta", "id": "3", "mobile": "9800000003"}]                     # undated: never beats a dated record
+    _, info, v = _build(tmp_path, recs, cfg)
+    assert v["c", "mobile"][:2] == ("9800000002", "alpha_new")
+    assert info["sources_without_dates"] == ["beta"]
+
+
+def test_unlisted_sources_are_ranked_by_completeness_and_reported(tmp_path):
+    cfg = SurvivorshipConfig(default_strategy="most_trusted_source")
+    recs = [{"cluster": "c", "source": "thin", "id": "1", "email": "thin@x.in"},
+            {"cluster": "c", "source": "rich", "id": "2", "email": "rich@x.in", "mobile": "9811111111", "pan": "ABCDE1234F", "city": "pune"}]
+    _, info, v = _build(tmp_path, recs, cfg)
+    assert info["trust_order"] == ["rich", "thin"] and info["auto_ranked_sources"] == ["rich", "thin"]
+    assert v["c", "email"][1] == "rich"
+
+
+def test_field_trust_overrides_the_global_order_for_one_field(tmp_path):
+    cfg = SurvivorshipConfig(source_trust=["kyc", "crm"], field_trust={"mobile": ["crm"]}, default_strategy="most_trusted_source")
+    recs = [{"cluster": "c", "source": "kyc", "id": "1", "mobile": "9811111111", "email": "k@x.in"},
+            {"cluster": "c", "source": "crm", "id": "2", "mobile": "9822222222", "email": "c@x.in"}]
+    _, _, v = _build(tmp_path, recs, cfg)
+    assert v["c", "mobile"][1] == "crm" and v["c", "email"][1] == "kyc"
+
+
+def test_a_phone_shared_by_many_people_only_wins_when_nothing_else_exists(tmp_path):
+    cfg = SurvivorshipConfig(fields={"mobile": "most_recent"}, shared_value_limit=2)
+    office = "9000000000"
+    recs = [{"cluster": f"p{i}", "source": "crm", "id": f"o{i}", "mobile": office, "record_date": "2026-01-01"} for i in range(3)]
+    recs.append({"cluster": "p0", "source": "crm", "id": "own", "mobile": "9876543210", "record_date": "2020-01-01"})   # older but their own
+    _, info, v = _build(tmp_path, recs, cfg)
+    assert v["p0", "mobile"][0] == "9876543210"        # the office number is newer, but three people hold it
+    assert v["p1", "mobile"][0] == office              # nothing else known for this person: the shared value is better than nothing
+    assert info["shared_values_passed_over"] == 1
+
+
+def test_best_quality_prefers_a_full_name_over_an_initial_even_when_outvoted(tmp_path):
+    cfg = SurvivorshipConfig(fields={"full_name": "best_quality"})
+    recs = [{"cluster": "c", "source": "a", "id": "1", "name_clean": "r sharma", "name_first_is_initial": True},
+            {"cluster": "c", "source": "b", "id": "2", "name_clean": "r sharma", "name_first_is_initial": True},
+            {"cluster": "c", "source": "c", "id": "3", "name_clean": "rahul sharma", "name_first_is_initial": False}]
+    _, _, v = _build(tmp_path, recs, cfg)
+    assert v["c", "full_name"][0] == "Rahul Sharma"
+
+
+def test_config_rejects_bad_field_trust():
+    with pytest.raises(ValidationError):
+        SurvivorshipConfig(field_trust={"nope": ["a"]})
+    with pytest.raises(ValidationError):
+        SurvivorshipConfig(source_trust=["a", "a"])
+    with pytest.raises(ValidationError):
+        SurvivorshipConfig(groups={"g": ["address", "city"]}, field_trust={"city": ["a"]})

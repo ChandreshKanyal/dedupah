@@ -1028,3 +1028,31 @@ The run overview, review queue and compare page show a notice for the last two m
 **Measured:** 9 new API tests; the live click-through ends with 0 console errors, 0 error messages, no sideways scrolling at 375px.
 **Not done (honest list):** assigning/claiming pairs, ageing/SLA and reviewer statistics; retiring a connection or destination (versions can be declined, not removed); search does not find connections or people; threaded comments on pairs; a light-theme user sees a dark flash before the script loads; the Approvals page makes several requests per project (slow with many projects); bulk "same person" merges without opening each pair (a 10-character reason is required).
 
+## 53. Robust golden records and matching across any sources (phase asked for 2026-10-07: "fix all and thoroughly")
+**Why:** the user asked whether the engine really uses every source to build the master record, and wants an industry-ready tool that
+handles any data. Audit found: a run DOES combine all chosen connections and matches within and across them, but the golden-record choice
+was tuned to the synthetic source names (trust list and date columns named kyc_documents, bank_crm...), so for portal projects every source
+tied on trust and no record had a date: "most recent" silently fell back to alphabetical source order.
+**Research (2026-10-07):** MDM tools (Informatica, Reltio, Profisee) choose per attribute with source priority, recency, completeness, frequency;
+Informatica lowers trust for poor-quality values and lets trust decay with age; Reltio defaults to recency, and recency needs reliable record
+timestamps. Splink recommends 3-10 blocking rules, phonetic keys, so that a true match failing every rule is implausible; Splink's
+`find_matches_to_new_records` matches only new records against existing clusters (incremental).
+Sources: community.reltio.com/reltio-best-practices/mdm-survivorship, onlinehelp.informatica.com (B360 survivorship rules),
+profisee.com/blog/mdm-survivorship, moj-analytical-services.github.io/splink (blocking, real-time linkage).
+**Plan (one commit each):** 1 golden-record choice; 2 golden-record rules screen; 3 customer columns in the golden record; 4 blocking recall
+without identifiers; 5 source reliability in scoring; 6 incremental runs; 7 odd data shapes.
+
+**Step 1 (done): golden-record choice that works for any project.**
+- Each record's own date: standardisation now outputs `record_date` (ISO; future dates and dates before 1900 are dropped as typos) from the
+  mapped "record date" field; `source_dates` still overrides per source. "Most recent" therefore works with no source named in the rules.
+- Trust order: configured `source_trust` first; every other source is ranked AUTOMATICALLY by how many golden fields its records fill on
+  average (stated in the run summary as `trust_order` / `auto_ranked_sources`; completeness is not the same as trustworthiness, so the
+  rules screen in step 2 lets people set it). New `field_trust`: a source order for one field or group (e.g. phones from the CRM, IDs from KYC).
+- Quality: a per-field quality score (full first name over an initial, a middle name adds, a PAN as written over a repaired one, an address
+  with house number and PIN over a bare line) is the new `best_quality` strategy (now the default for names) and the tie-breaker in the others.
+- Shared values: a phone or email held by more than `shared_value_limit` (3) different people (office line, agent, placeholder) only becomes a
+  golden value when the person has nothing else. Counted in the summary (`shared_values_passed_over`).
+- `sources_without_dates` in the summary says which sources cannot take part in "most recent".
+- `configs/survivorship_default.json` no longer names the synthetic sources.
+- Synthetic 150-household run: auto order bank_crm, loans, insurance, kyc_documents, leads; kyc_documents undated. Tests: 6 new in
+  `tests/test_survivorship.py`; 355 passed. Honest limit: no trust decay with age yet; quality rules are hand-written, not learned.

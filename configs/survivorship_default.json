@@ -1,18 +1,9 @@
 {
-  "source_trust": [
-    "kyc_documents",
-    "bank_crm",
-    "loans",
-    "insurance",
-    "leads"
-  ],
-  "source_dates": {
-    "bank_crm": "account_open_date",
-    "insurance": "start_date",
-    "loans": "disbursed_date",
-    "leads": "created_at"
-  },
+  "source_trust": [],
+  "field_trust": {},
+  "source_dates": {},
   "default_strategy": "most_recent",
+  "shared_value_limit": 3,
   "groups": {
     "address_block": [
       "address",
@@ -22,7 +13,7 @@
     ]
   },
   "fields": {
-    "full_name": "most_frequent",
+    "full_name": "best_quality",
     "father_name": "most_frequent",
     "dob": "most_frequent",
     "gender": "most_frequent",

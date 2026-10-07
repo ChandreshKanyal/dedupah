@@ -8,6 +8,7 @@ only a keyed token and the last four digits do. Set DEDUPE_TOKEN_KEY in producti
 import argparse
 import json
 from collections import Counter, defaultdict
+from datetime import date, timedelta
 from pathlib import Path
 
 import pyarrow as pa
@@ -33,6 +34,7 @@ SCHEMA = pa.schema([
     ("aadhaar_token", S), ("aadhaar_last4", S),
     ("passport_no", S), ("dl_no", S), ("voter_id", S),
     ("address_norm", S), ("address_pin", S), ("address_house", S), ("address_alt_norm", S), ("city", S), ("state", S),
+    ("record_date", S),
 ])
 _GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O"}
 _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt",
@@ -86,7 +88,14 @@ def standardise_row(r: dict) -> dict:
         "passport_no": ids.passport(r["passport_no"]), "dl_no": ids.driving_licence(r["dl_no"]), "voter_id": ids.voter_id(r["voter_id"]),
         "address_norm": addr.norm, "address_pin": addr.pin, "address_house": addr.house,
         "address_alt_norm": alt.norm, "city": addr.city, "state": addr.state,
+        "record_date": _record_date(r.get("record_date")),
     }
+
+
+def _record_date(raw) -> str | None:
+    """ISO date the record was created/updated, for 'most recent' golden values. A date in the future or before 1900 is a typo, not a date."""
+    d = dates.parse_record_date(raw)
+    return d.isoformat() if d and date(1900, 1, 1) <= d <= dates.reference_date() + timedelta(days=1) else None
 
 
 def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
