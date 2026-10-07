@@ -1056,3 +1056,14 @@ without identifiers; 5 source reliability in scoring; 6 incremental runs; 7 odd 
 - `configs/survivorship_default.json` no longer names the synthetic sources.
 - Synthetic 150-household run: auto order bank_crm, loans, insurance, kyc_documents, leads; kyc_documents undated. Tests: 6 new in
   `tests/test_survivorship.py`; 355 passed. Honest limit: no trust decay with age yet; quality rules are hand-written, not learned.
+
+**Step 2 (done): golden-record rules as a form** (Project > Rules > Golden record). Three parts: (1) which source to trust most: "rank
+automatically" or an explicit order with Up/Down buttons (keyboard focus stays on the moved source; the list starts from the order the
+latest run actually used); (2) where each source's record date comes from: the mapped record date or one of the connection's extra columns,
+with a warning listing the sources the latest run could not date; (3) per field or group: the rule (newest record, most trusted source, most
+records agree, most complete, best quality, each explained on the page) and an optional preferred source. Plus the shared-phone limit. It
+proposes a normal versioned change (approval rules unchanged); the JSON editor is still there under "Advanced". New read endpoint
+`GET /projects/{p}/golden-record-guide` (fields, strategies, the project's live sources with their extra columns, how the latest run ranked
+them; no personal data). The run overview gains "How the golden records were chosen" (trust order, which sources were ranked automatically,
+undated sources, conflicts, shared values passed over). Checked live in Edge, both themes, 0 console errors; one test proposal (version 1 of
+the demo project's golden-record rules, "phones from one source...") was left waiting for approval in `customer-master`.

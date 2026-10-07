@@ -796,6 +796,15 @@ function runOverview(r) {
       kv([["Decisions applied", num(j.judgments_applied_to_run)], ...Object.entries(j.by_kind || {}).map(([k, n]) => ["  " + (KIND_LABEL[k] || label(k)), num(n)]),
         ["Kept in the result", num(j.held)], ["Not kept", j.not_held ? el("span", { class: "bad" }, num(j.not_held) + " (a later decision or an identifier rule overruled them)") : "0"]]));
   }
+  const g = s.golden;
+  if (g && g.trust_order) {
+    parts.push(el("h2", { class: "section" }, "How the golden records were chosen"),
+      kv([["Source trust order", g.trust_order.join(" > ")],
+        g.auto_ranked_sources && g.auto_ranked_sources.length ? ["Ranked automatically", g.auto_ranked_sources.join(", ") + " (by how complete their records are; set the order in Rules > Golden record)"] : null,
+        g.sources_without_dates && g.sources_without_dates.length ? ["No record date", el("span", { class: "bad" }, g.sources_without_dates.join(", ") + ": 'newest record' could not use them")] : null,
+        ["Fields where sources disagreed", num(g.values_with_source_conflict)],
+        g.shared_values_passed_over ? ["Shared phones or emails passed over", num(g.shared_values_passed_over)] : null]));
+  }
   const rowsOf = (id) => (s.records_by_source || {})[id];
   const srcRows = r.connections.length ? r.connections.map((c) => el("tr", {}, el("td", {}, c.id), el("td", {}, "Version " + c.version), el("td", { class: "num" }, num(rowsOf(c.id)))))
     : (s.sources || []).map((x) => el("tr", {}, el("td", {}, x), el("td", { class: "muted" }, "imported run"), el("td", { class: "num" }, num(rowsOf(x)))));
@@ -882,13 +891,108 @@ async function rulesPanel(p, name) {
         say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready."), "good");
       } catch (e) { fail(err, e.message); }
     };
-    wrap.append(el("h3", { class: "section" }, "Propose a new version"),
-      el("p", { class: "hint" }, "Edit a copy of the " + (versions.length ? "latest version" : "built-in defaults") + ". The server checks it; nothing changes until it is made live."),
-      field("Content (JSON)", editor), field("Reason for this change (at least 10 characters)", why), err, el("div", { class: "row" }, btn("Propose", propose, "primary")));
     const src = versions.length ? api("GET", base + "/versions/" + versions[versions.length - 1].version) : api("GET", base + "/default");
-    src.then((v) => { editor.value = JSON.stringify(v.content, null, 2); }).catch(() => {});
+    const jsonPart = [el("p", { class: "hint" }, "Edit a copy of the " + (versions.length ? "latest version" : "built-in defaults") + ". The server checks it; nothing changes until it is made live."),
+      field("Content (JSON)", editor), field("Reason for this change (at least 10 characters)", why), err, el("div", { class: "row" }, btn("Propose", propose, "primary"))];
+    if (name === "survivorship") {
+      const [start, guide] = await Promise.all([src, api("GET", P(pid) + "/golden-record-guide")]);
+      editor.value = JSON.stringify(start.content, null, 2);
+      wrap.append(goldenForm(start.content, guide, async (content, reason) => {
+        const out = await api("POST", base + "/propose", { content, reason });
+        await again();
+        say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready."), "good");
+      }), el("details", { class: "advanced" }, el("summary", {}, "Advanced: edit the rules as JSON"), jsonPart));
+    } else {
+      wrap.append(el("h3", { class: "section" }, "Propose a new version"), jsonPart);
+      src.then((v) => { editor.value = JSON.stringify(v.content, null, 2); }).catch(() => {});
+    }
   }
   return wrap;
+}
+
+// The golden-record rules as a form: which source to trust, where each record's date comes from, and how each field is chosen.
+const GOLDEN_STRATEGIES = [["most_recent", "Newest record"], ["most_trusted_source", "Most trusted source"], ["most_frequent", "Most records agree"],
+  ["most_complete", "Most complete"], ["best_quality", "Best quality"]];
+function goldenForm(content, guide, propose) {
+  const known = guide.sources.map((s) => s.id);
+  // start from the configured order, then the order the latest run actually used, then anything new
+  const seen = ((guide.last_run || {}).trust_order || []).filter((s) => known.includes(s));
+  let order = [...new Set([...(content.source_trust || []).filter((s) => known.includes(s)), ...seen, ...known])];
+  const auto = el("input", { type: "checkbox", checked: !(content.source_trust || []).length });
+  const list = el("ol", { class: "order" });
+  const move = (i, d) => {
+    [order[i + d], order[i]] = [order[i], order[i + d]];
+    drawOrder();
+    const b = list.children[i + d].querySelectorAll("button");            // keep focus on the moved source
+    (b[d < 0 ? 0 : 1].disabled ? b[d < 0 ? 1 : 0] : b[d < 0 ? 0 : 1]).focus();
+  };
+  const drawOrder = () => {
+    list.replaceChildren(...order.map((s, i) => el("li", {}, el("span", { class: "muted", "aria-hidden": "true" }, (i + 1) + "."), el("span", { class: "mono" }, s),
+      btn("Up", () => move(i, -1), "small", null, { disabled: auto.checked || i === 0, "aria-label": "Move " + s + " up" }),
+      btn("Down", () => move(i, 1), "small", null, { disabled: auto.checked || i === order.length - 1, "aria-label": "Move " + s + " down" }))));
+  };
+  auto.addEventListener("change", drawOrder);
+  drawOrder();
+  const last = guide.last_run;
+  const lastNote = last && last.trust_order ? el("p", { class: "hint" }, "The latest run (" + last.run_id + ") used this order: " + last.trust_order.join(", ") +
+    (last.auto_ranked_sources && last.auto_ranked_sources.length ? ". Ranked automatically: " + last.auto_ranked_sources.join(", ") + "." : ".")) : null;
+
+  // record dates: the mapped record date, or one of the connection's extra columns
+  const dateSel = {};
+  const dateRows = guide.sources.map((s) => {
+    const sel = el("select", { "aria-label": "Record date for " + s.id },
+      el("option", { value: "" }, s.record_date_mapped ? "The mapped record date" : "No date (cannot be 'newest')"),
+      s.attributes.map((a) => el("option", { value: a, selected: (content.source_dates || {})[s.id] === a }, "Extra column: " + a)));
+    dateSel[s.id] = sel;
+    return el("tr", {}, el("td", { class: "mono" }, s.id), el("td", {}, sel));
+  });
+  const undated = last && last.sources_without_dates && last.sources_without_dates.length
+    ? el("div", { class: "notice warn", role: "note" }, "In the latest run these sources had no usable record date, so 'Newest record' could not use them: " + last.sources_without_dates.join(", ") +
+      ". Map a record date on the connection, or pick a date column here.") : null;
+
+  // one row per field, or per group of fields that must come from the same record
+  const groups = content.groups || {};
+  const grouped = new Set(Object.values(groups).flat());
+  const units = [...Object.entries(groups).map(([g, m]) => [g, label(g) + " (" + m.join(", ") + ")"]), ...guide.fields.filter((f) => !grouped.has(f)).map((f) => [f, label(f)])];
+  const ruleSel = {};
+  const preferSel = {};
+  const fieldRows = units.map(([u, text]) => {
+    const current = (content.fields || {})[u] || content.default_strategy || "most_recent";
+    ruleSel[u] = el("select", { "aria-label": "Rule for " + text }, GOLDEN_STRATEGIES.map(([k, t]) => el("option", { value: k, selected: k === current }, t)));
+    const pref = ((content.field_trust || {})[u] || [])[0] || "";
+    preferSel[u] = el("select", { "aria-label": "Preferred source for " + text }, el("option", { value: "" }, "Overall order"),
+      known.map((s) => el("option", { value: s, selected: s === pref }, s)));
+    return el("tr", {}, el("td", {}, text), el("td", {}, ruleSel[u]), el("td", {}, preferSel[u]));
+  });
+  const shared = el("input", { type: "number", min: "1", max: "1000", value: String(content.shared_value_limit || 3) });
+  const why = el("input", { type: "text", maxlength: "300" });
+  const err = errBox();
+  const save = async () => {
+    fail(err, "");
+    const fields = {};
+    const fieldTrust = {};
+    for (const [u] of units) {
+      fields[u] = ruleSel[u].value;
+      if (preferSel[u].value) fieldTrust[u] = [preferSel[u].value];
+    }
+    const dates = {};
+    for (const [s, sel] of Object.entries(dateSel)) if (sel.value) dates[s] = sel.value;
+    const out = { ...content, source_trust: auto.checked ? [] : order, source_dates: dates, fields, field_trust: fieldTrust, shared_value_limit: Number(shared.value) };
+    try { await propose(out, why.value); } catch (e) { fail(err, e.message); }
+  };
+  return el("div", { class: "golden-form" },
+    el("h3", { class: "section" }, "1. Which source to trust most"),
+    el("label", { class: "check" }, auto, el("span", {}, "Rank sources automatically (the source whose records are most complete first). Untick to set the order yourself.")),
+    known.length ? list : empty("This project has no live connection yet."), lastNote,
+    el("h3", { class: "section" }, "2. How old each record is"),
+    el("p", { class: "hint" }, "'Newest record' needs a date per record: when it was created or last updated."),
+    undated, guide.sources.length ? table(["Source", "Record date"], dateRows) : null,
+    el("h3", { class: "section" }, "3. How each field is chosen"),
+    table(["Field", "Rule", "Preferred source"], fieldRows),
+    el("dl", { class: "help" }, GOLDEN_STRATEGIES.map(([k, t]) => [el("dt", {}, t), el("dd", {}, guide.strategies[k] || "")]).flat()),
+    field("A phone or email shared by more than this many people (an office line, an agent) is used only when nothing else exists", shared),
+    field("Reason for this change (at least 10 characters)", why), err,
+    el("div", { class: "row" }, btn("Propose these rules", save, "primary")));
 }
 
 // ---- connections (they belong to a project) -------------------------------------------------------------------------------

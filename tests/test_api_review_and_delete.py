@@ -128,3 +128,18 @@ def test_audit_log_newest_first_with_paging(api):
     assert [e["actor"] for e in page] == ["t4", "t3", "t2"]
     more = c.get(f"/security/events?newest_first=true&limit=3&before_id={page[-1]['id']}", headers=h).json()
     assert more[0]["actor"] == "t1"
+
+
+def test_golden_record_guide_and_a_form_style_proposal(api):
+    c, s, _, run = api
+    g = c.get(P + "/golden-record-guide", headers=hdr(s, "analyst")).json()
+    assert "full_name" in g["fields"] and "best_quality" in g["strategies"]
+    assert g["last_run"]["run_id"] == run.rsplit("/", 1)[1] and g["last_run"]["trust_order"]       # how the latest run ranked its sources
+    assert c.get(run, headers=hdr(s, "viewer")).json()["summary"]["golden"]["trust_order"] == g["last_run"]["trust_order"]
+    content = c.get(P + "/config/survivorship/default", headers=hdr(s, "analyst")).json()["content"]
+    content |= {"source_trust": ["kyc_documents"], "field_trust": {"mobile": ["bank_crm"]}, "source_dates": {"leads": "created_at"},
+                "fields": {**content["fields"], "full_name": "best_quality"}, "shared_value_limit": 5}
+    r = c.post(P + "/config/survivorship/propose", json={"content": content, "reason": "phones come from the bank CRM"}, headers=hdr(s, "analyst"))
+    assert r.status_code == 200, r.text
+    bad = content | {"field_trust": {"not_a_field": ["x"]}}
+    assert c.post(P + "/config/survivorship/propose", json={"content": bad, "reason": "this one must be refused"}, headers=hdr(s, "analyst")).status_code == 422

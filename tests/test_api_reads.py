@@ -38,7 +38,7 @@ def test_a_run_shows_its_headline_numbers_and_configuration_but_no_evaluation_da
     assert body["status"] == "succeeded" and body["project_id"] == PROJECT
     assert body["summary"]["records"] > 100 and body["summary"]["people"] > 50 and body["summary"]["review_items"] > 0
     assert set(body["summary"]) <= {"records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "review_items", "households", "seconds", "records_by_source",
-                                    "scoring", "judgments"}                     # how scores were learned; counts of decisions applied (no personal data)
+                                    "scoring", "judgments", "golden"}           # how scores were learned; decisions applied; how golden values were chosen (no personal data)
     assert body["configs"]["decision"]["source"] == "file" and "eval" not in r.text and "truth" not in r.text
 
 

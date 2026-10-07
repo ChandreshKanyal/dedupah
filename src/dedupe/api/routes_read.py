@@ -256,6 +256,28 @@ def config_default(request: Request, name: ConfigName, project_id: str = PID, p:
     return {"name": name, "content": _default_content(name)}
 
 
+@router.get(PROJ + "/golden-record-guide")
+def golden_record_guide(request: Request, project_id: str = PID, p: Principal = READ_CONFIG):
+    """What the golden-record rules screen needs: the fields and strategies, the project's sources (their extra columns, whether a record
+    date is mapped) and how the latest run actually ranked the sources. No personal data."""
+    from dedupe.survivorship.config import GOLDEN_FIELDS, STRATEGY_HELP
+    ps = project_scope(request, project_id)
+    sources = []
+    for name in ps.configs.names("connection/"):
+        act = ps.configs.active(name)
+        if act is None:
+            continue
+        c = act.content
+        sources.append({"id": c["source_id"], "attributes": list(c.get("attributes") or []), "record_date_mapped": "record_date" in (c.get("fields") or {})})
+    sv = _services(request)
+    last, used = sv.jobs.latest_succeeded(project_id), None
+    if last:
+        f = sv.workspace.run_dir(project_id, last.id) / "pipeline_summary.json"
+        g = (json.loads(f.read_text(encoding="utf-8")).get("golden_record") or {}) if f.exists() else {}
+        used = {"run_id": last.id, **{k: g.get(k) for k in ("trust_order", "auto_ranked_sources", "sources_without_dates", "shared_values_passed_over")}}
+    return {"fields": list(GOLDEN_FIELDS), "strategies": STRATEGY_HELP, "sources": sources, "last_run": used}
+
+
 @router.get(PROJ + "/config/{name}/diff", response_model=list[str])
 def config_diff(request: Request, name: ConfigName, project_id: str = PID, old: int = Query(ge=1, le=1_000_000), new: int = Query(ge=1, le=1_000_000),
                 p: Principal = READ_CONFIG):

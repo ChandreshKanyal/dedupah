@@ -88,7 +88,9 @@ def headline(work: Path) -> dict:
             "review_items": (s.get("review_queue") or {}).get("queue_items"), "households": (s.get("households") or {}).get("households"),
             "seconds": s.get("total_seconds"), "records_by_source": (s.get("ingest") or {}).get("records") or {},
             "scoring": {k: (s.get("scoring") or {}).get(k) for k in ("mode", "mode_reason")} if s.get("scoring") else None,
-            "judgments": s.get("judgments")}
+            "judgments": s.get("judgments"),
+            "golden": {k: (s.get("golden_record") or {}).get(k) for k in ("trust_order", "auto_ranked_sources", "sources_without_dates", "shared_values_passed_over",
+                                                                     "values_with_source_conflict")} if s.get("golden_record") else None}
 
 
 class RunJobs:

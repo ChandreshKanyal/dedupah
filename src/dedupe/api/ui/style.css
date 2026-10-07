@@ -246,3 +246,14 @@ html[data-theme="light"] .logo-on-dark { display: none !important; }
   #brand img { height: 18px; }
   th, td { padding: 8px 10px; }
 }
+
+/* golden-record rules form */
+ol.order { margin: 0 0 8px; padding-left: 0; list-style: none; }
+ol.order li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+ol.order li .mono { min-width: 160px; }
+dl.help { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0 16px; }
+dl.help dt { font-weight: 600; }
+dl.help dd { margin: 0; color: var(--muted); }
+details.advanced { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
+details.advanced summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+@media (max-width: 640px) { dl.help { grid-template-columns: 1fr; } dl.help dd { margin-bottom: 6px; } }
