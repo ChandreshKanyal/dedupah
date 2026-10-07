@@ -95,6 +95,32 @@
       }
     },
     {
+      "id": "veto_customer_number_conflict",
+      "type": "never_merge",
+      "enabled": false,
+      "reason": "Two different customer numbers from the organisation's own customer master: different customers (turn on only when every source uses the same customer numbering)",
+      "when": {
+        "all": [
+          {
+            "comparison": "customer_number",
+            "is": "different customer numbers"
+          },
+          {
+            "not": {
+              "comparison": "pan",
+              "is": "same PAN"
+            }
+          },
+          {
+            "not": {
+              "comparison": "aadhaar",
+              "is": "same Aadhaar token"
+            }
+          }
+        ]
+      }
+    },
+    {
       "id": "auto_same_pan_compatible_name",
       "type": "auto_merge",
       "reason": "Same PAN and a compatible name",
@@ -127,6 +153,31 @@
           {
             "comparison": "aadhaar",
             "is": "same Aadhaar token"
+          },
+          {
+            "comparison": "name",
+            "in": [
+              "identical cleaned name",
+              "same name sounds (any order)",
+              "first+last sound equal",
+              "initial + same surname",
+              "one side first-name only, first names agree",
+              "fuzzy full-name match (JW>=0.90)"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "auto_same_customer_number",
+      "type": "auto_merge",
+      "enabled": false,
+      "reason": "Same customer number from the organisation's own customer master and a compatible name",
+      "when": {
+        "all": [
+          {
+            "comparison": "customer_number",
+            "is": "same customer number"
           },
           {
             "comparison": "name",

@@ -22,7 +22,7 @@ from dedupe.workspace import PROJECT_ID, UploadError
 
 from .auth import Principal
 from .guards import _context, _services, require
-from .routes_read import PID, VersionView
+from .routes_read import PID, VersionView, _log_unmask, _unmask_gate
 from .scope import project_scope
 
 router = APIRouter()
@@ -99,7 +99,9 @@ def _summary(configs, name: str) -> dict:
     vs = configs.versions(name)
     live = next((v for v in vs if v.status == "active"), None)
     content = configs.get(name, live.version) if live else configs.get(name, vs[-1].version)
-    return {"id": name.split("/", 1)[1], "type": content["connector"].get("type"), "fields_mapped": len(content.get("fields") or {}),
+    fields = {f: (c if isinstance(c, str) else "(combined columns)") for f, c in (content.get("fields") or {}).items()}
+    return {"id": name.split("/", 1)[1], "type": content["connector"].get("type"), "fields_mapped": len(fields), "fields": fields,
+            "record_id": content.get("record_id"), "extra_columns": list(content.get("attributes") or []),
             "live_version": live.version if live else None, "latest_version": vs[-1].version, "latest_status": vs[-1].status,
             "updated_at": vs[-1].proposed_at, "updated_by": vs[-1].proposed_by}
 
@@ -108,7 +110,17 @@ def _summary(configs, name: str) -> dict:
 @router.get("/connectors")
 def options(p: Principal = MANAGE):
     return {"connectors": {t: {"settings": sorted(ALLOWED_SETTINGS[t] - {"type"}), "help": h} for t, h in SETTING_HELP.items()},
-            "canonical_fields": list(CANONICAL_FIELDS)}
+            "canonical_fields": list(CANONICAL_FIELDS), "field_help": CANONICAL_FIELDS, "field_groups": FIELD_GROUPS}
+
+
+# How the mapping screen groups the fields, and what the engine does with each (shown next to the field so a person knows why it matters).
+FIELD_GROUPS = [
+    {"title": "Who the person is", "fields": ["full_name", "father_name", "dob", "age", "gender", "marital_status"]},
+    {"title": "How to reach them", "fields": ["mobile", "mobile_alt", "email"]},
+    {"title": "Where they live", "fields": ["address", "address_alt", "city", "state", "pincode"]},
+    {"title": "Identifiers", "fields": ["customer_number", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key", "passport_no", "dl_no", "voter_id"]},
+    {"title": "Other details", "fields": ["record_date", "occupation", "annual_income", "related_name", "party_role", "relation_to_proposer"]},
+]
 
 
 # ---- the project's connections ------------------------------------------------------------------------------------------------
@@ -170,9 +182,12 @@ def test_connection(request: Request, project_id: str = PID, connection_id: str 
 
 # ---- looking inside a source ----------------------------------------------------------------------------------------------
 @router.post(BASE + "/inspect")
-def inspect(request: Request, body: InspectIn, project_id: str = PID, p: Principal = MANAGE):
-    """Open the source, list its columns, suggest a mapping, and show a few MASKED sample rows so a person can recognise the columns."""
+def inspect(request: Request, body: InspectIn, project_id: str = PID, unmask: bool = False, reason: str | None = Query(None, max_length=300),
+            p: Principal = MANAGE):
+    """Open the source, list its columns, suggest a mapping, and show a few sample rows so a person can recognise the columns: masked, or
+    as they are for someone holding `pii.unmask` who gives a reason (logged)."""
     project_scope(request, project_id)
+    reveal = _unmask_gate(request, p, unmask, reason, f"{project_id}/source-sample")
     _throttle(request, p, "source_inspect", INSPECT_LIMIT_PER_MIN)
     _own_upload(request, project_id, body.connector)
     try:
@@ -180,14 +195,23 @@ def inspect(request: Request, body: InspectIn, project_id: str = PID, p: Princip
     except SourceProblem as e:
         raise HTTPException(422, str(e)) from None
     _log(request, p, "source_inspect", body.connector.get("type", ""))
-    return {"columns": info["columns"], "suggestions": info["suggestions"],
-            "sample": [{k: mask_cell(v) for k, v in row.items()} for row in info["sample"].slice(0, SAMPLE_ROWS).to_pylist()]}
+    if reveal:
+        _log_unmask(request, p, f"{project_id}/source-sample", reason, "source sample")
+    cell = _plain if reveal else mask_cell
+    return {"columns": info["columns"], "suggestions": info["suggestions"], "unmasked": reveal,
+            "sample": [{k: cell(v) for k, v in row.items()} for row in info["sample"].slice(0, SAMPLE_ROWS).to_pylist()]}
+
+
+def _plain(v) -> str | None:
+    return None if v is None or v == "" else str(v)
 
 
 @router.post(BASE + "/preview")
-def preview(request: Request, body: SourceConfig, project_id: str = PID, p: Principal = MANAGE):
-    """Apply the mapping to a sample: which canonical fields get filled, and a few masked canonical rows."""
+def preview(request: Request, body: SourceConfig, project_id: str = PID, unmask: bool = False, reason: str | None = Query(None, max_length=300),
+            p: Principal = MANAGE):
+    """Apply the mapping to a sample: which canonical fields get filled, and a few canonical rows (masked unless revealed, as above)."""
     project_scope(request, project_id)
+    reveal = _unmask_gate(request, p, unmask, reason, f"{project_id}/source-sample")
     _throttle(request, p, "source_inspect", INSPECT_LIMIT_PER_MIN)
     _own_upload(request, project_id, body.connector)
     try:
@@ -197,8 +221,11 @@ def preview(request: Request, body: SourceConfig, project_id: str = PID, p: Prin
     n = table.num_rows
     filled = {f: sum(1 for v in table.column(f).to_pylist() if v not in (None, "")) for f in CANONICAL_FIELDS if f in body.fields}
     _log(request, p, "source_preview", body.source_id[:40])
-    rows = [{k: (v if k == "source_id" else mask_cell(v)) for k, v in row.items()} for row in table.slice(0, SAMPLE_ROWS).to_pylist()]
-    return {"sample_size": n, "filled": filled, "rows": rows}
+    if reveal:
+        _log_unmask(request, p, f"{project_id}/source-sample", reason, "mapped sample")
+    cell = _plain if reveal else mask_cell
+    rows = [{k: (v if k == "source_id" else cell(v)) for k, v in row.items()} for row in table.slice(0, SAMPLE_ROWS).to_pylist()]
+    return {"sample_size": n, "filled": filled, "rows": rows, "unmasked": reveal}
 
 
 # ---- propose, approve, make live ---------------------------------------------------------------------------------------------

@@ -24,7 +24,7 @@ from dedupe.scoring.comparisons import COMPARISONS
 from dedupe.store import JudgmentError, JudgmentStore
 from dedupe.survivorship.config import GOLDEN_FIELDS
 
-SENSITIVE = ("pan", "mobile", "mobile_alt", "email", "passport_no", "dl_no", "voter_id", "aadhaar_token", "aadhaar_last4")
+SENSITIVE = ("customer_number", "pan", "mobile", "mobile_alt", "email", "passport_no", "dl_no", "voter_id", "aadhaar_token", "aadhaar_last4")
 _LABELS = {c.name: c.labels() for c in COMPARISONS}
 MAX_PAIRS_PER_ACTION = 500
 

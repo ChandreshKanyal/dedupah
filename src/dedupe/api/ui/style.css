@@ -257,3 +257,23 @@ dl.help dd { margin: 0; color: var(--muted); }
 details.advanced { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
 details.advanced summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 @media (max-width: 640px) { dl.help { grid-template-columns: 1fr; } dl.help dd { margin-bottom: 6px; } }
+
+/* clickable steps, mapping examples, result previews */
+.steps button.step { padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--link); font: inherit; cursor: pointer; }
+.steps button.step:hover { border-color: var(--primary); }
+.examples { display: flex; flex-wrap: wrap; gap: 4px; }
+.examples .ex { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.small { font-size: 12px; }
+.preview { margin-top: 12px; }
+.preview .field { margin: 0; }
+
+/* matching rules form */
+.rule-list h4 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.rule { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+.rule .check { grid-column: 1; }
+.rule details { grid-column: 1; margin-left: 28px; }
+.rule details summary { cursor: pointer; color: var(--link); font-size: 13px; }
+.rule > button { grid-column: 2; grid-row: 1; align-self: start; }
+.rule.off strong { color: var(--muted); }
+.conds .cond { margin: 6px 0; }
+.conds select, .conds input { max-width: 320px; }

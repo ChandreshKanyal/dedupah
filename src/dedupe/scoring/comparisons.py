@@ -133,14 +133,19 @@ ADDRESS = Comparison(
 GENDER = Comparison("gender", _either_missing("gender"), (Level(1, "same gender", "l_gender = r_gender"),),
                     else_label="different gender")
 
-COMPARISONS = [NAME, DOB, PHONE, EMAIL, PAN, AADHAAR, GOV_ID, ADDRESS, GENDER]
+# An organisation's own customer number shared across its systems (CIF, UCIC). Its weight is learned like any other field; whether the
+# same number decides on its own is the project's choice (rules auto_same_customer_number / veto_customer_number_conflict, off by default).
+CUSTOMER_NUMBER = Comparison("customer_number", _either_missing("customer_number"),
+                             (Level(1, "same customer number", "l_customer_number = r_customer_number"),), else_label="different customer numbers")
+
+COMPARISONS = [NAME, DOB, PHONE, EMAIL, PAN, AADHAAR, GOV_ID, ADDRESS, GENDER, CUSTOMER_NUMBER]
 STRONG_ID = ("pan", "aadhaar", "gov_id")  # used to seed EM: agreement ~ same person, disagreement ~ different people
 
 RECORD_COLUMNS = [
     "name_clean", "name_first", "name_last", "name_first_is_initial", "name_first_phon", "name_last_phon", "name_tokens_phon",
     "dob", "dob_year", "dob_month", "dob_day", "dob_placeholder", "birth_year_min", "birth_year_max", "mobile", "mobile_alt", "email_key", "pan",
     "aadhaar_token", "aadhaar_last4", "passport_no", "dl_no", "voter_id", "address_pin", "address_house",
-    "address_norm", "city", "gender",
+    "address_norm", "city", "gender", "customer_number",
 ]
 
 

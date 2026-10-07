@@ -22,7 +22,7 @@ from .config import EXTRA_NAME, GOLDEN_FIELDS, MAX_EXTRA_COLUMNS, QUALITY, SHARE
 
 _SEP = "\x1f"
 # standardised / canonical columns the rules read; files written before a column existed are read as if it were empty
-_STD_OPTIONAL = {"record_date": "VARCHAR", "name_first_is_initial": "BOOLEAN", "name_middle": "VARCHAR", "pan_repaired": "BOOLEAN",
+_STD_OPTIONAL = {"customer_number": "VARCHAR", "record_date": "VARCHAR", "name_first_is_initial": "BOOLEAN", "name_middle": "VARCHAR", "pan_repaired": "BOOLEAN",
                  "father_name_clean": "VARCHAR", "address_house": "VARCHAR", "dob_placeholder": "BOOLEAN", "dob_precision": "VARCHAR"}
 
 

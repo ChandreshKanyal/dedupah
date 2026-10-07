@@ -398,7 +398,10 @@ function tabs(list, current, pick) {
   return bar;
 }
 const tabPanel = (current, body) => el("div", { role: "tabpanel", id: "tabpanel", "aria-labelledby": "tab-" + current }, body);
-const steps = (names, on) => el("ol", { class: "steps", "aria-label": "Steps" }, names.map((t, i) => el("li", {}, el("span", { class: i + 1 === on ? "on" : "", "aria-current": i + 1 === on ? "step" : null }, t))));
+// The steps of a flow. With `goTo`, the other steps are buttons, so people can move back and forth by clicking them.
+const steps = (names, on, goTo) => el("ol", { class: "steps", "aria-label": "Steps" }, names.map((t, i) => el("li", {},
+  goTo && i + 1 !== on ? el("button", { type: "button", class: "step", onclick: () => goTo(i + 1) }, (i + 1) + ". " + t)
+    : el("span", { class: i + 1 === on ? "on" : "", "aria-current": i + 1 === on ? "step" : null }, (i + 1) + ". " + t))));
 async function refreshCache() {
   const [projects, runs] = await Promise.all([api("GET", "/projects"), can("runs.read") ? api("GET", "/runs?limit=50") : []]);
   Object.assign(cache, { projects, runs });
@@ -472,25 +475,30 @@ const runState = (r) => tag(r.status === "queued" && r.queue_position ? "Queued,
 function runsTable(runs, withProject, pid) {
   if (!runs.length) return empty("No runs yet." + (can("runs.start") ? "" : " Someone who can start runs starts the first one."),
     can("runs.start") ? btn("Start a run", () => go(() => newRun(pid)), "primary", "play") : null);
-  const cols = ["Run", ...(withProject ? ["Project"] : []), "Status", "Connections", ["Records"], ["People"], ["In review queue"], "Started", "By"];
+  const del = can("data.delete");
+  const cols = ["Run", ...(withProject ? ["Project"] : []), "Status", "Connections", ["Records"], ["People"], ["In review queue"], "Started", "By", ...(del ? [""] : [])];
   return table(cols, runs.map((r) => linkRow(r.id, () => viewRun(r.project_id, r.id),
     withProject ? el("td", {}, projectName(r.project_id)) : null, el("td", {}, runState(r)),
     el("td", {}, r.connections.map((c) => c.id).join(", ") || el("span", { class: "muted" }, "imported")),
     el("td", { class: "num" }, num(r.summary.records)), el("td", { class: "num" }, num(r.summary.people)), el("td", { class: "num" }, num(r.summary.review_items)),
-    el("td", {}, when(r.started_at || r.created_at)), el("td", {}, r.requested_by))));
+    el("td", {}, when(r.started_at || r.created_at)), el("td", {}, r.requested_by),
+    del ? el("td", { class: "actions-cell" }, r.status === "running" || r.status === "queued" ? null
+      : btn("Delete", () => deleteRun(r.project_id, r.id), "small danger", "trash", { "aria-label": "Delete run " + r.id })) : null)));
 }
 
 // ---- projects ----------------------------------------------------------------------------------------------------------
 async function viewProjects() {
   here("/projects");
   await refreshCache();
+  const del = can("data.delete");
   const rows = cache.projects.map((p) => linkRow(p.name, () => viewProject(p.id),
     el("td", {}, p.description || el("span", { class: "muted mono" }, p.id)), el("td", { class: "num" }, num(p.runs)),
     el("td", {}, p.latest_run ? runState(p.latest_run) : el("span", { class: "muted" }, "no runs")),
-    el("td", {}, p.latest_run ? when(p.latest_run.started_at || p.latest_run.created_at) : ""), el("td", {}, p.you_own ? tag("You", "info") : p.created_by)));
+    el("td", {}, p.latest_run ? when(p.latest_run.started_at || p.latest_run.created_at) : ""), el("td", {}, p.you_own ? tag("You", "info") : p.created_by),
+    del ? el("td", { class: "actions-cell" }, btn("Delete", () => deleteProject(p), "small danger", "trash", { "aria-label": "Delete project " + p.name })) : null));
   const create = can("projects.create") ? btn("New project", () => run(newProject), "primary", "plus") : null;
   show(page("Projects", "A project is one piece of dedupe work with its own data connections, runs, decisions and rules. You see the projects you created or were added to.", [create]),
-    rows.length ? table(["Project", "Description", ["Runs"], "Latest run", "Last activity", "Owner"], rows)
+    rows.length ? table(["Project", "Description", ["Runs"], "Latest run", "Last activity", "Owner", ...(del ? [""] : [])], rows)
       : empty(create ? "No projects yet. Create the first one." : "You are not in any project yet. Ask an administrator to create one or to add you to one.", create));
 }
 async function newProject() {
@@ -610,17 +618,7 @@ function settingsPanel(p) {
     await go(() => viewProject(p.id, "settings"));
     say("Settings saved.", "good");
   };
-  const remove = async () => {
-    const typed = el("input", { type: "text", maxlength: "40", autocomplete: "off" });
-    const why = el("textarea", { class: "plain", maxlength: "300" });
-    const e2 = errBox();
-    const ok = await dialog("Delete project " + p.name + "?", el("div", {},
-      el("p", {}, "This erases the project for good: its runs and results, uploaded files, person IDs, steward decisions, rules, connections and schedules. The audit log keeps who deleted it, when and why. This cannot be undone."),
-      field("Type the project id (" + p.id + ") to confirm", typed), field("Why is it deleted? (at least 10 characters)", why), e2), "Delete project", async () => {
-      try { return await api("POST", P(p.id) + "/delete", { confirm: typed.value.trim(), reason: why.value.trim() }); } catch (e) { fail(e2, e.message); return undefined; }
-    }, true);
-    if (ok) { await refreshCache(); await go(viewProjects); say("Project " + p.name + " was deleted.", "good"); }
-  };
+  const remove = () => deleteProject(p);
   return el("div", {},
     el("div", { class: "cols" }, el("div", {}, field("Name", name), field("Description", desc)),
       kv([["Project id", el("span", { class: "mono" }, p.id)], ["Created by", p.created_by], ["Created", when(p.created_at)]])),
@@ -631,6 +629,17 @@ function settingsPanel(p) {
     can("data.delete") ? el("div", { class: "panel danger-zone" }, el("h3", {}, "Delete this project"), el("div", { class: "body" },
       el("p", { class: "muted" }, "Erases everything in the project. Only its owner or an administrator can do it once the project has members."),
       btn("Delete project", remove, "danger", "trash"))) : null);
+}
+async function deleteProject(p) {
+  const typed = el("input", { type: "text", maxlength: "40", autocomplete: "off" });
+  const why = el("textarea", { class: "plain", maxlength: "300" });
+  const e2 = errBox();
+  const ok = await dialog("Delete project " + p.name + "?", el("div", {},
+    el("p", {}, "This erases the project for good: its runs and results, uploaded files, person IDs, steward decisions, rules, connections and schedules. The audit log keeps who deleted it, when and why. This cannot be undone."),
+    field("Type the project id (" + p.id + ") to confirm", typed), field("Why is it deleted? (at least 10 characters)", why), e2), "Delete project", async () => {
+    try { return await api("POST", P(p.id) + "/delete", { confirm: typed.value.trim(), reason: why.value.trim() }); } catch (e) { fail(e2, e.message); return undefined; }
+  }, true);
+  if (ok) { await refreshCache(); await go(viewProjects); say("Project " + p.name + " was deleted.", "good"); }
 }
 async function accessPanel(pid) {
   const [members, roles] = await Promise.all([api("GET", P(pid) + "/access"), api("GET", "/roles")]);
@@ -951,12 +960,180 @@ async function rulesPanel(p, name) {
         await again();
         say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready."), "good");
       }), el("details", { class: "advanced" }, el("summary", {}, "Advanced: edit the rules as JSON"), jsonPart));
+    } else if (name === "decision") {
+      const [start, cat, defaults] = await Promise.all([src, api("GET", "/rules-catalogue"), api("GET", base + "/default")]);
+      editor.value = JSON.stringify(start.content, null, 2);
+      wrap.append(matchingForm(start.content, defaults.content, cat, async (content, reason) => {
+        const out = await api("POST", base + "/propose", { content, reason });
+        await again();
+        say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready; the project's next run uses it."), "good");
+      }), el("details", { class: "advanced" }, el("summary", {}, "Advanced: edit the rules as JSON"), jsonPart));
     } else {
       add(wrap, el("h3", { class: "section" }, "Propose a new version"), jsonPart);
       src.then((v) => { editor.value = JSON.stringify(v.content, null, 2); }).catch(() => {});
     }
   }
   return wrap;
+}
+
+// ---- matching rules without code ----------------------------------------------------------------------------------------------
+const RULE_KIND = { never_merge: ["Never merge", "danger"], force_review: ["Ask a person", "warn"], auto_merge: ["Always merge", "success"], not_enough_evidence: ["Not enough evidence", ""] };
+// A rule's condition in words, from the same building blocks the engine runs.
+function describeRule(node, cat) {
+  const title = (c) => ((cat.comparisons.find((x) => x.name === c) || {}).title || c);
+  const q = (s) => "\u201c" + s + "\u201d";
+  if (node.all) return node.all.map((n) => describeRule(n, cat)).join(" and ");
+  if (node.any) return "(" + node.any.map((n) => describeRule(n, cat)).join(" or ") + ")";
+  if (node.not) return "not " + describeRule(node.not, cat);
+  if (node.comparison) {
+    const t = title(node.comparison);
+    if (node.missing) return t + " is missing on one side";
+    if (node.is) return t + ": " + q(node.is);
+    if (node.is_not) return t + " is not " + q(node.is_not);
+    if (node.in) return t + ": " + node.in.map(q).join(" or ");
+    if (node.not_in) return t + " is none of " + node.not_in.map(q).join(", ");
+  }
+  if (node.field) {
+    const f = label(node.field).replace("dob year", "birth years");
+    if (node.op === "abs_diff_gt") return f + " differ by more than " + node.value;
+    if (node.op === "differs") return f + " differ";
+    if (node.op === "same") return f + " are the same";
+    if (node.op === "both_born_within_last") return "both born in the last " + node.value + " years";
+    if (node.op === "both_gte") return f + " both at least " + node.value;
+    if (node.op === "both_lte") return f + " both at most " + node.value;
+  }
+  if (node.score) return (node.score === "probability" ? "match score " + node.op + " " + Math.round(node.value * 100) + "%" : "match weight " + node.op + " " + node.value);
+  return JSON.stringify(node);
+}
+function matchingForm(content, defaults, cat, propose) {
+  const state = JSON.parse(JSON.stringify(content));
+  const keyRules = (k) => [KEY_RULES[k][1], KEY_RULES[k][2]];
+  const autoAt = el("input", { type: "number", min: "1", max: "100", step: "1", value: String(Math.round((state.auto_merge_at || 0.9) * 100)) });
+  const reviewAt = el("input", { type: "number", min: "1", max: "99", step: "1", value: String(Math.round((state.review_at || 0.1) * 100)) });
+  const keys = Object.fromEntries(Object.keys(KEY_RULES).map((k) => [k, keyOn(state, k)]));
+  const keyBoxes = Object.keys(KEY_RULES).map((k) => {
+    const cb = el("input", { type: "checkbox", checked: keys[k] });
+    cb.addEventListener("change", () => { keys[k] = cb.checked; drawRules(); });
+    return el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, "Records with the same " + KEY_RULES[k][0] + " are the same person"),
+      el("span", { class: "muted" }, "Merged automatically when the names are compatible; two different " + KEY_RULES[k][0] + "s are never merged.")));
+  });
+  // the identifier switches own their two rules; a project whose rules predate a switch gets the rule from the built-in defaults
+  const applyKeys = () => {
+    for (const k of Object.keys(KEY_RULES)) for (const id of keyRules(k)) {
+      let r = state.rules.find((x) => x.id === id);
+      if (!r) { const d = (defaults.rules || []).find((x) => x.id === id); if (d) { r = JSON.parse(JSON.stringify(d)); state.rules.push(r); } }
+      if (r) r.enabled = keys[k];
+    }
+  };
+  const owned = new Set(Object.keys(KEY_RULES).flatMap(keyRules));
+  const list = el("div", { class: "rule-list" });
+  const drawRules = () => {
+    applyKeys();
+    list.replaceChildren(...["never_merge", "force_review", "auto_merge", "not_enough_evidence"].flatMap((type) => {
+      const rs = state.rules.filter((r) => r.type === type);
+      if (!rs.length) return [];
+      return [el("h4", {}, RULE_KIND[type][0]), ...rs.map((r) => {
+        const cb = el("input", { type: "checkbox", checked: r.enabled !== false, disabled: owned.has(r.id), "aria-label": "Rule " + r.id + " on" });
+        cb.addEventListener("change", () => { r.enabled = cb.checked; });
+        const custom = r.id.startsWith("custom_");
+        return el("div", { class: "rule" + (r.enabled === false ? " off" : "") },
+          el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, r.reason || label(r.id)),
+            owned.has(r.id) ? el("span", { class: "muted" }, "Switched by the identifier choice above.") : null)),
+          el("details", {}, el("summary", {}, "When it applies"), el("p", { class: "muted" }, describeRule(r.when, cat))),
+          custom ? btn("Remove", () => { state.rules = state.rules.filter((x) => x !== r); drawRules(); }, "small danger", "trash", { "aria-label": "Remove rule " + r.id }) : null);
+      })];
+    }));
+  };
+  drawRules();
+
+  // ---- the rule builder ----
+  const what = el("select", {}, ["never_merge", "force_review", "auto_merge"].map((k) => el("option", { value: k }, cat.rule_types[k])));
+  const join = el("select", {}, el("option", { value: "all" }, "all of these are true"), el("option", { value: "any" }, "any of these is true"));
+  const conds = el("div", { class: "conds" });
+  const condRow = () => {
+    const subject = el("select", { "aria-label": "Field" }, cat.comparisons.map((c) => el("option", { value: "c:" + c.name }, c.title)),
+      el("option", { value: "score" }, "Match score"), el("option", { value: "years" }, "Birth years"));
+    const op = el("select", { "aria-label": "Condition" });
+    const val = el("span");
+    const row = el("div", { class: "cond row" }, subject, op, val, btn("Remove", () => row.remove(), "small", null, { "aria-label": "Remove this condition" }));
+    const fillOps = () => {
+      const s = subject.value;
+      let ops;
+      if (s.startsWith("c:")) ops = [["is", "is"], ["is_not", "is not"], ["missing", "is missing on one side"]];
+      else if (s === "score") ops = [[">=", "is at least (%)"], ["<", "is below (%)"]];
+      else ops = [["abs_diff_gt", "differ by more than (years)"]];
+      op.replaceChildren(...ops.map(([v, t]) => el("option", { value: v }, t)));
+      fillVal();
+    };
+    const fillVal = () => {
+      const s = subject.value;
+      if (s.startsWith("c:")) {
+        const c = cat.comparisons.find((x) => x.name === s.slice(2));
+        val.replaceChildren(op.value === "missing" ? "" : el("select", { "aria-label": "Value" }, c.levels.map((l) => el("option", { value: l }, l))));
+      } else val.replaceChildren(el("input", { type: "number", min: "0", max: s === "score" ? "100" : "120", value: s === "score" ? "90" : "10", "aria-label": "Value" }));
+    };
+    subject.addEventListener("change", fillOps);
+    op.addEventListener("change", fillVal);
+    fillOps();
+    row.build = () => {
+      const s = subject.value;
+      const v = val.firstChild ? val.firstChild.value : null;
+      if (s.startsWith("c:")) {
+        if (op.value === "missing") return { comparison: s.slice(2), missing: true };
+        return op.value === "is" ? { comparison: s.slice(2), is: v } : { comparison: s.slice(2), is_not: v };
+      }
+      if (s === "score") return { score: "probability", op: op.value, value: Math.min(100, Math.max(0, Number(v))) / 100 };
+      return { field: "dob_year", op: "abs_diff_gt", value: Number(v) };
+    };
+    return row;
+  };
+  conds.append(condRow());
+  const ruleName = el("input", { type: "text", maxlength: "50", placeholder: "for example: different employee numbers" });
+  const ruleWhy = el("input", { type: "text", maxlength: "300", placeholder: "Why this rule exists, in a sentence people will read" });
+  const err = errBox();
+  const addRule = () => {
+    fail(err, "");
+    const parts = [...conds.children].map((r) => r.build());
+    if (!parts.length) { fail(err, "Add at least one condition."); return; }
+    const slug = (ruleName.value || ruleWhy.value || "rule").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "rule";
+    let id = "custom_" + slug;
+    for (let i = 2; state.rules.some((r) => r.id === id); i++) id = "custom_" + slug + "_" + i;
+    state.rules.push({ id, type: what.value, reason: ruleWhy.value.trim() || ruleName.value.trim() || label(what.value), when: parts.length === 1 ? parts[0] : { [join.value]: parts } });
+    ruleName.value = ""; ruleWhy.value = "";
+    conds.replaceChildren(condRow());
+    drawRules();
+    say("Rule added to the list below the identifiers. Propose the rules to save it.", "good");
+  };
+  const why = el("input", { type: "text", maxlength: "300" });
+  const err2 = errBox();
+  const save = async () => {
+    fail(err2, "");
+    const a = Number(autoAt.value) / 100;
+    const r = Number(reviewAt.value) / 100;
+    if (!(r > 0 && r < a && a <= 1)) { fail(err2, "The 'ask a person' level must be above 0 and below the 'merge automatically' level, which is at most 100."); return; }
+    applyKeys();
+    try { await propose({ ...state, auto_merge_at: a, review_at: r }, why.value); } catch (e) { fail(err2, e.message); }
+  };
+  return el("div", { class: "matching-form" },
+    el("h3", { class: "section" }, "1. When two records are merged"),
+    el("p", { class: "hint" }, "Every pair of records gets a match score from all the fields they share. The rules below can overrule the score."),
+    el("div", { class: "fields" }, field("Merge automatically when the score is at least (%)", autoAt),
+      field("Ask a person when the score is at least (%); below it the records stay separate", reviewAt)),
+    el("h3", { class: "section" }, "2. Which identifiers decide on their own"),
+    el("div", { class: "checks" }, keyBoxes),
+    el("h3", { class: "section" }, "3. Rules"),
+    el("p", { class: "hint" }, "A rule acts on a pair whatever its score. 'Never merge' wins over everything, then 'Ask a person', then 'Always merge'. Untick a rule to switch it off."),
+    list,
+    el("h3", { class: "section" }, "4. Add your own rule"),
+    el("div", { class: "panel" }, el("div", { class: "body" },
+      field("What should happen", what),
+      el("div", { class: "row" }, el("span", {}, "When"), join),
+      conds,
+      el("div", { class: "row" }, btn("Add a condition", () => conds.append(condRow()), "small", "plus")),
+      el("div", { class: "fields" }, field("Short name", ruleName), field("Why (shown to reviewers)", ruleWhy)),
+      err, el("div", { class: "row" }, btn("Add this rule", addRule, "", "plus")))),
+    field("Reason for this change (at least 10 characters)", why), err2,
+    el("div", { class: "row" }, btn("Propose these rules", save, "primary")));
 }
 
 // The golden-record rules as a form: which source to trust, where each record's date comes from, and how each field is chosen.
@@ -1072,10 +1249,12 @@ const ADD_TILES = [
 async function projectConnections(p, connections) {
   const pid = p.id;
   const uploads = can("sources.manage") ? await api("GET", P(pid) + "/uploads") : [];
+  const manage = can("sources.manage");
   const rows = connections.map((c) => linkRow(c.id, () => viewConnection(pid, c.id), el("td", {}, el("span", { class: "title-row" }, icon(TYPE_ICON[c.type] || "database"), label(c.type))),
     el("td", { class: "num" }, c.fields_mapped), el("td", {}, c.live_version ? "Version " + c.live_version : el("span", { class: "muted" }, "Not live")),
     el("td", {}, c.latest_status === "active" ? "" : statusTag(c.latest_status)),
-    el("td", {}, c.last_check ? tag(c.last_check.ok ? "OK" : "Failed", c.last_check.ok ? "success" : "danger") : el("span", { class: "muted" }, "never")), el("td", {}, when(c.updated_at))));
+    el("td", {}, c.last_check ? tag(c.last_check.ok ? "OK" : "Failed", c.last_check.ok ? "success" : "danger") : el("span", { class: "muted" }, "never")), el("td", {}, when(c.updated_at)),
+    manage ? el("td", { class: "actions-cell" }, btn("Edit", () => run(() => editConnection(pid, c.id)), "small", "edit", { "aria-label": "Edit connection " + c.id })) : null));
   const copy = can("sources.manage") ? btn("Copy from another project", () => copyDialog(pid), "", "folder") : null;
   const removeUpload = async (u) => {
     if (!(await confirmDialog("Delete " + u.filename + "?", "The uploaded file is erased for good. No connection uses it.", "Delete file", true))) return;
@@ -1087,8 +1266,9 @@ async function projectConnections(p, connections) {
     can("sources.manage") ? el("h2", { class: "section" }, "Add data") : null,
     can("sources.manage") ? el("div", { class: "tiles" }, ADD_TILES.map(([t, title, text]) => tile(TYPE_ICON[t], title, text, () => run(() => connectionWizard(pid, t))))) : null,
     el("div", { class: "title-row" }, el("h2", { class: "section" }, "This project's connections"), copy),
-    rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Last check", "Updated"], rows)
+    rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Last check", "Updated", ...(manage ? [""] : [])], rows)
       : empty(can("sources.manage") ? "No connections yet. Add your first data source above; it belongs to this project only." : "No connections yet. Someone who manages data sources adds them."),
+    connections.length ? coverage(connections) : null,
     uploads.length ? el("h2", { class: "section" }, "Uploaded files") : null,
     uploads.length ? table(["File", ["Rows"], "Used by", "Uploaded", "By", ""], uploads.map((u) => el("tr", {}, el("td", {}, u.filename), el("td", { class: "num" }, num(u.rows)),
       el("td", {}, u.used_by.length ? u.used_by.join(", ") : el("span", { class: "muted" }, "nothing")), el("td", {}, when(u.created_at)), el("td", {}, u.uploaded_by),
@@ -1118,6 +1298,26 @@ async function copyDialog(pid) {
     } catch (e) { fail(err, e.message); return undefined; }
   });
   if (done) { await go(() => viewConnection(pid, done.id)); say("Copied as version " + done.version + ". Check the mapping, then make it live.", "good"); }
+}
+// Which of our fields each connection fills, and from which of its columns: the whole project's data at a glance.
+const CANON_ORDER = ["full_name", "father_name", "dob", "age", "gender", "marital_status", "mobile", "mobile_alt", "email", "address", "address_alt", "city", "state", "pincode",
+  "customer_number", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key", "passport_no", "dl_no", "voter_id", "record_date", "occupation", "annual_income", "related_name",
+  "party_role", "relation_to_proposer"];
+function coverage(connections) {
+  const used = CANON_ORDER.filter((f) => connections.some((c) => (c.fields || {})[f]));
+  if (!used.length) return null;
+  const extra = connections.filter((c) => (c.extra_columns || []).length);
+  return el("div", {}, el("h2", { class: "section" }, "Which field comes from which source"),
+    el("p", { class: "hint" }, "Each column shows the column of that source that fills the field (latest version). Records of all sources are matched with each other on these fields."),
+    table(["Field", ...connections.map((c) => c.id)], [
+      ...used.map((f) => el("tr", {}, el("td", {}, fieldTitle(f)), connections.map((c) => el("td", {}, (c.fields || {})[f] ? el("span", { class: "mono" }, c.fields[f]) : el("span", { class: "muted" }, "-"))))),
+      el("tr", {}, el("td", {}, "Record id"), connections.map((c) => el("td", {}, c.record_id ? el("span", { class: "mono" }, c.record_id) : el("span", { class: "muted" }, "row number")))),
+      extra.length ? el("tr", {}, el("td", {}, "Extra columns kept"), connections.map((c) => el("td", {}, (c.extra_columns || []).join(", ") || el("span", { class: "muted" }, "-")))) : null,
+    ]));
+}
+async function editConnection(pid, cid) {
+  const c = await api("GET", P(pid) + "/connections/" + cid);
+  await connectionWizard(pid, c.latest.connector.type, JSON.parse(JSON.stringify(c.latest)), 2);
 }
 function mappingTables(content, title) {
   const mapRows = Object.entries(content.fields || {}).map(([f, col]) => el("tr", {}, el("td", {}, label(f)), el("td", {}, typeof col === "string" ? col : JSON.stringify(col))));
@@ -1150,7 +1350,7 @@ async function viewConnection(pid, cid) {
   const changes = pending && live ? await api("GET", base + "/diff?old=" + live.version + "&new=" + latest.version) : null;
   const shown = c.live || c.latest;
   show(page(cid, label(shown.connector.type) + " connection. " + (live ? "Live version " + live.version + "." : "Not live yet."),
-    can("sources.manage") ? [btn("Edit", () => run(() => connectionWizard(pid, c.latest.connector.type, JSON.parse(JSON.stringify(c.latest)))), "", "edit")] : [],
+    can("sources.manage") ? [btn("Edit", () => run(() => editConnection(pid, cid)), "", "edit")] : [],
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), cid), statusTag(latest.status)),
   pending ? el("div", { class: "notice", role: "note" }, el("strong", {}, "Version " + latest.version + " waits to be made live. "),
     live ? (changes && changes.length ? "Compared with live version " + live.version + ": " + changes.join("; ") + "." : "It reads the same as the live version.") : "There is no live version yet.") : null,
@@ -1174,16 +1374,66 @@ async function viewConnection(pid, cid) {
 const driftText = (d) => ((d && ((d.added || []).length || (d.removed || []).length))
   ? [(d.added || []).length ? "Added: " + d.added.join(", ") : "", (d.removed || []).length ? "Removed: " + d.removed.join(", ") : ""].filter(Boolean).join(". ") : "");
 
-// The add-a-connection wizard: 1 connect (or upload), 2 map the columns, 3 preview and save. Everything it does belongs to the project.
-async function connectionWizard(pid, type, preset) {
+// The add-a-connection wizard: 1 connect (or upload), 2 map the columns, 3 preview and save. Every step can be clicked once the source is open.
+// Our fields in words, and what each is used for, shown next to it while mapping.
+const FIELD_TITLE = { full_name: "Full name", father_name: "Father's or husband's name", dob: "Date of birth", age: "Age", gender: "Gender", marital_status: "Marital status",
+  mobile: "Mobile", mobile_alt: "Second phone", email: "Email", address: "Address", address_alt: "Second address", city: "City", state: "State", pincode: "PIN code",
+  customer_number: "Customer number (shared)", pan: "PAN", aadhaar: "Aadhaar number", aadhaar_last4: "Aadhaar last 4 digits", aadhaar_reference_key: "Aadhaar vault reference",
+  passport_no: "Passport number", dl_no: "Driving licence", voter_id: "Voter ID", record_date: "Record date", occupation: "Occupation", annual_income: "Annual income",
+  related_name: "Related person's name", party_role: "Role on the record", relation_to_proposer: "Relation to the proposer" };
+const fieldTitle = (f) => FIELD_TITLE[f] || label(f);
+const FIELD_ROLE = {
+  full_name: ["Matching", "compared on every pair: spelling, word order, initials"], father_name: ["Golden record", "and to tell relatives apart"],
+  dob: ["Matching", "a strong sign when it agrees"], age: ["Matching", "used when there is no birth date"], gender: ["Matching", "a difference stops a merge"],
+  marital_status: ["Golden record", ""], mobile: ["Matching", ""], mobile_alt: ["Matching", ""], email: ["Matching", ""],
+  address: ["Matching", "with the PIN code"], address_alt: ["Households", ""], city: ["Matching", ""], state: ["Golden record", ""], pincode: ["Matching", ""],
+  customer_number: ["Identifier", "can decide on its own if you choose so below"], pan: ["Identifier", "decides on its own"],
+  aadhaar: ["Identifier", "kept only as a keyed token, never stored"], aadhaar_last4: ["Identifier", "weak: last four digits only"],
+  aadhaar_reference_key: ["Identifier", "your Aadhaar Data Vault key"], passport_no: ["Identifier", "strong evidence"], dl_no: ["Identifier", "strong evidence"],
+  voter_id: ["Identifier", "strong evidence"], record_date: ["Newest value", "decides which value is the most recent"], occupation: ["Golden record", ""],
+  annual_income: ["Golden record", ""], related_name: ["Households", "links family members"], party_role: ["Households", ""], relation_to_proposer: ["Households", ""],
+};
+const ROLE_KIND = { Matching: "info", Identifier: "success", "Newest value": "warn" };
+// Identifiers a project can let decide on their own: the matching rules they switch on (same value -> same person; different -> never).
+const KEY_RULES = {
+  pan: ["PAN", "auto_same_pan_compatible_name", "veto_pan_conflict"],
+  aadhaar: ["Aadhaar", "auto_same_aadhaar_compatible_name", "veto_aadhaar_conflict"],
+  customer_number: ["customer number", "auto_same_customer_number", "veto_customer_number_conflict"],
+};
+const KEY_FIELDS = { pan: ["pan"], aadhaar: ["aadhaar", "aadhaar_reference_key"], customer_number: ["customer_number"] };
+async function decisionStart(pid) {
+  if (!can("config.read") || !can("config.propose")) return { rules: [] };      // cannot change the project's rules: the choice is not offered
+  const [vs, defaults] = await Promise.all([api("GET", P(pid) + "/config/decision"), api("GET", P(pid) + "/config/decision/default")]);
+  const content = vs.length ? (await api("GET", P(pid) + "/config/decision/versions/" + vs[vs.length - 1].version)).content : defaults.content;
+  return { ...content, _defaults: defaults.content.rules };
+}
+const keyOn = (content, k) => (content.rules || []).some((r) => r.id === KEY_RULES[k][1] && r.enabled !== false);
+function withKeys(content, keys) {
+  const { _defaults, ...out } = JSON.parse(JSON.stringify(content));
+  for (const [k, on] of Object.entries(keys)) {
+    for (const id of [KEY_RULES[k][1], KEY_RULES[k][2]]) {
+      let r = out.rules.find((x) => x.id === id);
+      if (!r && on) { r = (_defaults || []).find((x) => x.id === id); if (r) out.rules.push(r); }
+      if (r) r.enabled = on;
+    }
+  }
+  return out;
+}
+async function connectionWizard(pid, type, preset, startStep) {
   const opts = await api("GET", "/connectors");
   const root = P(pid);
-  const state = { source: preset || { source_id: "", connector: { type }, record_id: null, fields: {}, attributes: [] }, info: null, step: 1, uploadName: null };
+  const state = { source: preset || { source_id: "", connector: { type }, record_id: null, fields: {}, attributes: [] }, info: null, step: 1, uploadName: null,
+    sample: null, reason: null, decision: null, keys: null };
   const out = el("div");
   const kind = () => state.source.connector.type;
   focusNext = true;
+  const goStep = async (n) => {
+    if (n > 1 && !state.info) { await openSource(n); return; }
+    state.step = n;
+    render();
+  };
   const render = () => {
-    const bar = steps(["Connect", "Map columns", "Preview and save"], state.step);
+    const bar = steps(["Connect", "Map columns", "Preview and save"], state.step, (n) => run(() => goStep(n)));
     const known = ADD_TILES.find((t) => t[0] === type);
     const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (known ? known[1] : label(type)),
       opts.connectors[kind()] ? "Settings: " + opts.connectors[kind()].help : "", [btn("Cancel", () => go(() => (preset ? viewConnection(pid, state.source.source_id) : viewProject(pid, "connections"))))],
@@ -1197,14 +1447,25 @@ async function connectionWizard(pid, type, preset) {
     i.addEventListener("input", () => { state.source.source_id = i.value.trim(); });
     return field("Connection id (stamped on every record it delivers: letters, digits, _ and -)", i);
   };
-  const openSource = async () => {
+  const inspectUrl = () => root + "/connections/inspect" + (state.reason ? "?unmask=true&reason=" + encodeURIComponent(state.reason) : "");
+  const openSource = async (target) => {
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(state.source.source_id)) throw new Error("Give the connection an id of letters, digits, _ or -.");
     if (kind() === "upload" && !state.source.connector.upload_id) throw new Error("Upload a file first.");
-    state.info = await api("POST", root + "/connections/inspect", { connector: state.source.connector });
+    const [info, decision] = await Promise.all([api("POST", inspectUrl(), { connector: state.source.connector }), state.decision ? state.decision : decisionStart(pid)]);
+    state.info = info;
+    state.decision = decision;
+    if (!state.keys) state.keys = Object.fromEntries(Object.keys(KEY_RULES).map((k) => [k, keyOn(decision, k)]));
     if (!Object.keys(state.source.fields).length) for (const s of state.info.suggestions) state.source.fields[s.field] = s.column;
-    state.step = 2;
+    state.step = target || 2;
     render();
   };
+  // show the sample as it is (needs pii.unmask and a reason, which is logged); masked otherwise
+  const revealButton = (then) => (can("pii.unmask") && !state.reason ? btn("Show actual values", async () => {
+    const why = await askReason("Show the actual values", "Why do you need to see them? This is logged", 10, "Show");
+    if (why === null) return;
+    state.reason = why;
+    await then();
+  }, "small", "shield") : null);
   function connectStep() {
     const parts = [el("div", { class: "fields" }, idField())];
     if (kind() === "upload") {
@@ -1215,6 +1476,7 @@ async function connectionWizard(pid, type, preset) {
         status.textContent = "Uploading and checking " + f.name + "...";
         const r = await api("POST", root + "/uploads?filename=" + encodeURIComponent(f.name), f, { "Content-Type": "application/octet-stream" }, true);
         state.source.connector = { type: "upload", upload_id: r.upload_id };
+        state.info = null;
         state.uploadName = r.filename + " (" + num(r.rows) + " rows, " + r.columns.length + " columns, stored encrypted)";
         if (!state.source.source_id) state.source.source_id = r.filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "_").slice(0, 40);
         render();
@@ -1228,61 +1490,99 @@ async function connectionWizard(pid, type, preset) {
       const grid = el("div", { class: "fields" });
       for (const k of opts.connectors[kind()].settings) {
         const i = el("input", { type: "text", value: state.source.connector[k] || "" });
-        i.addEventListener("input", () => { if (i.value) state.source.connector[k] = i.value; else delete state.source.connector[k]; });
+        i.addEventListener("input", () => { state.info = null; if (i.value) state.source.connector[k] = i.value; else delete state.source.connector[k]; });
         grid.append(field(label(k), i));
       }
       parts.push(el("p", { class: "hint" }, "Passwords and tokens are never entered here. Give the name of an environment variable that starts with DEDUPE_SRC_."), grid);
     }
-    parts.push(el("div", { class: "row" }, btn("Open the source and suggest a mapping", openSource, "primary", "search")));
+    parts.push(el("div", { class: "row" }, btn(state.info ? "Next: map columns" : "Open the source and suggest a mapping", () => goStep(2), "primary", "next")));
     return el("div", {}, parts);
   }
   function mapStep() {
     const cols = state.info.columns;
+    const sample = state.info.sample;
     const suggested = Object.fromEntries(state.info.suggestions.map((x) => [x.field, x.column]));
+    const examples = (c) => (c ? [...new Set(sample.map((r) => r[c]).filter((v) => v != null && v !== ""))].slice(0, 3) : []);
+    const exampleCell = (c) => el("span", { class: "examples" }, examples(c).map((v) => el("span", { class: "ex" }, String(v))));
     const pick = (value, onchange, text) => {
-      const s = el("select", { "aria-label": text }, el("option", { value: "" }, "Not mapped"), cols.map((c) => el("option", { value: c, selected: c === value }, c)));
+      const s = el("select", { "aria-label": text }, el("option", { value: "" }, "Not in this source"), cols.map((c) => el("option", { value: c, selected: c === value }, c)));
       s.addEventListener("change", () => onchange(s.value));
       return s;
     };
-    const rows = opts.canonical_fields.map((f) => {
-      const cur = state.source.fields[f];
-      const simple = typeof cur === "string" || cur === undefined;
-      return el("tr", {}, el("td", {}, label(f)), el("td", {}, simple ? pick(cur || "", (v) => { if (v) state.source.fields[f] = v; else delete state.source.fields[f]; }, label(f) + ": source column")
-        : el("span", { class: "muted" }, "Combined columns (kept as is)")), el("td", {}, suggested[f] && suggested[f] === cur ? tag("Suggested", "info") : ""));
+    const groups = opts.field_groups.map((g) => {
+      const rows = g.fields.map((f) => {
+        const cur = state.source.fields[f];
+        const simple = typeof cur === "string" || cur === undefined;
+        const ex = el("td", {}, simple ? exampleCell(cur) : "");
+        const role = FIELD_ROLE[f] || ["Golden record", ""];
+        const sel = simple ? pick(cur || "", (v) => { if (v) state.source.fields[f] = v; else delete state.source.fields[f]; ex.replaceChildren(exampleCell(v)); }, fieldTitle(f) + ": your column")
+          : el("span", { class: "muted" }, "Several columns combined (kept as is)");
+        return el("tr", {}, el("td", {}, el("strong", {}, fieldTitle(f)), el("div", { class: "muted small" }, opts.field_help[f] || "")),
+          el("td", {}, sel, suggested[f] && suggested[f] === cur ? el("div", {}, tag("Suggested", "info")) : null), ex,
+          el("td", {}, tag(role[0], ROLE_KIND[role[0]]), role[1] ? el("div", { class: "muted small" }, role[1]) : null));
+      });
+      return el("div", {}, el("h3", { class: "section" }, g.title), table(["Our field", "Your column", "Examples from your data", "Used for"], rows));
     });
-    const attrs = el("div", {}, cols.map((c) => {
+    const mappedCols = new Set(Object.values(state.source.fields).filter((c) => typeof c === "string"));
+    const attrs = el("div", { class: "checks" }, cols.filter((c) => !mappedCols.has(c)).map((c) => {
       const cb = el("input", { type: "checkbox", checked: (state.source.attributes || []).includes(c) });
       cb.addEventListener("change", () => { const set = new Set(state.source.attributes || []); if (cb.checked) set.add(c); else set.delete(c); state.source.attributes = [...set]; });
-      return el("label", { class: "check" }, cb, c);
+      return el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, c), el("span", { class: "muted" }, examples(c).join(", "))));
     }));
+    // which identifiers decide on their own: the project's matching rules, proposed together with the connection
+    const present = can("config.propose") ? Object.keys(KEY_RULES).filter((k) => KEY_FIELDS[k].some((f) => state.source.fields[f])) : [];
+    const keyBoxes = present.map((k) => {
+      const cb = el("input", { type: "checkbox", checked: state.keys[k] });
+      cb.addEventListener("change", () => { state.keys[k] = cb.checked; });
+      return el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, "Records with the same " + KEY_RULES[k][0] + " are the same person"),
+        el("span", { class: "muted" }, "Merged automatically when the names are compatible; two different " + KEY_RULES[k][0] + "s are never merged. Applies to the whole project.")));
+    });
     return el("div", {},
-      el("h3", { class: "section" }, "Sample rows (values are shortened)"), wide(cols, state.info.sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c]))))),
-      el("div", { class: "cols" }, el("div", {}, el("h3", { class: "section" }, "Map columns to fields"), table(["Field", "Source column", ""], rows)),
-        el("div", {}, el("h3", { class: "section" }, "Record identifier"), el("p", { class: "hint" }, "The column that identifies a record in the source. Without one, rows are numbered."),
-          pick(state.source.record_id || "", (v) => { state.source.record_id = v || null; }, "Record identifier"),
-          el("h3", { class: "section" }, "Other columns to keep with each record"), attrs)),
-      el("div", { class: "row" }, btn("Back", () => { state.step = 1; render(); }), btn("Next: preview", () => { state.step = 3; render(); }, "primary")));
+      el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your data (" + (state.info.unmasked ? "actual values" : "values shortened") + ")"),
+        revealButton(async () => { state.info = { ...state.info, ...(await api("POST", inspectUrl(), { connector: state.source.connector })) }; render(); })),
+      wide(cols, sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c]))))),
+      el("p", { class: "hint" }, "For each of our fields, pick the column of your data that holds it. Leave a field as 'Not in this source' when your data does not have it: " +
+        "every field is optional, but the more of them a source fills, the more duplicates it finds."),
+      groups,
+      el("h3", { class: "section" }, "Which columns identify the same person?"),
+      el("p", { class: "hint" }, "Names, birth dates, phones, emails and addresses are always compared together and weighed by how well they tell people apart in your data. " +
+        "An identifier can also decide on its own:"),
+      keyBoxes.length ? el("div", { class: "checks" }, keyBoxes) : el("p", { class: "muted" }, can("config.propose") ? "Map a PAN, Aadhaar or customer number column above to choose it here."
+        : "Someone who manages the project's rules chooses this in the Rules tab."),
+      el("div", { class: "cols" },
+        el("div", {}, el("h3", { class: "section" }, "Each row's own id"), el("p", { class: "hint" }, "The column that identifies a row in this source, used to trace a golden record back to its rows. It is not used to match. Without one, rows are numbered."),
+          pick(state.source.record_id || "", (v) => { state.source.record_id = v || null; }, "Each row's own id")),
+        el("div", {}, el("h3", { class: "section" }, "Other columns to keep"), el("p", { class: "hint" }, "Ticked columns are carried into the golden record as extra columns."), attrs)),
+      el("div", { class: "row" }, btn("Back", () => goStep(1), "", "prev"), btn("Next: preview", () => goStep(3), "primary", "next")));
   }
   function previewStep() {
     const doPreview = () => run(async () => {
-      const r = await api("POST", root + "/connections/preview", state.source);
+      const r = await api("POST", root + "/connections/preview" + (state.reason ? "?unmask=true&reason=" + encodeURIComponent(state.reason) : ""), state.source);
       const cols = Object.keys(r.rows[0] || {}).filter((c) => c !== "attributes" && r.rows.some((row) => row[c] != null));
       fill(out, el("h3", { class: "section" }, "Fields filled in " + r.sample_size + " sample rows"),
         table(["Field", ["Rows filled"]], Object.entries(r.filled).map(([f, n]) => el("tr", {}, el("td", {}, label(f)), el("td", { class: "num" }, n + " of " + r.sample_size)))),
-        r.rows.length ? el("h3", { class: "section" }, "Standardised sample (values are shortened)") : null,
+        r.rows.length ? el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your rows as the engine reads them (" + (r.unmasked ? "actual values" : "values shortened") + ")"),
+          revealButton(async () => doPreview())) : null,
         r.rows.length ? wide(cols, r.rows.map((row) => el("tr", {}, cols.map((c) => el("td", {}, row[c] == null ? "" : row[c]))))) : null);
     });
+    const keysChanged = () => state.decision && Object.keys(state.keys || {}).some((k) => state.keys[k] !== keyOn(state.decision, k));
     const save = async () => {
       const why = await askReason("Save connection " + state.source.source_id, "Why add or change it?", 10, "Save connection");
       if (why === null) return;
       const res = await api("POST", root + "/connections", { connection: state.source, reason: why });
+      let rules = null;
+      if (keysChanged()) rules = await api("POST", root + "/config/decision/propose", { content: withKeys(state.decision, state.keys), reason: why + " (identifiers chosen while mapping " + state.source.source_id + ")" });
       await go(() => viewConnection(pid, res.id));
-      say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it and makes it live; then runs can use it." : "Make it live when you are ready; then runs can use it."), "good");
+      say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it and makes it live; then runs can use it." : "Make it live when you are ready; then runs can use it.") +
+        (rules ? " Your choice of identifiers was proposed as version " + rules.version + " of the project's matching rules (Rules tab): make that live too." : ""), "good");
     };
     setTimeout(doPreview, 0);
-    return el("div", { class: "row" }, btn("Back", () => { state.step = 2; render(); }), btn("Preview again", doPreview, "", "refresh"), btn("Save connection", save, "primary", "check"));
+    return el("div", {}, keysChanged() ? el("div", { class: "notice", role: "note" }, "Saving also proposes a change to the project's matching rules: " +
+      Object.keys(state.keys).filter((k) => state.keys[k] !== keyOn(state.decision, k)).map((k) => (state.keys[k] ? "the same " : "no longer the same ") + KEY_RULES[k][0] + " decides").join("; ") + ".") : null,
+    el("div", { class: "row" }, btn("Back", () => goStep(2), "", "prev"), btn("Preview again", doPreview, "", "refresh"), btn("Save connection", save, "primary", "check")));
   }
   render();
+  if (preset && startStep && startStep > 1) await goStep(startStep);
 }
 
 // ---- results: take a run's output out as a file or into a database ------------------------------------------------------------
@@ -1304,10 +1604,42 @@ async function resultsPanel(p, runs) {
 }
 async function datasetCards(p, rid) {
   const info = await api("GET", R(p.id, rid) + "/datasets");
-  return info.datasets.map((d) => el("div", { class: "panel" }, el("h3", {}, d.title + " (" + num(d.rows) + " rows)"),
-    el("div", { class: "body" }, el("p", {}, d.description), el("p", { class: "muted" }, "Columns: " + d.columns.join(", ")),
-      el("div", { class: "row" }, ...["xlsx", "csv", "parquet"].map((f) => btn(info.formats[f], () => downloadResults(p.id, rid, d.name, f), "small", "download")),
-        btn("Write to a database", () => databaseDialog(p, rid, d), "small", "database")))));
+  return info.datasets.map((d) => {
+    const box = el("div");
+    const open = () => run(async () => box.replaceChildren(await previewTable(p.id, rid, d)));
+    const card = el("div", { class: "panel" }, el("h3", {}, d.title + " (" + num(d.rows) + " rows)"),
+      el("div", { class: "body" }, el("p", {}, d.description),
+        el("div", { class: "row" }, ...["xlsx", "csv", "parquet"].map((f) => btn(info.formats[f], () => downloadResults(p.id, rid, d.name, f), "small", "download")),
+          btn("Write to a database", () => databaseDialog(p, rid, d), "small", "database"),
+          d.name === "golden_records" ? null : btn("Show a preview", open, "small", "list")), box));
+    if (d.name === "golden_records") open();
+    return card;
+  });
+}
+// A page of a result table on screen. Identifiers, contact details and extra columns stay masked until someone allowed to see them gives a reason.
+async function previewTable(pid, rid, d, st) {
+  st = st || { offset: 0, q: "", reason: null };
+  const size = 25;
+  const url = R(pid, rid) + "/datasets/" + d.name + "/rows?limit=" + size + "&offset=" + st.offset + "&q=" + encodeURIComponent(st.q) +
+    (st.reason ? "&unmask=true&reason=" + encodeURIComponent(st.reason) : "");
+  const r = await api("GET", url);
+  const wrap = el("div", { class: "preview" });
+  const again = (patch) => run(async () => wrap.replaceWith(await previewTable(pid, rid, d, { ...st, ...patch })));
+  const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: d.name === "golden_records" ? "Name or person id" : "Person or record id" });
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") again({ q: q.value.trim(), offset: 0 }); });
+  const reveal = can("pii.unmask") && r.masked.length ? btn("Show identifiers", async () => {
+    const why = await askReason("Show identifiers", "Why do you need to see them? This is logged", 10, "Show");
+    if (why !== null) again({ reason: why });
+  }, "small", "shield") : null;
+  const last = Math.min(st.offset + size, r.total);
+  add(wrap, el("div", { class: "row" }, field("Find", q), btn("Search", () => again({ q: q.value.trim(), offset: 0 }), "small", "search"), reveal),
+    r.masked.length ? el("p", { class: "hint" }, "Masked: " + r.masked.map(label).join(", ") + ". " + (can("pii.unmask") ? "Press Show identifiers to see them (you give a reason; it is logged)." : "Your role cannot unmask them."))
+      : r.unmasked ? el("p", { class: "hint" }, "Showing actual values. This view was logged with your reason.") : null,
+    r.rows.length ? wide(r.columns.map(label), r.rows.map((row) => el("tr", {}, row.map((v) => el("td", {}, v == null ? "" : String(v)))))) : empty(st.q ? "Nothing matches." : "No rows."),
+    r.total ? el("div", { class: "pager" }, el("span", { class: "muted" }, "Rows " + num(st.offset + 1) + " to " + num(last) + " of " + num(r.total)),
+      st.offset > 0 ? btn("Previous", () => again({ offset: Math.max(0, st.offset - size) }), "small", "prev") : null,
+      last < r.total ? btn("Next", () => again({ offset: st.offset + size }), "small", "next") : null) : null);
+  return wrap;
 }
 async function downloadResults(pid, rid, dataset, format) {
   const why = await askReason("Download these results", "Why do you need this file? It is recorded", 10, "Download");

@@ -13,6 +13,7 @@
     ]
   },
   "fields": {
+    "customer_number": "most_frequent",
     "full_name": "best_quality",
     "father_name": "most_frequent",
     "dob": "most_frequent",

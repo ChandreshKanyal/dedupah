@@ -8,7 +8,7 @@ connection, so one project cannot write into another client's database.
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
@@ -23,18 +23,21 @@ from dedupe.results import (
     ExportError,
     database_url,
     describe,
+    preview,
     test_destination,
     write_database,
     write_file,
 )
+from dedupe.review.service import SENSITIVE, _mask
 
 from .auth import Principal
 from .guards import _context, _services, require
-from .routes_read import PID, RID, VersionView
+from .routes_read import PID, RID, VersionView, _log_unmask, _unmask_gate
 from .scope import project_scope
 
 router = APIRouter()
 EXPORT = Depends(require("results.export"))
+READ_PERSON = Depends(require("person.read"))
 MANAGE = Depends(require("sources.manage"))
 APPROVE = Depends(require("config.approve"))
 ACTIVATE = Depends(require("config.activate"))
@@ -102,6 +105,37 @@ def _audit(request: Request, p: Principal, ref: str, **detail) -> None:
 
 
 # ---- what a run can give --------------------------------------------------------------------------------------------------------
+def _hide(col: str, v):
+    """Identifiers and contact details as on the person page; the sources' extra columns (content unknown) keep their last 3 characters."""
+    if v is None or col in SENSITIVE:
+        return _mask(col, v)
+    s = str(v)
+    return "*" * max(len(s) - 3, 0) + s[-3:]
+
+
+@router.get(RUN + "/datasets/{name}/rows")
+def dataset_rows(request: Request, name: DatasetName, project_id: str = PID, run_id: str = RID, limit: int = Query(25, ge=1, le=100),
+                 offset: int = Query(0, ge=0, le=10_000_000), q: str = Query("", max_length=60), unmask: bool = False,
+                 reason: str | None = Query(None, max_length=300), p: Principal = READ_PERSON):
+    """A page of a result table to look at on screen. Identifiers, contact details and the sources' own extra columns are masked unless
+    the person holds `pii.unmask` and gives a reason (logged, rate limited). Viewing is not exporting: nothing leaves the platform."""
+    run_dir = _results(request, project_id, run_id)
+    ref = f"{project_id}/{run_id}/{name}"
+    reveal = _unmask_gate(request, p, unmask, reason, ref)
+    try:
+        page = preview(run_dir, name, limit, offset, q)
+    except ExportError as e:
+        raise HTTPException(404, str(e)) from None
+    hide = [i for i, c in enumerate(page["columns"]) if c in SENSITIVE or c.startswith("extra_")]
+    if not reveal:
+        for r in page["rows"]:
+            for i in hide:
+                r[i] = _hide(page["columns"][i], r[i])
+    else:
+        _log_unmask(request, p, ref, reason, "results preview")
+    return {**page, "masked": [page["columns"][i] for i in hide] if not reveal else [], "unmasked": reveal}
+
+
 @router.get(RUN + "/datasets")
 def datasets(request: Request, project_id: str = PID, run_id: str = RID, p: Principal = EXPORT):
     run_dir = _results(request, project_id, run_id)

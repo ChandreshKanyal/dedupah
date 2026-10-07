@@ -257,6 +257,23 @@ def config_default(request: Request, name: ConfigName, project_id: str = PID, p:
     return {"name": name, "content": _default_content(name)}
 
 
+# What the no-code rule builder offers: each comparison with its outcomes in words (the same words the rules are written in).
+COMPARISON_TITLES = {"name": "Name", "dob": "Date of birth", "phone": "Phone", "email": "Email", "pan": "PAN", "aadhaar": "Aadhaar",
+                     "gov_id": "Passport / licence / voter ID", "address": "Address", "gender": "Gender", "customer_number": "Customer number"}
+RULE_TYPES = {"never_merge": "Never merge the two records (a veto: wins over everything else)",
+              "force_review": "Always ask a person, never merge automatically",
+              "auto_merge": "Always merge them (unless a veto applies)",
+              "not_enough_evidence": "Treat as not enough evidence: neither merge nor ask"}
+
+
+@router.get("/rules-catalogue")
+def rules_catalogue(p: Principal = READ_CONFIG):
+    from dedupe.scoring.comparisons import COMPARISONS
+    comps = [{"name": c.name, "title": COMPARISON_TITLES.get(c.name, c.name),
+              "levels": [lv.label for lv in c.levels] + [c.else_label]} for c in COMPARISONS]
+    return {"comparisons": comps, "rule_types": RULE_TYPES}
+
+
 @router.get(PROJ + "/golden-record-guide")
 def golden_record_guide(request: Request, project_id: str = PID, p: Principal = READ_CONFIG):
     """What the golden-record rules screen needs: the fields and strategies, the project's sources (their extra columns, whether a record

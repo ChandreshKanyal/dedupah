@@ -31,7 +31,7 @@ SCHEMA = pa.schema([
     ("birth_year_min", I), ("birth_year_max", I),
     ("gender", S), ("mobile", S), ("mobile_alt", S),
     ("email", S), ("email_key", S), ("email_domain", S),
-    ("pan", S), ("pan_repaired", B), ("pan_surname_match", B),
+    ("pan", S), ("pan_repaired", B), ("pan_surname_match", B), ("customer_number", S),
     ("aadhaar_token", S), ("aadhaar_last4", S),
     ("passport_no", S), ("dl_no", S), ("voter_id", S),
     ("address_norm", S), ("address_pin", S), ("address_house", S), ("address_alt_norm", S), ("city", S), ("state", S),
@@ -39,7 +39,7 @@ SCHEMA = pa.schema([
 ])
 _GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O"}
 _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt",
-               "city", "state", "pincode", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key", "passport_no", "dl_no", "voter_id",
+               "city", "state", "pincode", "customer_number", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key", "passport_no", "dl_no", "voter_id",
                "related_name", "party_role", "relation_to_proposer", "age", "record_date", "source_id", "source_record_id"]
 
 
@@ -92,6 +92,7 @@ def standardise_row(r: dict) -> dict:
         "pan": pan, "pan_repaired": pan_fixed if pan else None,
         # PAN's 5th character is the initial of the holder's surname *at issue time*: a soft signal only
         "pan_surname_match": (pan[4].lower() == name.last[0]) if pan and name.last else None,
+        "customer_number": ids.customer_number(r.get("customer_number")),
         "aadhaar_token": tok, "aadhaar_last4": last4,
         "passport_no": ids.passport(r["passport_no"]), "dl_no": ids.driving_licence(r["dl_no"]), "voter_id": ids.voter_id(r["voter_id"]),
         "address_norm": addr.norm, "address_pin": addr.pin, "address_house": addr.house,
@@ -118,10 +119,10 @@ _PROFILE_SQL = {
     "phone": "mobile IS NOT NULL OR mobile_alt IS NOT NULL",
     "email": "email IS NOT NULL",
     "address_pin": "address_pin IS NOT NULL",
-    "identifier": "coalesce(pan, aadhaar_token, passport_no, dl_no, voter_id) IS NOT NULL",
+    "identifier": "coalesce(pan, aadhaar_token, passport_no, dl_no, voter_id, customer_number) IS NOT NULL",
     "record_date": "record_date IS NOT NULL",
 }
-STANDARDISE_VERSION = 2      # raise when standardisation changes what it writes for the same input: earlier runs' rows are then not reused
+STANDARDISE_VERSION = 3      # raise when standardisation changes what it writes for the same input: earlier runs' rows are then not reused
 
 
 def source_report(std_path: Path) -> dict:

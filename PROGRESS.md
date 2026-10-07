@@ -5,11 +5,12 @@
 
 ## >>> RESUME HERE (latest state: end of session 1, after the portal audit) <<<
 
-**One-line status:** a working, branded (Aurionpro) portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; run queue and schedules; results export to files and databases; a dedicated Review section for the human in the loop; deleting runs and projects; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported). **377 tests + 3 skipped, ruff and bandit clean, live click-throughs in Edge with 0 problems (section 53 adds golden-record rules, incremental runs, messy-data handling).** EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
+**One-line status:** a working, branded (Aurionpro) portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; run queue and schedules; results export to files and databases; a dedicated Review section for the human in the loop; deleting runs and projects; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported). **381 tests + 3 skipped, ruff and bandit clean, three live click-through scripts in Edge with 0 problems (section 53: golden-record rules, incremental runs, messy data; section 54: user review round 2).** EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| f0f2c2c..(next) | **User review round 2.** Rules page fixed; Edit on every connection; clickable wizard steps; a mapping page grouped by meaning with examples, roles and "which columns identify a person"; shared customer number field; golden-record preview on screen (masked until a reason is given); delete buttons in the lists; no-code matching rules with a rule builder | 54 |
 | b40b181..c13811e | **Golden records and matching across any sources ("fix all and thoroughly").** Golden values by record date, automatic/chosen source trust, per-field trust and quality, from a form; customer columns carried; no-ID recall measured correctly (0.89); per-source data quality; incremental runs; awkward data shapes handled | 53 |
 | bdd3186 | **Portal audit and fixes.** Three audits (flows, accessibility/design, human-in-the-loop) found ~70 problems, 11 blockers; all blockers fixed. Screen addresses with Back/Forward/reload; Review section (Review inbox, decide-and-next compare page with keys S/D/U/N/P and Undo, Decisions list with undo, split a person, correct a golden value, bulk decide, score filter, paging); Approvals with evidence; delete runs / projects / unused uploads (new permission `data.delete`); rename project; edit schedules; rules editor starts from defaults; newest-first audit log; accessibility (keyboard rows, labels, dialogs, focus, contrast; accent is now the brand teal); browser-tab icon | 52 |
 | f89eb7f | Results tab and "Get the results" button on the run page | - |
@@ -31,7 +32,7 @@
 
 **Run the portal (Windows, project root):** `$env:DEDUPE_AUTH_MODE="local"; $env:DEDUPE_LOCAL_AUTH_SECRET="<32+ characters>"; $env:DEDUPE_WORK_DIR="data/workspace"; $env:DEDUPE_DATA_ROOTS="$PWD\data"` then `.venv\Scripts\python -m dedupe.api --port 8765`; open http://127.0.0.1:8765/ui. New install: create an administrator with `.venv\Scripts\python -m dedupe.api.accounts_cli create-admin --username admin`. The demo workspace in `data/workspace` (ignored by git; rebuild with `scripts/demo_workspace.py`) has the DEMO account admin / admin (password policy bypassed on purpose). It now also holds the user's own "Trial" project (their uploaded Excel file, three runs): do not wipe `data/workspace` without asking.
 
-**Check the live portal after UI changes:** start the portal, then `.venv\Scripts\python scripts\ui_walkthrough.py` and (a minute later, sign-in rate limit) `scripts\ui_walkthrough_more.py`. Both need Playwright in the venv (dev tool only) and fail on any console error, server error or red message.
+**Check the live portal after UI changes:** RESTART the portal (it reads app.js once at start-up), then `.venv\Scripts\python scripts\ui_walkthrough.py`, `scripts\ui_walkthrough_more.py` and `scripts\ui_walkthrough_round2.py` (a minute apart: sign-in rate limit). Both need Playwright in the venv (dev tool only) and fail on any console error, server error or red message.
 
 **Decisions of the user (do not re-ask):** projects private to their creator for now (sharing later); each project has its own connections (copying between projects is enough); several people use one deployment, each in their own space; results leave as Excel, CSV, Parquet or a database table (new, add to existing, replace); scheduled runs wanted; "data can come in any form, handles must exist" (section 51); a dedicated human-in-the-loop section, deleting runs, back-and-forth navigation and accessibility for every feature (section 52); company branding is Aurionpro; may switch back to single sign-on later.
 
@@ -1159,3 +1160,41 @@ the live check then only opened the Golden record tab. Same class of bug fixed i
 when the viewer cannot decide). New helpers `fill()`/`add()` drop empty parts; both click-through scripts now fail on "[object ...]",
 "undefined", "null" or "NaN" anywhere on screen, and the second one opens all three Rules tabs. Pitfall: the portal reads app.js once at
 start-up, so UI changes need a portal restart before a live check.
+
+**Fixes 2-6 (done):**
+- **Edit a connection from the project** (item 1): every row of the Connections tab has an Edit button that opens the wizard straight on
+  the mapping step (the connection page's Edit does the same). The tab also shows **"Which field comes from which source"**: one row per
+  field, one column per connection, the source column that fills it, plus each source's record id and kept extra columns.
+- **Clickable wizard steps** (item 3): the steps "1. Connect / 2. Map columns / 3. Preview and save" are buttons; a later step opens the
+  source first when needed. Changing the upload or settings forgets the opened source so it is read again.
+- **A mapping page people can follow** (item 4): fields grouped (Who the person is / How to reach them / Where they live / Identifiers /
+  Other details), each with a plain title and description, the chosen column's example values, and what the engine uses it for
+  (Matching, Identifier, Golden record, Households, Newest value). The sample shows actual values after "Show actual values" (needs
+  `pii.unmask` and a reason; logged as `pii_unmasked`, view "source sample"); masked otherwise. "Each row's own id" is explained (traces
+  records, never used to match). New section **"Which columns identify the same person?"**: for a mapped PAN, Aadhaar or customer number,
+  "Records with the same X are the same person"; saving the connection then also proposes the project's matching rules with that choice
+  (same reason, normal approval), and the page says so before saving.
+- **New field: customer number shared across systems** (CIF, UCIC, client id). The user's Trial `customer_id` is unique per row (a row id),
+  so it is not that; a shared number is. Cleaned (upper case, separators removed, leading zeros dropped from all-digit numbers,
+  placeholders refused), compared as a new comparison `customer_number` (weight learned like any field), blocked on, carried into the
+  golden record (masked like identifiers). Two rules, OFF by default: `auto_same_customer_number` (same number + compatible name -> merge)
+  and `veto_customer_number_conflict` (different numbers -> never). Synthetic benchmark unchanged (it has no customer numbers).
+- **Golden records on screen** (item 2): each result table of a run has a preview (golden records open by default): 25 rows a page,
+  search by name or id, Previous/Next, columns empty in the whole table hidden. Names, dates, places are shown; identifiers, phones,
+  emails and the sources' extra columns are masked until "Show identifiers" (needs `pii.unmask` and a reason; logged, view "results
+  preview"). Kept masked by default ON PURPOSE: DPDP data minimisation and the audit trail; one click with a reason shows everything.
+  New API `GET /projects/{p}/runs/{r}/datasets/{name}/rows` (person.read).
+- **Delete where people look** (item 5): a Delete button on every project in the Projects list and on every finished run in all run
+  tables (needs `data.delete`; same confirmations as before: project id typed again plus a reason; a reason for a run).
+- **No-code matching rules** (item 6 + the rule builder of item 4): Rules > Matching rules is now a form: (1) merge-automatically and
+  ask-a-person score levels in %; (2) which identifiers decide on their own (PAN, Aadhaar, customer number: each switches its merge
+  rule and its veto together); (3) every rule in plain words, grouped Never merge / Ask a person / Always merge / Not enough evidence,
+  with an on/off switch and "When it applies" written out from the rule itself; (4) "Add your own rule": what should happen, all/any,
+  conditions built from the comparisons and their outcomes (the same words the engine uses), match score at least/below %, birth years
+  differ by more than N. Custom rules (`custom_...`) can be removed; built-in ones only switched off. The server checks every rule as
+  before; JSON stays under "Advanced". New API `GET /rules-catalogue`.
+**Checked live in Edge** (`scripts/ui_walkthrough_round2.py`, 0 problems): edit from list opens step 2, steps clickable both ways, actual
+values after a reason, preview masked -> unmasked, search + paging (40 rows), delete buttons (3 projects, 9 runs), a throwaway project
+deleted from the list, a custom rule added and proposed (demo project). Tests: `tests/test_review_round2.py` (4).
+**Honest limits:** the rule builder makes flat all/any rules (nested and/or/not only through JSON); a custom rule takes effect only
+after it is made live and a run happens; the field roles shown while mapping are fixed text, not computed from the trained model.

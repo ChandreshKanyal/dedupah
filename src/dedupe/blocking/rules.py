@@ -23,6 +23,7 @@ def _combo(expr: str, *required: str) -> str:
 
 DEFAULT_RULES = [
     Rule("pan", _simple("pan"), "same PAN"),
+    Rule("customer_number", _simple("customer_number"), "same customer number (CIF / UCIC shared across systems)"),
     Rule("aadhaar", _simple("aadhaar_token"), "same Aadhaar token"),
     Rule("passport", _simple("passport_no"), "same passport number"),
     Rule("driving_licence", _simple("dl_no"), "same driving licence"),

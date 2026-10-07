@@ -19,6 +19,7 @@ _NAME_RULES: dict[str, tuple[list[str], list[str]]] = {
     "city": (["city", "town"], []),
     "state": (["state"], ["status"]),
     "pincode": (["pincode", "pin", "zip", "postalcode"], []),
+    "customer_number": (["cif", "cifno", "cifnumber", "ucic", "ucicno", "customernumber", "customerno", "clientid", "clientno", "custno"], ["agent", "branch"]),
     "pan": (["pan", "panno", "pannumber"], ["coapplicant"]),
     "aadhaar": (["aadhaar", "aadhaarno", "aadhar", "uid"], ["last4"]),
     "aadhaar_last4": (["aadhaarlast4"], []),

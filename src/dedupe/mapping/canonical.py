@@ -12,6 +12,8 @@ CANONICAL_FIELDS: dict[str, str] = {
     "address": "Address as a single text line (structured parts below if the source has them)",
     "address_alt": "A second address (permanent / previous)",
     "city": "City", "state": "State", "pincode": "PIN code",
+    "customer_number": "Customer number shared across your systems (CIF, UCIC, client id): the same number means the same customer. "
+                       "Not a row's own id within one file",
     "pan": "PAN (permanent account number)",
     "aadhaar": "Full Aadhaar number if the source holds it (will be tokenised, never stored raw downstream)",
     "aadhaar_last4": "Last four digits of Aadhaar",

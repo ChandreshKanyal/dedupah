@@ -85,6 +85,19 @@ def aadhaar(raw: str | None):
     return token, s[-4:]
 
 
+def customer_number(raw) -> str | None:
+    """An organisation's own customer number (CIF, UCIC, client id): upper case, no spaces or separators; leading zeros dropped from
+    all-digit numbers (a spreadsheet often drops them); placeholders and very short values refused."""
+    s = re.sub(r"[\s\-/._]", "", str(raw or "")).upper()
+    if s.endswith("0") and re.fullmatch(r"\d+\.0+", str(raw or "").strip()):
+        s = str(raw).strip().split(".")[0]
+    if s.isdigit():
+        s = s.lstrip("0")
+    if len(s) < 3 or s in ("NULL", "NONE", "NIL") or not s.isalnum() or len(set(s)) == 1:
+        return None
+    return s
+
+
 def passport(raw: str | None) -> str | None:
     s = re.sub(r"[^A-Za-z0-9]", "", raw or "").upper()
     if len(s) == 8:

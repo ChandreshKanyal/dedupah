@@ -83,6 +83,32 @@ def describe(run_dir: Path) -> list[dict]:
     return out
 
 
+def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str = "") -> dict:
+    """A page of the dataset as people see it on screen (same columns and order as the files), optionally filtered by a name or id.
+    The caller masks what must be masked."""
+    p = _path(run_dir, name)
+    con = crypto.connect()
+    try:
+        sql = _select(con, p, name)
+        cols = [c[0] for c in con.execute(f"DESCRIBE {sql}").fetchall()]
+        where, args = "", []
+        if q.strip():
+            keys = [c for c in ("full_name", "person_id", "source_record_id", "household_id") if c in cols]
+            where = "WHERE " + " OR ".join(f'lower(CAST("{c}" AS VARCHAR)) LIKE ?' for c in keys)
+            args = ["%" + q.strip().lower() + "%"] * len(keys)
+        total = con.execute(f"SELECT count(*) FROM ({sql}) {where}", args).fetchone()[0]
+        # columns that are empty in the whole table (fields no source filled) only clutter a screen; the files keep them
+        quoted = ['"' + c.replace('"', '""') + '"' for c in cols]
+        filled = con.execute(f"SELECT {', '.join('count(' + q + ')' for q in quoted)} FROM ({sql})").fetchone()
+        keep = [i for i, n in enumerate(filled) if n or i == 0]
+        picked = ", ".join(quoted[i] for i in keep)
+        rows = con.execute(f"SELECT {picked} FROM ({sql}) {where} ORDER BY 1 LIMIT {int(limit)} OFFSET {int(offset)}", args).fetchall()
+        cols = [cols[i] for i in keep]
+    finally:
+        con.close()
+    return {"columns": cols, "rows": [list(r) for r in rows], "total": total}
+
+
 def _batches(run_dir: Path, name: str, size: int = BATCH):
     """(schema, iterator of Arrow tables) of the dataset, in order."""
     p = _path(run_dir, name)

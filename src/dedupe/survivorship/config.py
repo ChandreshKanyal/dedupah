@@ -32,7 +32,7 @@ GOLDEN_FIELDS: dict[str, str] = {
     "gender": "s.gender", "marital_status": "k.marital_status",
     "mobile": "s.mobile", "mobile_alt": "s.mobile_alt", "email": "s.email",
     "address": _title("k.address"), "city": _initcap("s.city"), "state": _initcap("s.state"), "pincode": "s.address_pin",
-    "pan": "s.pan", "aadhaar_token": "s.aadhaar_token", "aadhaar_last4": "s.aadhaar_last4",
+    "customer_number": "s.customer_number", "pan": "s.pan", "aadhaar_token": "s.aadhaar_token", "aadhaar_last4": "s.aadhaar_last4",
     "passport_no": "s.passport_no", "dl_no": "s.dl_no", "voter_id": "s.voter_id",
     "occupation": "k.occupation", "annual_income": "k.annual_income",
 }
