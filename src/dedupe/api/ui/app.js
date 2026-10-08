@@ -185,6 +185,10 @@ function askReason(title, prompt, minLength, confirmLabel, danger) {
   }, danger);
 }
 const confirmDialog = (title, text, confirmLabel, danger) => dialog(title, el("p", {}, text), confirmLabel, async () => true, danger);
+// Showing identifiers: straight away (every view is logged), or after a written reason when the deployment requires one.
+// Resolves to the reason, `true` (shown without one) or null (cancelled); unmaskQuery turns that into the query string.
+const revealIdentifiers = (title) => (me && me.unmask_reason_required ? askReason(title, "Why do you need to see them? This is logged", 10, "Show") : Promise.resolve(true));
+const unmaskQuery = (why) => "unmask=true" + (typeof why === "string" && why ? "&reason=" + encodeURIComponent(why) : "");
 
 // ---- requests ----------------------------------------------------------------------------------------------------------
 async function api(method, path, body, extra, raw) {
@@ -773,12 +777,11 @@ async function newRun(pid, step, chosen) {
   }
   const reason = el("textarea", { class: "plain", maxlength: "300" });
   const key = uuid();                              // one key for this form: a second press replays the first start instead of starting twice
-  const full = el("input", { type: "checkbox" });
-  show(page("New run", "Check and start.", [btn("Back", () => to(2)), btn("Start run", () => startRun(pid, [...chosen], null, reason.value, key, full.checked), "primary", "play")], back), bar,
+  const load = choiceCards("load", LOAD_MODES, "incremental");
+  show(page("New run", "Check and start.", [btn("Back", () => to(2)), btn("Start run", () => startRun(pid, [...chosen], null, reason.value, key, load.value() === "full"), "primary", "play")], back), bar,
     kv([["Project", projectName(pid)], ["Connections", [...chosen].join(", ")], ["Rules", "The project's live rules, or the built-in defaults when none are live"]]),
-    field("Reason (optional)", reason),
-    el("label", { class: "check" }, full, el("span", {}, "Full re-run: process every record from scratch. Otherwise records that did not change since the latest successful run " +
-      "reuse its work, which is much faster; people are still formed from all records.")));
+    el("h3", { class: "section" }, "How to load"), load.node,
+    field("Reason (optional)", reason));
 }
 async function viewRun(pid, rid, tab) {
   const [r] = await Promise.all([api("GET", R(pid, rid)), refreshCache()]);
@@ -930,17 +933,31 @@ function runOverview(r) {
 }
 
 // ---- rules of a project --------------------------------------------------------------------------------------------------
+// One page per kind of rule. It reads top to bottom: what is live now (in plain words), changes waiting to be made live, and the version
+// history folded away. The editor opens only when someone presses "Change the rules".
 const CONFIGS = [["decision", "Matching rules"], ["survivorship", "Golden record"], ["settings", "Run settings"]];
-async function rulesPanel(p, name) {
+const CONFIG_INTRO = {
+  decision: "How the engine decides whether two records belong to the same person.",
+  survivorship: "Which value a person's golden record keeps when their records disagree.",
+  settings: "Technical settings of a run. Change them together with your administrator.",
+};
+const CONFIG_HEAD = { decision: ["What the live matching rules do", "Change the matching rules"], survivorship: ["What the live golden-record rules do", "Change the golden-record rules"],
+  settings: ["The live run settings", "Change the run settings"] };
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+async function rulesPanel(p, name, editing) {
   name = name || "decision";
   const pid = p.id;
   const base = P(pid) + "/config/" + name;
   const versions = await api("GET", base);
   const live = versions.find((v) => v.status === "active");
+  const waiting = (v) => v.status === "proposed" || v.status === "approved";
+  const pending = versions.filter(waiting).reverse();
+  const latest = pending[0] || live;                // edits start from the newest version still waiting, else the live one (never a declined one)
   const second = p.second_approval;
-  const wrap = el("div");
-  const again = async () => wrap.replaceWith(await rulesPanel(p, name));
-  const result = el("div");
+  const wrap = el("div", { class: "rules-page" });
+  const again = async (edit) => wrap.replaceWith(await rulesPanel(p, name, edit));
+  const result = el("div", { class: "rules-result" });
+  const closeResult = () => btn("Close", () => result.replaceChildren(), "small ghost", "x");
   const act = async (v, what, title, minLength, prompt, danger) => {
     const why = await askReason(title, prompt, minLength, title.split(" ")[0], danger);
     if (why === null) return;
@@ -951,89 +968,141 @@ async function rulesPanel(p, name) {
   const view = async (v) => {
     const [content, changes] = await Promise.all([api("GET", base + "/versions/" + v.version),
       live && live.version !== v.version ? api("GET", base + "/diff?old=" + live.version + "&new=" + v.version) : null]);
-    fill(result, el("h3", { class: "section" }, "Version " + v.version + (live && live.version !== v.version ? ": what changes compared with live version " + live.version : "")),
-      changes ? (changes.length ? el("ul", { class: "plain" }, changes.map((c) => el("li", {}, c))) : el("p", { class: "muted" }, "No difference.")) : null,
-      el("pre", { class: "log", tabindex: "0" }, JSON.stringify(content.content, null, 2)));
+    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Version " + v.version + (changes ? ": what changes compared with the live version " + live.version : "")), closeResult()),
+      changes ? (changes.length ? el("ul", { class: "changes" }, changes.map((c) => el("li", {}, c))) : el("p", { class: "muted" }, "No difference.")) : null,
+      el("details", { class: "advanced" }, el("summary", {}, "The whole version as JSON"), el("pre", { class: "log", tabindex: "0" }, JSON.stringify(content.content, null, 2))));
     result.scrollIntoView({ block: "nearest" });
   };
   const dry = async (v) => {
     const r = await api("POST", base + "/versions/" + v.version + "/dry-run", {});
     const zones = ["auto_merge", "review", "reject"];
-    result.replaceChildren(el("h3", { class: "section" }, "Dry run of version " + v.version + " on " + num(r.pairs) + " scored pairs of run " + r.run_id),
-      table(["Decision", ["Before"], ["After"], ["Change"]], zones.map((z) => el("tr", {}, el("td", {}, label(z)), el("td", { class: "num" }, num(r.zones_before[z])),
+    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Try-out of version " + v.version + " on the " + num(r.pairs) + " scored pairs of run " + r.run_id), closeResult()),
+      el("p", { class: "hint" }, "Nothing is changed: this shows how the pairs of the latest run would have been decided with this version."),
+      table(["Decision", ["Now"], ["With this version"], ["Change"]], zones.map((z) => el("tr", {}, el("td", {}, label(z)), el("td", { class: "num" }, num(r.zones_before[z])),
         el("td", { class: "num" }, num(r.zones_after[z])), el("td", { class: "num" }, (r.zones_after[z] - r.zones_before[z] > 0 ? "+" : "") + num(r.zones_after[z] - r.zones_before[z]))))),
       el("p", { class: "hint" }, Object.keys(r.moved).length ? "Moved: " + Object.entries(r.moved).map(([k, n]) => k + " " + num(n)).join(", ") : "No pair changes decision."));
+    result.scrollIntoView({ block: "nearest" });
   };
   const back = async (v) => {
-    const why = await askReason("Roll back to version " + v.version, "Why go back?", 10, "Roll back", true);
+    const why = await askReason("Go back to version " + v.version, "Why go back?", 10, "Go back", true);
     if (why === null) return;
     await api("POST", base + "/rollback", { to_version: v.version, reason: why });
     await again();
-    say("Rolled back. The project's next run uses version " + v.version + ".", "good");
+    say("Done. The project's next run uses version " + v.version + " again.", "good");
   };
   const mine = (v) => v.proposed_by === me.sub;
-  const waiting = (v) => v.status === "proposed" || v.status === "approved";
-  const buttons = (v) => [
-    btn("View", () => view(v), "small"),
-    name === "decision" && can("config.propose") ? btn("Dry run", () => dry(v), "small") : null,
-    second && can("config.approve") && v.status === "proposed" && !mine(v) ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small") : null,
-    can("config.approve") && waiting(v) ? btn("Decline", () => act(v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger") : null,
-    can("config.activate") && waiting(v) && (!second || v.approved_by.length) ? btn("Make live", () => act(v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary") : null,
+  const decide = (v) => [
+    btn(live ? "What changes" : "View", () => view(v), "small", "list"),
+    name === "decision" && can("config.propose") ? btn("Try it on the latest run", () => dry(v), "small", "play") : null,
+    second && can("config.approve") && v.status === "proposed" && !mine(v) ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small", "check") : null,
+    can("config.activate") && (!second || v.approved_by.length) ? btn("Make live", () => act(v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary", "zap") : null,
+    can("config.approve") ? btn("Decline", () => act(v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger", "x") : null,
     second && v.status === "proposed" && mine(v) ? tag("Yours: someone else approves it", "warn") : null,
-    can("config.activate") && v.status === "superseded" ? btn("Roll back to this", () => back(v), "small") : null,
-  ].filter(Boolean);
-  const rows = versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version), el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by),
-    el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")), el("td", { class: "actions-cell" }, buttons(v))));
-  const flow = second ? "Every change is proposed, approved by a different person, and made live." : "Every change is proposed and then made live (this project does not require a second person).";
-  wrap.append(tabs(CONFIGS, name, async (n) => wrap.replaceWith(await rulesPanel(p, n))),
-    el("p", { class: "hint" }, flow + " The project's next run uses the live version."),
-    versions.length ? table(["Version", "Status", "Proposed by", "Reason", "Approved by", ""], rows) : empty("No versions yet: runs use the built-in defaults, shown in the editor below."), result);
-  if (can("config.propose")) {
-    const editor = el("textarea", { spellcheck: "false", rows: "14" });
-    const why = el("input", { type: "text", maxlength: "300" });
-    const err = errBox();
-    const propose = async () => {
-      let content;
-      try { content = JSON.parse(editor.value); } catch (_) { fail(err, "That is not valid JSON.", editor); return; }
-      try {
-        const out = await api("POST", base + "/propose", { content, reason: why.value });
-        await again();
-        say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready."), "good");
-      } catch (e) { fail(err, e.message); }
-    };
-    const src = versions.length ? api("GET", base + "/versions/" + versions[versions.length - 1].version) : api("GET", base + "/default");
-    const jsonPart = [el("p", { class: "hint" }, "Edit a copy of the " + (versions.length ? "latest version" : "built-in defaults") + ". The server checks it; nothing changes until it is made live."),
-      field("Content (JSON)", editor), field("Reason for this change (at least 10 characters)", why), err, el("div", { class: "row" }, btn("Propose", propose, "primary"))];
-    if (name === "survivorship") {
-      const [start, guide] = await Promise.all([src, api("GET", P(pid) + "/golden-record-guide")]);
-      editor.value = JSON.stringify(start.content, null, 2);
-      wrap.append(goldenForm(start.content, guide, async (content, reason) => {
-        const out = await api("POST", base + "/propose", { content, reason });
-        await again();
-        say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready."), "good");
-      }), el("details", { class: "advanced" }, el("summary", {}, "Advanced: edit the rules as JSON"), jsonPart));
-    } else if (name === "decision") {
-      const [start, cat, defaults] = await Promise.all([src, api("GET", "/rules-catalogue"), api("GET", base + "/default")]);
-      editor.value = JSON.stringify(start.content, null, 2);
-      wrap.append(matchingForm(start.content, defaults.content, cat, async (content, reason) => {
-        const out = await api("POST", base + "/propose", { content, reason });
-        await again();
-        say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready; the project's next run uses it."), "good");
-      }), el("details", { class: "advanced" }, el("summary", {}, "Advanced: edit the rules as JSON"), jsonPart));
-    } else {
-      add(wrap, el("h3", { class: "section" }, "Propose a new version"), jsonPart);
-      src.then((v) => { editor.value = JSON.stringify(v.content, null, 2); }).catch(() => {});
-    }
+  ];
+
+  // ---- what is live, and what waits
+  const status = el("div", { class: "rules-status" },
+    live ? el("div", { class: "live-line on" }, icon("check"), el("strong", {}, "Live: version " + live.version),
+      el("span", { class: "muted" }, (live.activated_by ? "made live by " + live.activated_by + ", " : "") + when(live.activated_at)))
+      : el("div", { class: "live-line" }, icon("info"), el("strong", {}, "Built-in defaults in use"),
+        el("span", { class: "muted" }, "this project has not made a version of its own live yet")),
+    pending.map((v) => el("div", { class: "pending-card" }, icon("clock"),
+      el("div", { class: "grow" }, el("strong", {}, "Version " + v.version + (v.status === "approved" ? " is approved and waits to be made live" : second ? " waits for a second person to approve it" : " waits to be made live")),
+        el("div", { class: "muted" }, "Proposed by " + v.proposed_by + ", " + when(v.proposed_at) + (v.reason ? ": “" + v.reason + "”" : ""))),
+      el("div", { class: "row" }, decide(v)))),
+    el("ol", { class: "flow-steps", "aria-label": "How a change goes live" }, withArrows([el("li", {}, icon("edit"), "Propose a change"),
+      second ? el("li", {}, icon("users"), "A second person approves") : null, el("li", {}, icon("zap"), "Make it live"), el("li", {}, icon("play"), "The next run uses it")])));
+
+  // ---- the body: a plain summary of the live rules, or the editor
+  const canEdit = can("config.propose");
+  const start = async () => (latest ? api("GET", base + "/versions/" + latest.version) : api("GET", base + "/default"));
+  const shown = live ? api("GET", base + "/versions/" + live.version) : api("GET", base + "/default");
+  const proposed = async (content, reason) => {
+    const out = await api("POST", base + "/propose", { content, reason });
+    await again(false);
+    say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready; the project's next run uses it."), "good");
+  };
+  const cancel = () => run(() => again(false));
+  const head = el("div", { class: "rules-head" }, el("div", {}, el("h2", { class: "section" }, CONFIG_HEAD[name][editing ? 1 : 0]), el("p", { class: "hint" }, CONFIG_INTRO[name])),
+    !editing && canEdit ? btn(name === "settings" ? "Change the settings" : "Change the rules", () => run(() => again(true)), "primary", "edit") : null);
+  let body;
+  if (editing && canEdit) {
+    const startFrom = await start();
+    const note = latest ? el("div", { class: "notice", role: "note" }, icon("info"), " You are editing a copy of version " + latest.version +
+      (latest.status === "active" ? " (live)" : waiting(latest) ? " (waiting, not live yet)" : "") + ". Nothing changes until the new version is made live.")
+      : el("div", { class: "notice", role: "note" }, icon("info"), " You are starting from the built-in defaults. Nothing changes until the new version is made live.");
+    if (name === "decision") {
+      const [cat, defaults] = await Promise.all([api("GET", "/rules-catalogue"), api("GET", base + "/default")]);
+      body = [note, matchingEditor(startFrom.content, defaults.content, cat, proposed, cancel)];
+    } else if (name === "survivorship") {
+      const guide = await api("GET", P(pid) + "/golden-record-guide");
+      body = [note, goldenForm(startFrom.content, guide, proposed, cancel)];
+    } else body = [note, jsonEditor(startFrom.content, proposed, cancel)];
+  } else {
+    const content = (await shown).content;
+    if (name === "decision") body = matchingSummary(content, await api("GET", "/rules-catalogue"));
+    else if (name === "survivorship") body = goldenSummary(content, await api("GET", P(pid) + "/golden-record-guide"));
+    else body = settingsSummary(content);
   }
+
+  // ---- history, folded away
+  const rows = versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version), el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by),
+    el("td", {}, when(v.proposed_at)), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")),
+    el("td", { class: "actions-cell" }, btn("View", () => view(v), "small"),
+      can("config.activate") && v.status === "superseded" ? btn("Go back to this", () => back(v), "small", "undo") : null)));
+  const history = versions.length ? el("details", { class: "history" }, el("summary", {}, icon("clock"), "Version history (" + versions.length + ")"),
+    table(["Version", "Status", "Proposed by", "When", "Reason", "Approved by", ""], rows)) : null;
+
+  wrap.append(tabs(CONFIGS, name, async (n) => wrap.replaceWith(await rulesPanel(p, n))), status, result, head, el("div", { class: "rules-body" }, body), history);
   return wrap;
 }
 
-// ---- matching rules without code ----------------------------------------------------------------------------------------------
-const RULE_KIND = { never_merge: ["Never merge", "danger"], force_review: ["Ask a person", "warn"], auto_merge: ["Always merge", "success"], not_enough_evidence: ["Not enough evidence", ""] };
+// The run settings: a short list in view mode, JSON in the editor (they are technical).
+function settingsSummary(content) {
+  const entries = Object.entries(content || {});
+  if (!entries.length) return empty("The built-in run settings are used.");
+  return kv(entries.map(([k, v]) => [label(k), v !== null && typeof v === "object" ? el("code", {}, JSON.stringify(v)) : String(v)]));
+}
+function jsonEditor(content, propose, cancel) {
+  const editor = el("textarea", { spellcheck: "false", rows: "16", class: "code" });
+  editor.value = JSON.stringify(content, null, 2);
+  const why = el("input", { type: "text", maxlength: "300" });
+  const err = errBox();
+  const save = async () => {
+    let parsed;
+    try { parsed = JSON.parse(editor.value); } catch (_) { fail(err, "That is not valid JSON.", editor); return; }
+    try { await propose(parsed, why.value); } catch (e) { fail(err, e.message); }
+  };
+  return el("div", {}, field("Settings (JSON). The server checks them.", editor), saveBar(why, err, save, cancel));
+}
+// The bottom of every editor: why, then save or cancel.
+function saveBar(why, err, save, cancel) {
+  why.placeholder = "For example: stricter merging after the March audit";
+  return el("div", { class: "save-bar" }, field("Why this change? (at least 10 characters; kept in the history)", why), err,
+    el("div", { class: "row" }, btn("Save as a new version", save, "primary", "check"), cancel ? btn("Cancel", cancel) : null));
+}
+
+// ---- matching rules in plain words ----------------------------------------------------------------------------------------
+const RULE_KIND = { never_merge: ["Never merge", "danger", "x", "Wins over everything: the two records stay apart whatever their score."],
+  force_review: ["Ask a person", "warn", "users", "Never merged automatically: the pair goes to the review queue."],
+  auto_merge: ["Always merge", "success", "merge", "Merged even with a lower score, unless a 'never merge' rule applies."],
+  not_enough_evidence: ["Not enough evidence", "", "info", "Neither merged nor sent for review."] };
+const RULE_ORDER = ["never_merge", "force_review", "auto_merge", "not_enough_evidence"];
+// short names for the built-in rules (their full reasons stay one click away)
+const RULE_TITLE = {
+  veto_pan_conflict: "Two different PANs", veto_aadhaar_conflict: "Two different Aadhaar numbers", veto_gender_conflict: "Different genders and no identifier agrees",
+  veto_birth_year_far_apart: "Birth years more than 10 years apart", veto_customer_number_conflict: "Two different customer numbers",
+  auto_same_pan_compatible_name: "Same PAN and a compatible name", auto_same_aadhaar_compatible_name: "Same Aadhaar and a compatible name",
+  auto_same_customer_number: "Same customer number and a compatible name", review_identifier_with_different_name: "Same identifier but a clearly different name",
+  review_identifiers_contradict: "One identifier agrees while another conflicts", review_possible_twins: "Possible twins: minors with the same birth date and PIN",
+  review_possible_namesake: "Only a similar name and a birth date agree", review_age_only_evidence: "Only an age, a name and a place agree",
+  not_enough_evidence: "Too little evidence to merge or even ask",
+};
+const ruleTitle = (r) => RULE_TITLE[r.id] || r.reason || label(r.id);
 // A rule's condition in words, from the same building blocks the engine runs.
 function describeRule(node, cat) {
   const title = (c) => ((cat.comparisons.find((x) => x.name === c) || {}).title || c);
-  const q = (s) => "\u201c" + s + "\u201d";
+  const q = (s) => "“" + s + "”";
   if (node.all) return node.all.map((n) => describeRule(n, cat)).join(" and ");
   if (node.any) return "(" + node.any.map((n) => describeRule(n, cat)).join(" or ") + ")";
   if (node.not) return "not " + describeRule(node.not, cat);
@@ -1057,18 +1126,76 @@ function describeRule(node, cat) {
   if (node.score) return (node.score === "probability" ? "match score " + node.op + " " + Math.round(node.value * 100) + "%" : "match weight " + node.op + " " + node.value);
   return JSON.stringify(node);
 }
-function matchingForm(content, defaults, cat, propose) {
-  const state = JSON.parse(JSON.stringify(content));
-  const keyRules = (k) => [KEY_RULES[k][1], KEY_RULES[k][2]];
-  const autoAt = el("input", { type: "number", min: "1", max: "100", step: "1", value: String(Math.round((state.auto_merge_at || 0.9) * 100)) });
-  const reviewAt = el("input", { type: "number", min: "1", max: "99", step: "1", value: String(Math.round((state.review_at || 0.1) * 100)) });
-  const keys = Object.fromEntries(Object.keys(KEY_RULES).map((k) => [k, keyOn(state, k)]));
-  const keyBoxes = Object.keys(KEY_RULES).map((k) => {
-    const cb = el("input", { type: "checkbox", checked: keys[k] });
-    cb.addEventListener("change", () => { keys[k] = cb.checked; drawRules(); });
-    return el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, "Records with the same " + KEY_RULES[k][0] + " are the same person"),
-      el("span", { class: "muted" }, "Merged automatically when the names are compatible; two different " + KEY_RULES[k][0] + "s are never merged.")));
+// The order the engine checks things in, drawn once at the top.
+// steps of a flow with an arrow between them (hidden from screen readers: the list order already says it)
+const withArrows = (items) => items.filter(Boolean).flatMap((it, i) => (i ? [el("li", { class: "sep", "aria-hidden": "true" }, icon("next")), it] : [it]));
+function decisionFlow() {
+  return el("ol", { class: "decision-flow", "aria-label": "How a pair of records is decided" }, withArrows([
+    el("li", {}, icon("users"), el("span", {}, el("strong", {}, "A pair of records"), el("span", { class: "muted" }, "that share something"))),
+    ...RULE_ORDER.slice(0, 3).map((k) => el("li", { class: RULE_KIND[k][1] }, icon(RULE_KIND[k][2]), el("span", {}, el("strong", {}, RULE_KIND[k][0] + " rules"), el("span", { class: "muted" }, "checked " + (k === "never_merge" ? "first" : "next"))))),
+    el("li", { class: "info" }, icon("chart"), el("span", {}, el("strong", {}, "Match score"), el("span", { class: "muted" }, "decides the rest")))]));
+}
+// The score scale: keep separate / ask a person / merge, drawn to scale. Returns { node, set(review, auto) } so an editor can redraw it.
+function scoreScale(review, auto) {
+  const zones = { separate: el("span", { class: "zone separate" }), review: el("span", { class: "zone review" }), merge: el("span", { class: "zone merge" }) };
+  const legend = { separate: el("span"), review: el("span"), merge: el("span") };
+  const bar = el("div", { class: "score-bar", role: "img" }, zones.separate, zones.review, zones.merge);
+  const set = (r, a) => {
+    const pr = Math.round(r * 100);
+    const pa = Math.round(a * 100);
+    zones.separate.style.flexGrow = String(Math.max(pr, 0));
+    zones.review.style.flexGrow = String(Math.max(pa - pr, 0));
+    zones.merge.style.flexGrow = String(Math.max(100 - pa, 0));
+    legend.separate.textContent = "below " + pr + "%";
+    legend.review.textContent = pr + "% to " + Math.max(pa - 1, pr) + "%";
+    legend.merge.textContent = pa + "% and above";
+    bar.setAttribute("aria-label", "Below " + pr + "%: keep separate. " + pr + "% to " + (pa - 1) + "%: ask a person. " + pa + "% and above: merge automatically.");
+  };
+  set(review, auto);
+  const key = (k, text) => el("div", { class: "score-key " + k }, el("i", { "aria-hidden": "true" }), el("span", {}, el("strong", {}, text), legend[k]));
+  return { node: el("div", { class: "score-scale" }, bar, el("div", { class: "score-ticks", "aria-hidden": "true" }, el("span", {}, "0%"), el("span", {}, "100%")),
+    el("div", { class: "score-keys" }, key("separate", "Keep separate"), key("review", "Ask a person"), key("merge", "Merge automatically"))), set };
+}
+const step = (n, title, text, ...body) => el("section", { class: "rule-step" }, el("div", { class: "step-head" }, el("span", { class: "step-no", "aria-hidden": "true" }, String(n)),
+  el("div", {}, el("h3", {}, title), text ? el("p", { class: "muted" }, text) : null)), body);
+function ruleRow(r, cat, control, extra) {
+  return el("div", { class: "rule" + (r.enabled === false ? " off" : "") }, control || null,
+    el("div", { class: "rule-text" }, el("strong", {}, ruleTitle(r)),
+      el("details", {}, el("summary", {}, "Details"), RULE_TITLE[r.id] && r.reason ? el("p", {}, r.reason) : null,
+        el("p", { class: "muted" }, "Applies when " + describeRule(r.when, cat) + "."))), extra || null);
+}
+// Read-only: what the live matching rules do.
+function matchingSummary(content, cat) {
+  const owned = new Set(Object.values(KEY_RULES).flatMap((k) => [k[1], k[2]]));
+  const rules = content.rules || [];
+  const ids = Object.keys(KEY_RULES).map((k) => {
+    const on = keyOn(content, k);
+    return el("div", { class: "id-card" + (on ? " on" : "") }, el("span", { class: "id-icon", "aria-hidden": "true" }, icon("key")),
+      el("div", {}, el("strong", {}, cap(KEY_RULES[k][0])), on ? tag("Decides", "success") : tag("Off"),
+        el("p", { class: "muted" }, on ? "Same " + KEY_RULES[k][0] + " and a compatible name: merged. Two different " + KEY_RULES[k][0] + "s: never merged."
+          : "Counts towards the match score only.")));
   });
+  const groups = RULE_ORDER.map((type) => {
+    const all = rules.filter((r) => r.type === type && !owned.has(r.id));
+    const on = all.filter((r) => r.enabled !== false);
+    const off = all.filter((r) => r.enabled === false);
+    if (!all.length) return null;
+    return el("div", { class: "rule-group " + RULE_KIND[type][1] }, el("div", { class: "group-head" }, icon(RULE_KIND[type][2]), el("strong", {}, RULE_KIND[type][0]),
+      el("span", { class: "count-badge" }, String(on.length)), el("span", { class: "muted" }, RULE_KIND[type][3])),
+      on.map((r) => ruleRow(r, cat)), off.length ? el("p", { class: "muted off-list" }, "Switched off: " + off.map(ruleTitle).join("; ") + ".") : null);
+  });
+  return el("div", { class: "matching-view" }, decisionFlow(),
+    step(1, "The match score", "Every pair gets a score from all the fields the two records share. A pair no rule catches is decided here.", scoreScale(content.review_at || 0.1, content.auto_merge_at || 0.9).node),
+    step(2, "Identifiers that decide on their own", "A trusted identifier can settle a pair without the score.", el("div", { class: "id-cards" }, ids)),
+    step(3, "Other rules", "Checked before the score, in this order. Open a rule's details to see exactly when it applies.", groups));
+}
+// The editor: the same three steps with controls, a rule builder in a dialog, and the raw JSON for experts.
+function matchingEditor(content, defaults, cat, propose, cancel) {
+  const state = JSON.parse(JSON.stringify(content));
+  state.rules = state.rules || [];
+  const keyRules = (k) => [KEY_RULES[k][1], KEY_RULES[k][2]];
+  const owned = new Set(Object.keys(KEY_RULES).flatMap(keyRules));
+  const keys = Object.fromEntries(Object.keys(KEY_RULES).map((k) => [k, keyOn(state, k)]));
   // the identifier switches own their two rules; a project whose rules predate a switch gets the rule from the built-in defaults
   const applyKeys = () => {
     for (const k of Object.keys(KEY_RULES)) for (const id of keyRules(k)) {
@@ -1077,52 +1204,100 @@ function matchingForm(content, defaults, cat, propose) {
       if (r) r.enabled = keys[k];
     }
   };
-  const owned = new Set(Object.keys(KEY_RULES).flatMap(keyRules));
-  const list = el("div", { class: "rule-list" });
+  // step 1: the score levels, with the scale redrawn as you type
+  const pct = (x, d) => String(Math.round((x || d) * 100));
+  const reviewAt = el("input", { type: "number", min: "1", max: "99", step: "1", value: pct(state.review_at, 0.1), class: "pct" });
+  const autoAt = el("input", { type: "number", min: "1", max: "100", step: "1", value: pct(state.auto_merge_at, 0.9), class: "pct" });
+  const scale = scoreScale(Number(reviewAt.value) / 100, Number(autoAt.value) / 100);
+  const redraw = () => { const r = Number(reviewAt.value) / 100; const a = Number(autoAt.value) / 100; if (r > 0 && r < a && a <= 1) scale.set(r, a); };
+  reviewAt.addEventListener("input", redraw);
+  autoAt.addEventListener("input", redraw);
+  // step 2: identifier switches
+  const ids = Object.keys(KEY_RULES).map((k) => {
+    const cb = el("input", { type: "checkbox", checked: keys[k] });
+    const card = el("label", { class: "id-card editable" + (keys[k] ? " on" : "") }, el("span", { class: "id-icon", "aria-hidden": "true" }, icon("key")),
+      el("div", { class: "grow" }, el("strong", {}, cap(KEY_RULES[k][0]) + " decides on its own"),
+        el("p", { class: "muted" }, "Same " + KEY_RULES[k][0] + " and a compatible name: merged. Two different " + KEY_RULES[k][0] + "s: never merged.")), cb);
+    cb.addEventListener("change", () => { keys[k] = cb.checked; card.classList.toggle("on", cb.checked); });
+    return card;
+  });
+  // step 3: the other rules, switchable; your own rules can be removed
+  const list = el("div", { class: "rule-groups" });
   const drawRules = () => {
-    applyKeys();
-    list.replaceChildren(...["never_merge", "force_review", "auto_merge", "not_enough_evidence"].flatMap((type) => {
-      const rs = state.rules.filter((r) => r.type === type);
-      if (!rs.length) return [];
-      return [el("h4", {}, RULE_KIND[type][0]), ...rs.map((r) => {
-        const cb = el("input", { type: "checkbox", checked: r.enabled !== false, disabled: owned.has(r.id), "aria-label": "Rule " + r.id + " on" });
-        cb.addEventListener("change", () => { r.enabled = cb.checked; });
-        const custom = r.id.startsWith("custom_");
-        return el("div", { class: "rule" + (r.enabled === false ? " off" : "") },
-          el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, r.reason || label(r.id)),
-            owned.has(r.id) ? el("span", { class: "muted" }, "Switched by the identifier choice above.") : null)),
-          el("details", {}, el("summary", {}, "When it applies"), el("p", { class: "muted" }, describeRule(r.when, cat))),
-          custom ? btn("Remove", () => { state.rules = state.rules.filter((x) => x !== r); drawRules(); }, "small danger", "trash", { "aria-label": "Remove rule " + r.id }) : null);
-      })];
-    }));
+    list.replaceChildren(...RULE_ORDER.map((type) => {
+      const rs = state.rules.filter((r) => r.type === type && !owned.has(r.id));
+      if (!rs.length) return null;
+      return el("div", { class: "rule-group " + RULE_KIND[type][1] }, el("div", { class: "group-head" }, icon(RULE_KIND[type][2]), el("strong", {}, RULE_KIND[type][0]),
+        el("span", { class: "muted" }, RULE_KIND[type][3])),
+        rs.map((r) => {
+          const cb = el("input", { type: "checkbox", checked: r.enabled !== false, "aria-label": ruleTitle(r) + ": on" });
+          const row = ruleRow(r, cat, cb, r.id.startsWith("custom_") ? btn("Remove", () => { state.rules = state.rules.filter((x) => x !== r); drawRules(); }, "small ghost danger", "trash", { "aria-label": "Remove rule " + ruleTitle(r) }) : null);
+          cb.addEventListener("change", () => { r.enabled = cb.checked; row.classList.toggle("off", !cb.checked); });
+          return row;
+        }));
+    }).filter(Boolean));
   };
   drawRules();
-
-  // ---- the rule builder ----
+  const addRule = async () => {
+    const rule = await ruleBuilder(cat, state.rules);
+    if (!rule) return;
+    state.rules.push(rule);
+    drawRules();
+    say("Rule added. Save the rules as a new version to keep it.", "good");
+  };
+  // advanced: the same content as JSON
+  const editor = el("textarea", { spellcheck: "false", rows: "14", class: "code" });
+  const json = el("details", { class: "advanced" }, el("summary", {}, "For experts: edit as JSON (nested conditions)"),
+    el("p", { class: "hint" }, "Saving from here uses the JSON below as it is, not the choices above."), field("Rules (JSON)", editor));
+  json.addEventListener("toggle", () => { if (json.open) { applyKeys(); editor.value = JSON.stringify({ ...state, auto_merge_at: Number(autoAt.value) / 100, review_at: Number(reviewAt.value) / 100 }, null, 2); } });
+  const why = el("input", { type: "text", maxlength: "300" });
+  const err = errBox();
+  const save = async () => {
+    fail(err, "");
+    let out;
+    if (json.open) {
+      try { out = JSON.parse(editor.value); } catch (_) { fail(err, "That is not valid JSON.", editor); return; }
+    } else {
+      const a = Number(autoAt.value) / 100;
+      const r = Number(reviewAt.value) / 100;
+      if (!(r > 0 && r < a && a <= 1)) { fail(err, "'Ask a person' must start above 0% and below 'Merge automatically', which is at most 100%.", reviewAt); return; }
+      applyKeys();
+      out = { ...state, auto_merge_at: a, review_at: r };
+    }
+    try { await propose(out, why.value); } catch (e) { fail(err, e.message); }
+  };
+  return el("div", { class: "matching-view editing" }, decisionFlow(),
+    step(1, "The match score", "Choose where 'ask a person' and 'merge automatically' start. Below the first level the records stay separate.",
+      el("div", { class: "fields" }, field("Ask a person from (%)", reviewAt), field("Merge automatically from (%)", autoAt)), scale.node),
+    step(2, "Identifiers that decide on their own", "Switch one on only when it is reliable in your sources (one per person, rarely mistyped).", el("div", { class: "id-cards" }, ids)),
+    step(3, "Other rules", "Switch a rule off to stop it; your own rules can be removed.", list,
+      el("div", { class: "row" }, btn("Add your own rule", addRule, "", "plus"))),
+    json, saveBar(why, err, save, cancel));
+}
+// "Add your own rule" in a dialog: what happens, when (one or more conditions), a name people will read.
+function ruleBuilder(cat, existing) {
   const what = el("select", {}, ["never_merge", "force_review", "auto_merge"].map((k) => el("option", { value: k }, cat.rule_types[k])));
-  const join = el("select", {}, el("option", { value: "all" }, "all of these are true"), el("option", { value: "any" }, "any of these is true"));
+  const join = el("select", { "aria-label": "How the conditions combine" }, el("option", { value: "all" }, "all of these are true"), el("option", { value: "any" }, "any of these is true"));
   const conds = el("div", { class: "conds" });
   const condRow = () => {
     const subject = el("select", { "aria-label": "Field" }, cat.comparisons.map((c) => el("option", { value: "c:" + c.name }, c.title)),
       el("option", { value: "score" }, "Match score"), el("option", { value: "years" }, "Birth years"));
     const op = el("select", { "aria-label": "Condition" });
     const val = el("span");
-    const row = el("div", { class: "cond row" }, subject, op, val, btn("Remove", () => row.remove(), "small", null, { "aria-label": "Remove this condition" }));
-    const fillOps = () => {
-      const s = subject.value;
-      let ops;
-      if (s.startsWith("c:")) ops = [["is", "is"], ["is_not", "is not"], ["missing", "is missing on one side"]];
-      else if (s === "score") ops = [[">=", "is at least (%)"], ["<", "is below (%)"]];
-      else ops = [["abs_diff_gt", "differ by more than (years)"]];
-      op.replaceChildren(...ops.map(([v, t]) => el("option", { value: v }, t)));
-      fillVal();
-    };
+    const row = el("div", { class: "cond row" }, subject, op, val, btn("Remove", () => row.remove(), "small ghost", "x", { "aria-label": "Remove this condition" }));
     const fillVal = () => {
       const s = subject.value;
       if (s.startsWith("c:")) {
         const c = cat.comparisons.find((x) => x.name === s.slice(2));
         val.replaceChildren(op.value === "missing" ? "" : el("select", { "aria-label": "Value" }, c.levels.map((l) => el("option", { value: l }, l))));
       } else val.replaceChildren(el("input", { type: "number", min: "0", max: s === "score" ? "100" : "120", value: s === "score" ? "90" : "10", "aria-label": "Value" }));
+    };
+    const fillOps = () => {
+      const s = subject.value;
+      const ops = s.startsWith("c:") ? [["is", "is"], ["is_not", "is not"], ["missing", "is missing on one side"]]
+        : s === "score" ? [[">=", "is at least (%)"], ["<", "is below (%)"]] : [["abs_diff_gt", "differ by more than (years)"]];
+      op.replaceChildren(...ops.map(([v, t]) => el("option", { value: v }, t)));
+      fillVal();
     };
     subject.addEventListener("change", fillOps);
     op.addEventListener("change", fillVal);
@@ -1140,58 +1315,50 @@ function matchingForm(content, defaults, cat, propose) {
     return row;
   };
   conds.append(condRow());
-  const ruleName = el("input", { type: "text", maxlength: "50", placeholder: "for example: different employee numbers" });
-  const ruleWhy = el("input", { type: "text", maxlength: "300", placeholder: "Why this rule exists, in a sentence people will read" });
+  const ruleName = el("input", { type: "text", maxlength: "120", placeholder: "for example: Different employee numbers" });
   const err = errBox();
-  const addRule = () => {
-    fail(err, "");
+  const body = el("div", { class: "rule-builder" }, field("What should happen", what),
+    el("div", { class: "row when" }, el("strong", {}, "When"), join), conds,
+    el("div", { class: "row" }, btn("Add a condition", () => conds.append(condRow()), "small", "plus")),
+    field("Name (shown to reviewers)", ruleName), err);
+  return dialog("Add your own rule", body, "Add rule", () => {
     const parts = [...conds.children].map((r) => r.build());
-    if (!parts.length) { fail(err, "Add at least one condition."); return; }
-    const slug = (ruleName.value || ruleWhy.value || "rule").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "rule";
+    if (!parts.length) { fail(err, "Add at least one condition."); return undefined; }
+    if (ruleName.value.trim().length < 3) { fail(err, "Give the rule a name people will understand.", ruleName); return undefined; }
+    const slug = ruleName.value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "rule";
     let id = "custom_" + slug;
-    for (let i = 2; state.rules.some((r) => r.id === id); i++) id = "custom_" + slug + "_" + i;
-    state.rules.push({ id, type: what.value, reason: ruleWhy.value.trim() || ruleName.value.trim() || label(what.value), when: parts.length === 1 ? parts[0] : { [join.value]: parts } });
-    ruleName.value = ""; ruleWhy.value = "";
-    conds.replaceChildren(condRow());
-    drawRules();
-    say("Rule added to the list below the identifiers. Propose the rules to save it.", "good");
-  };
-  const why = el("input", { type: "text", maxlength: "300" });
-  const err2 = errBox();
-  const save = async () => {
-    fail(err2, "");
-    const a = Number(autoAt.value) / 100;
-    const r = Number(reviewAt.value) / 100;
-    if (!(r > 0 && r < a && a <= 1)) { fail(err2, "The 'ask a person' level must be above 0 and below the 'merge automatically' level, which is at most 100."); return; }
-    applyKeys();
-    try { await propose({ ...state, auto_merge_at: a, review_at: r }, why.value); } catch (e) { fail(err2, e.message); }
-  };
-  return el("div", { class: "matching-form" },
-    el("h3", { class: "section" }, "1. When two records are merged"),
-    el("p", { class: "hint" }, "Every pair of records gets a match score from all the fields they share. The rules below can overrule the score."),
-    el("div", { class: "fields" }, field("Merge automatically when the score is at least (%)", autoAt),
-      field("Ask a person when the score is at least (%); below it the records stay separate", reviewAt)),
-    el("h3", { class: "section" }, "2. Which identifiers decide on their own"),
-    el("div", { class: "checks" }, keyBoxes),
-    el("h3", { class: "section" }, "3. Rules"),
-    el("p", { class: "hint" }, "A rule acts on a pair whatever its score. 'Never merge' wins over everything, then 'Ask a person', then 'Always merge'. Untick a rule to switch it off."),
-    list,
-    el("h3", { class: "section" }, "4. Add your own rule"),
-    el("div", { class: "panel" }, el("div", { class: "body" },
-      field("What should happen", what),
-      el("div", { class: "row" }, el("span", {}, "When"), join),
-      conds,
-      el("div", { class: "row" }, btn("Add a condition", () => conds.append(condRow()), "small", "plus")),
-      el("div", { class: "fields" }, field("Short name", ruleName), field("Why (shown to reviewers)", ruleWhy)),
-      err, el("div", { class: "row" }, btn("Add this rule", addRule, "", "plus")))),
-    field("Reason for this change (at least 10 characters)", why), err2,
-    el("div", { class: "row" }, btn("Propose these rules", save, "primary")));
+    for (let i = 2; existing.some((r) => r.id === id); i++) id = "custom_" + slug + "_" + i;
+    return { id, type: what.value, reason: ruleName.value.trim(), when: parts.length === 1 ? parts[0] : { [join.value]: parts } };
+  });
 }
 
-// The golden-record rules as a form: which source to trust, where each record's date comes from, and how each field is chosen.
+// ---- golden record in plain words ------------------------------------------------------------------------------------------
 const GOLDEN_STRATEGIES = [["most_recent", "Newest record"], ["most_trusted_source", "Most trusted source"], ["most_frequent", "Most records agree"],
   ["most_complete", "Most complete"], ["best_quality", "Best quality"]];
-function goldenForm(content, guide, propose) {
+const strategyName = (k) => (GOLDEN_STRATEGIES.find(([x]) => x === k) || [k, label(k)])[1];
+function goldenSummary(content, guide) {
+  const trust = (content.source_trust || []).length ? el("ol", { class: "order plain-order" }, content.source_trust.map((s) => el("li", { class: "mono" }, s)))
+    : el("p", {}, "Ranked automatically: the source whose records are most complete comes first.");
+  const groups = content.groups || {};
+  const grouped = new Set(Object.values(groups).flat());
+  const units = [...Object.entries(groups).map(([g, m]) => [g, label(g) + " (" + m.map(label).join(", ") + ")"]), ...guide.fields.filter((f) => !grouped.has(f)).map((f) => [f, label(f)])];
+  const def = content.default_strategy || "most_recent";
+  const byRule = {};
+  for (const [u, text] of units) {
+    const rule = (content.fields || {})[u] || def;
+    const pref = ((content.field_trust || {})[u] || [])[0];
+    (byRule[rule] = byRule[rule] || []).push(text + (pref ? " (prefers " + pref + ")" : ""));
+  }
+  return el("div", { class: "matching-view" },
+    step(1, "Which source is trusted most", "Used when a field's rule is 'Most trusted source', and to break ties.", trust),
+    step(2, "How each field is chosen", null, el("div", { class: "rule-group" }, Object.entries(byRule).map(([rule, fields]) =>
+      el("div", { class: "rule" }, el("div", { class: "rule-text" }, el("strong", {}, strategyName(rule)), el("p", { class: "muted" }, fields.join(", ")),
+        guide.strategies[rule] ? el("details", {}, el("summary", {}, "What this means"), el("p", {}, guide.strategies[rule])) : null))))),
+    step(3, "Other choices", null, kv([["Extra columns of the sources", content.carry_extra_columns === false ? "Not carried into the golden record" : "Carried into the golden record"],
+      ["Shared phones and emails", "A value shared by more than " + (content.shared_value_limit || 3) + " people is used only when nothing else exists"]])));
+}
+// The golden-record rules as a form: which source to trust, where each record's date comes from, and how each field is chosen.
+function goldenForm(content, guide, propose, cancel) {
   const known = guide.sources.map((s) => s.id);
   // start from the configured order, then the order the latest run actually used, then anything new
   const seen = ((guide.last_run || {}).trust_order || []).filter((s) => known.includes(s));
@@ -1269,23 +1436,20 @@ function goldenForm(content, guide, propose) {
       carry_extra_columns: carry.checked, extra_fields: extraFields };
     try { await propose(out, why.value); } catch (e) { fail(err, e.message); }
   };
-  return el("div", { class: "golden-form" },
-    el("h3", { class: "section" }, "1. Which source to trust most"),
-    el("label", { class: "check" }, auto, el("span", {}, "Rank sources automatically (the source whose records are most complete first). Untick to set the order yourself.")),
-    known.length ? list : empty("This project has no live connection yet."), lastNote,
-    el("h3", { class: "section" }, "2. How old each record is"),
-    el("p", { class: "hint" }, "'Newest record' needs a date per record: when it was created or last updated."),
-    undated, guide.sources.length ? table(["Source", "Record date"], dateRows) : null,
-    el("h3", { class: "section" }, "3. How each field is chosen"),
-    table(["Field", "Rule", "Preferred source"], fieldRows),
-    el("dl", { class: "help" }, GOLDEN_STRATEGIES.map(([k, t]) => [el("dt", {}, t), el("dd", {}, guide.strategies[k] || "")]).flat()),
-    el("h3", { class: "section" }, "4. Your own columns"),
-    el("label", { class: "check" }, carry, el("span", {}, "Carry the sources' extra columns into the golden record (columns with the same name in different sources become one field)")),
-    extraRows.length ? table(["Column", "Golden-record column", "Sources", "Rule"], extraRows) : el("p", { class: "hint" }, "No connection keeps extra columns. Tick them in a connection's field mapping to carry them."),
-    el("h3", { class: "section" }, "5. Shared values"),
-    field("A phone or email shared by more than this many people (an office line, an agent) is used only when nothing else exists", shared),
-    field("Reason for this change (at least 10 characters)", why), err,
-    el("div", { class: "row" }, btn("Propose these rules", save, "primary")));
+  return el("div", { class: "matching-view golden-form editing" },
+    step(1, "Which source is trusted most", null,
+      el("label", { class: "check" }, auto, el("span", {}, "Rank sources automatically (the source whose records are most complete first). Untick to set the order yourself.")),
+      known.length ? list : empty("This project has no live connection yet."), lastNote),
+    step(2, "How old each record is", "'Newest record' needs a date per record: when it was created or last updated.",
+      undated, guide.sources.length ? table(["Source", "Record date"], dateRows) : null),
+    step(3, "How each field is chosen", null, table(["Field", "Rule", "Preferred source"], fieldRows),
+      el("details", {}, el("summary", {}, "What the rules mean"), el("dl", { class: "help" }, GOLDEN_STRATEGIES.map(([k, tt]) => [el("dt", {}, tt), el("dd", {}, guide.strategies[k] || "")]).flat()))),
+    step(4, "Your own columns", null,
+      el("label", { class: "check" }, carry, el("span", {}, "Carry the sources' extra columns into the golden record (columns with the same name in different sources become one field)")),
+      extraRows.length ? table(["Column", "Golden-record column", "Sources", "Rule"], extraRows) : el("p", { class: "hint" }, "No connection keeps extra columns. Tick them in a connection's field mapping to carry them.")),
+    step(5, "Shared values", null,
+      field("A phone or email shared by more than this many people (an office line, an agent) is used only when nothing else exists", shared)),
+    saveBar(why, err, save, cancel));
 }
 
 // ---- connections (they belong to a project) -------------------------------------------------------------------------------
@@ -1591,7 +1755,7 @@ async function connectionWizard(pid, type, preset, startStep) {
     i.addEventListener("input", () => { state.source.source_id = i.value.trim(); });
     return field("Connection id (stamped on every record it delivers: letters, digits, _ and -)", i);
   };
-  const inspectUrl = () => root + "/connections/inspect" + (state.reason ? "?unmask=true&reason=" + encodeURIComponent(state.reason) : "");
+  const inspectUrl = () => root + "/connections/inspect" + (state.reason ? "?" + unmaskQuery(state.reason) : "");
   const openSource = async (target) => {
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(state.source.source_id)) throw new Error("Give the connection an id of letters, digits, _ or -.");
     if (kind() === "upload" && !state.source.connector.upload_id) throw new Error("Upload a file first.");
@@ -1606,9 +1770,9 @@ async function connectionWizard(pid, type, preset, startStep) {
     state.step = target || 2;
     render();
   };
-  // show the sample as it is (needs pii.unmask and a reason, which is logged); masked otherwise
+  // show the sample as it is (needs pii.unmask; every view is logged); masked otherwise
   const revealButton = (then) => (can("pii.unmask") && !state.reason ? btn("Show actual values", async () => {
-    const why = await askReason("Show the actual values", "Why do you need to see them? This is logged", 10, "Show");
+    const why = await revealIdentifiers("Show the actual values");
     if (why === null) return;
     state.reason = why;
     await then();
@@ -1738,7 +1902,7 @@ async function connectionWizard(pid, type, preset, startStep) {
   }
   function previewStep() {
     const doPreview = () => run(async () => {
-      const r = await api("POST", root + "/connections/preview" + (state.reason ? "?unmask=true&reason=" + encodeURIComponent(state.reason) : ""), state.source);
+      const r = await api("POST", root + "/connections/preview" + (state.reason ? "?" + unmaskQuery(state.reason) : ""), state.source);
       const cols = Object.keys(r.rows[0] || {}).filter((c) => c !== "attributes" && r.rows.some((row) => row[c] != null));
       fill(out, el("h3", { class: "section" }, "Fields filled in " + r.sample_size + " sample rows"),
         table(["Field", ["Rows filled"]], Object.entries(r.filled).map(([f, n]) => el("tr", {}, el("td", {}, label(f)), el("td", { class: "num" }, n + " of " + r.sample_size)))),
@@ -1797,25 +1961,25 @@ async function datasetCards(p, rid) {
     return card;
   });
 }
-// A page of a result table on screen. Identifiers, contact details and extra columns stay masked until someone allowed to see them gives a reason.
+// A page of a result table on screen. Identifiers, contact details and extra columns stay masked until someone allowed to see them asks (logged).
 async function previewTable(pid, rid, d, st) {
   st = st || { offset: 0, q: "", reason: null };
   const size = 25;
   const url = R(pid, rid) + "/datasets/" + d.name + "/rows?limit=" + size + "&offset=" + st.offset + "&q=" + encodeURIComponent(st.q) +
-    (st.reason ? "&unmask=true&reason=" + encodeURIComponent(st.reason) : "");
+    (st.reason ? "&" + unmaskQuery(st.reason) : "");
   const r = await api("GET", url);
   const wrap = el("div", { class: "preview" });
   const again = (patch) => run(async () => wrap.replaceWith(await previewTable(pid, rid, d, { ...st, ...patch })));
   const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: d.name === "golden_records" ? "Name or person id" : "Person or record id" });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") again({ q: q.value.trim(), offset: 0 }); });
   const reveal = can("pii.unmask") && r.masked.length ? btn("Show identifiers", async () => {
-    const why = await askReason("Show identifiers", "Why do you need to see them? This is logged", 10, "Show");
+    const why = await revealIdentifiers("Show identifiers");
     if (why !== null) again({ reason: why });
   }, "small", "shield") : null;
   const last = Math.min(st.offset + size, r.total);
   add(wrap, el("div", { class: "row" }, field("Find", q), btn("Search", () => again({ q: q.value.trim(), offset: 0 }), "small", "search"), reveal),
-    r.masked.length ? el("p", { class: "hint" }, "Masked: " + r.masked.map(label).join(", ") + ". " + (can("pii.unmask") ? "Press Show identifiers to see them (you give a reason; it is logged)." : "Your role cannot unmask them."))
-      : r.unmasked ? el("p", { class: "hint" }, "Showing actual values. This view was logged with your reason.") : null,
+    r.masked.length ? el("p", { class: "hint" }, "Masked: " + r.masked.map(label).join(", ") + ". " + (can("pii.unmask") ? "Press Show identifiers to see them (every view is logged)." : "Your role cannot unmask them."))
+      : r.unmasked ? el("p", { class: "hint" }, "Showing actual values. This view was logged.") : null,
     r.rows.length ? wide(r.columns.map(label), r.rows.map((row) => el("tr", {}, row.map((v) => el("td", {}, v == null ? "" : String(v)))))) : empty(st.q ? "Nothing matches." : "No rows."),
     r.total ? el("div", { class: "pager" }, el("span", { class: "muted" }, "Rows " + num(st.offset + 1) + " to " + num(last) + " of " + num(r.total)),
       st.offset > 0 ? btn("Previous", () => again({ offset: Math.max(0, st.offset - size) }), "small", "prev") : null,
@@ -1910,9 +2074,23 @@ async function destinationDialog(p, refresh) {
   if (res) { await refresh(); say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it, then it can be made live." : "Make it live to use it."), "good"); }
 }
 
+// Radio buttons drawn as cards: [value, title, icon, explanation]. Returns { node, value() }.
+function choiceCards(name, options, current) {
+  const group = name + "-" + (++uid);
+  const cards = options.map(([v, title, ic, text]) => {
+    const r = el("input", { type: "radio", name: group, value: v, checked: v === current });
+    return el("label", { class: "choice-card" }, r, el("span", { class: "choice-mark", "aria-hidden": "true" }, icon(ic)),
+      el("span", {}, el("strong", {}, title), el("span", { class: "muted" }, text)));
+  });
+  return { node: el("div", { class: "choice-cards", role: "radiogroup" }, cards), value: () => (cards.map((c) => c.querySelector("input")).find((r) => r.checked) || {}).value };
+}
+
 // ---- schedules: run the project's connections by themselves -----------------------------------------------------------------
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const ZONES = ["UTC", "Asia/Kolkata", "Asia/Dubai", "Asia/Singapore", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Australia/Sydney"];
+const LOAD_MODES = [["incremental", "Incremental", "refresh", "Reads every record, but reuses the latest successful run's work for records that did not change. Much faster; people are still formed from all records."],
+  ["full", "Full reload", "layers", "Reads and processes every record from scratch, and learns the scoring again. Slower; use it after big changes to the data or the rules."]];
+const loadTag = (mode) => (mode === "full" ? tag("Full reload", "info") : tag("Incremental", "success"));
 function scheduleWhen(s) {
   const t = s.at_time;
   if (s.frequency === "hourly") return "Every hour at :" + t.slice(3) + " (" + s.timezone + ")";
@@ -1930,7 +2108,7 @@ async function schedulesPanel(p, connections) {
     say("Schedule deleted.", "good");
   };
   const manage = can("runs.start");
-  const rows = list.map((s) => el("tr", {}, el("td", {}, el("strong", {}, s.name)), el("td", {}, s.connections.join(", ")), el("td", {}, scheduleWhen(s)),
+  const rows = list.map((s) => el("tr", {}, el("td", {}, el("strong", {}, s.name)), el("td", {}, s.connections.join(", ")), el("td", {}, scheduleWhen(s)), el("td", {}, loadTag(s.mode)),
     el("td", {}, s.enabled ? when(s.next_run_at) : el("span", { class: "muted" }, "Paused")),
     el("td", {}, s.last_run_id ? el("button", { type: "button", class: "link", onclick: () => go(() => viewRun(p.id, s.last_run_id)) }, STATUS_LABEL[s.last_status] || label(s.last_status || "")) : (s.last_status ? label(s.last_status) : "")),
     el("td", {}, s.enabled ? tag("On", "success") : el("span", {}, tag("Paused"), s.paused_reason ? el("div", { class: "muted" }, s.paused_reason) : null)),
@@ -1940,8 +2118,8 @@ async function schedulesPanel(p, connections) {
       btn("Delete", () => remove(s), "small danger")] : null)));
   const create = manage ? btn("New schedule", () => scheduleDialog(p, connections), "primary", "plus") : null;
   return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Scheduled runs"), create),
-    el("p", { class: "hint" }, "A schedule starts an ordinary run of the chosen connections at the times you set, using each connection's live version at that moment. It never starts a new run while its last one is still going, runs once (not once per missed slot) after the server was off, and pauses itself after three failed runs in a row."),
-    rows.length ? table(["Name", "Connections", "When", "Next run", "Last run", "State", ""], rows) : empty("No schedules yet." + (manage ? "" : " Someone who can start runs creates them."), create));
+    el("p", { class: "hint" }, "A schedule starts an ordinary run of the chosen connections at the times you set, using each connection's live version at that moment: an incremental load (only new and changed records are processed again) or a full reload. It never starts a new run while its last one is still going, runs once (not once per missed slot) after the server was off, and pauses itself after three failed runs in a row."),
+    rows.length ? table(["Name", "Connections", "When", "Load", "Next run", "Last run", "State", ""], rows) : empty("No schedules yet." + (manage ? "" : " Someone who can start runs creates them."), create));
 }
 async function scheduleDialog(p, connections, existing) {
   const live = connections.filter((c) => c.live_version);
@@ -1961,12 +2139,14 @@ async function scheduleDialog(p, connections, existing) {
   const zones = el("datalist", { id: "zones" }, ZONES.map((z) => el("option", { value: z })));
   const browserZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (_) { return "UTC"; } })();
   const zone = el("input", { type: "text", list: "zones", value: s.timezone || browserZone, maxlength: "40" });
+  const mode = choiceCards("load", LOAD_MODES, s.mode || "incremental");
   const err = errBox();
   freq.addEventListener("change", setLabels);
   setLabels();
   const body = { name: () => name.value.trim(), connections: () => picks.values(), frequency: () => freq.value, at_time: () => at.value.trim(),
-    weekday: () => (freq.value === "weekly" ? Number(day.value) : null), timezone: () => zone.value.trim() };
+    weekday: () => (freq.value === "weekly" ? Number(day.value) : null), timezone: () => zone.value.trim(), mode: () => mode.value() };
   const saved = await dialog(existing ? "Edit schedule " + s.name : "New schedule", el("div", {}, field("Name", name), el("h3", { class: "section" }, "Connections to read"), picks.node,
+    el("h3", { class: "section" }, "How to load"), mode.node,
     field("How often", freq), dayField, atField, field("Time zone (a name such as Asia/Kolkata)", zone), zones, err), "Save schedule", async () => {
     try {
       const values = Object.fromEntries(Object.entries(body).map(([k, f]) => [k, f()]));
@@ -2093,7 +2273,7 @@ async function viewCompare(pid, rid, l, r, reveal) {
   reviewCtx = ctx;
   const base = R(pid, rid);
   let path = base + "/people/" + l + "/compare/" + r;
-  if (reveal) path += "?unmask=true&reason=" + encodeURIComponent(reveal);
+  if (reveal) path += "?" + unmaskQuery(reveal);
   const [c, runInfo, summary] = await Promise.all([api("GET", path), api("GET", R(pid, rid)), can("queue.read") ? api("GET", base + "/queue/summary") : null, refreshCache()]);
   const writer = can("judgment.write");
   const note = el("textarea", { class: "plain short", maxlength: "300", placeholder: "Optional, kept with the decision." });
@@ -2133,7 +2313,7 @@ async function viewCompare(pid, rid, l, r, reveal) {
   const actions = [B.prev, B.next];
   if (can("pii.unmask") && !c.unmasked) {
     actions.unshift(btn("Show identifiers", async () => {
-      const why = await askReason("Show identifiers", "Why do you need to see them? This is logged", 10, "Show");
+      const why = await revealIdentifiers("Show identifiers");
       if (why) await go(() => viewCompare(pid, rid, l, r, why));
     }));
   }
@@ -2179,7 +2359,7 @@ function peopleLookup(pid, rid) {
 async function viewPerson(pid, rid, person, reveal) {
   here(R(pid, rid) + "/people/" + person);
   const base = R(pid, rid);
-  const v = await api("GET", base + "/people/" + encodeURIComponent(person) + (reveal ? "?unmask=true&reason=" + encodeURIComponent(reveal) : ""));
+  const v = await api("GET", base + "/people/" + encodeURIComponent(person) + (reveal ? "?" + unmaskQuery(reveal) : ""));
   await refreshCache();
   const writer = can("judgment.write");
   const correct = async (fieldName, current) => {
@@ -2214,7 +2394,7 @@ async function viewPerson(pid, rid, person, reveal) {
       el("td", {}, r.name_as_written || ""), el("td", {}, r.dob || ""), el("td", {}, r.mobile || ""), el("td", {}, r.email || ""), el("td", {}, r.city || ""));
   });
   const actions = can("pii.unmask") && !reveal ? [btn("Show identifiers", async () => {
-    const why = await askReason("Show identifiers", "Why do you need to see them? This is logged", 10, "Show");
+    const why = await revealIdentifiers("Show identifiers");
     if (why) await go(() => viewPerson(pid, rid, person, why));
   })] : [];
   show(page("Person " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,

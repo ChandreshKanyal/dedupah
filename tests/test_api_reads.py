@@ -67,16 +67,21 @@ def test_a_person_is_masked_by_default_for_everyone(api, output):
         assert set(v) == {"person_id", "golden", "record_count", "sources", "conflict_fields", "records", "extra", "unmasked"}   # extra: masked extra source columns
 
 
-def test_unmasking_needs_permission_a_reason_and_is_logged_without_the_data(api, output):
+def test_unmasking_needs_permission_and_is_logged_without_the_data(api, output):
     c, s, sv, run = api
     pid, url = output["pan_person"], f"{run}/people/{output['pan_person']}"
     assert c.get(f"{url}?unmask=true&reason={REASON}", headers=hdr(s, "viewer")).status_code == 403
+    assert c.get("/me", headers=hdr(s, "steward")).json()["unmask_reason_required"] is False
+    plain = c.get(f"{url}?unmask=true", headers=hdr(s, "steward", "u-quick"))                            # no reason needed by default: still logged
+    assert plain.status_code == 200 and plain.json()["unmasked"] is True
+    object.__setattr__(sv.settings, "unmask_reason_required", True)                                     # a deployment that wants a written reason
     assert c.get(f"{url}?unmask=true", headers=hdr(s, "steward")).status_code == 422
+    assert c.get("/me", headers=hdr(s, "steward")).json()["unmask_reason_required"] is True
     r = c.get(f"{url}?unmask=true&reason={REASON}", headers=hdr(s, "steward", "u-steward"))
     assert r.status_code == 200 and r.json()["unmasked"] is True and r.json()["golden"]["pan"] == output["pan"]
     seen = [e for e in sv.seclog.events(limit=500) if e["event"] == "pii_unmasked"]
-    assert [e["actor"] for e in seen] == ["u-steward"] and seen[0]["object_ref"].endswith(pid) and seen[0]["object_ref"].startswith(PROJECT + "/R")
-    assert seen[0]["detail"]["reason"] == REASON and output["pan"] not in json.dumps(sv.seclog.events(limit=500))
+    assert [e["actor"] for e in seen] == ["u-quick", "u-steward"] and seen[1]["object_ref"].endswith(pid) and seen[1]["object_ref"].startswith(PROJECT + "/R")
+    assert seen[0]["detail"]["reason"] == "" and seen[1]["detail"]["reason"] == REASON and output["pan"] not in json.dumps(sv.seclog.events(limit=500))
 
 
 def test_unmasking_is_rate_limited_to_slow_bulk_copying(api, output):

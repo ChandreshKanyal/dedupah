@@ -49,6 +49,7 @@ class ApiSettings:
     rate_limit_per_min: int = 240                       # per authenticated user
     ip_rate_limit_per_min: int = 600                    # per client address, every request
     unmask_limit_per_min: int = 30                      # views of unmasked identifiers per user: slows bulk copying of personal data
+    unmask_reason_required: bool = False                # ask for a written reason before showing identifiers (every view is logged either way)
     auth_fail_limit_per_min: int = 20                   # failed authentications per client address
     cors_origins: tuple = ()                            # none by default: the API is not meant to be called from other web origins
     allowed_hosts: tuple = ("*",)                       # production requires an explicit list
@@ -92,7 +93,8 @@ class ApiSettings:
             max_token_lifetime_s=_int("DEDUPE_MAX_TOKEN_LIFETIME_S", 3600),
             max_body_bytes=_int("DEDUPE_MAX_BODY_BYTES", 1_000_000), max_page_size=_int("DEDUPE_MAX_PAGE_SIZE", 200),
             rate_limit_per_min=_int("DEDUPE_RATE_LIMIT_PER_MIN", 240), ip_rate_limit_per_min=_int("DEDUPE_IP_RATE_LIMIT_PER_MIN", 600),
-            unmask_limit_per_min=_int("DEDUPE_UNMASK_LIMIT_PER_MIN", 30), auth_fail_limit_per_min=_int("DEDUPE_AUTH_FAIL_LIMIT_PER_MIN", 20),
+            unmask_limit_per_min=_int("DEDUPE_UNMASK_LIMIT_PER_MIN", 30),
+            unmask_reason_required=_bool("DEDUPE_UNMASK_REASON_REQUIRED", False), auth_fail_limit_per_min=_int("DEDUPE_AUTH_FAIL_LIMIT_PER_MIN", 20),
             cors_origins=_list("DEDUPE_CORS_ORIGINS"), allowed_hosts=_list("DEDUPE_ALLOWED_HOSTS", ("*",)),
             trust_proxy=_bool("DEDUPE_TRUST_PROXY", False), require_https=_bool("DEDUPE_REQUIRE_HTTPS", prod),
             enable_docs=_bool("DEDUPE_API_DOCS", not prod), database_url=os.environ.get("DEDUPE_DATABASE_URL") or None,

@@ -211,3 +211,23 @@ def test_the_background_loop_keeps_ticking_through_errors_and_stops_cleanly():
     n = fake.ticks
     _time.sleep(0.1)
     assert fake.ticks == n and not loop._thread.is_alive()                            # stopped for good
+
+
+def test_a_schedule_loads_incrementally_by_default_or_does_a_full_reload_when_asked(tmp_path):
+    import json
+    c, s, sv, clock = world(tmp_path, quick())
+    inc = new(c, s, name="incremental")
+    full = new(c, s, name="full", mode="full")
+    assert (inc.status_code, inc.json()["mode"], full.status_code, full.json()["mode"]) == (201, "incremental", 201, "full")
+    assert new(c, s, name="bad", mode="sometimes").status_code == 422
+    clock.now = at(2026, 10, 8, 2, 0, 5)
+    fired = {f["id"]: f for f in sv.schedules.tick()}
+    options = {}
+    for sid, f in fired.items():
+        run = sv.jobs.wait(PROJECT, f["run_id"], 30)
+        options[sid] = (json.loads((sv.workspace.run_dir(PROJECT, run.id) / "run_options.json").read_text(encoding="utf-8"))["full"], run.reason)
+    assert options[inc.json()["id"]] == (False, "scheduled: incremental")
+    assert options[full.json()["id"]] == (True, "scheduled: full (full reload)")
+    changed = c.patch(P + "/schedules/" + inc.json()["id"], json={"mode": "full"}, headers=hdr(s, *ADMIN))
+    assert changed.status_code == 200 and changed.json()["mode"] == "full"
+    assert c.patch(P + "/schedules/" + inc.json()["id"], json={"mode": "never"}, headers=hdr(s, *ADMIN)).status_code == 422

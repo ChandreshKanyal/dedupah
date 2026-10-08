@@ -45,14 +45,20 @@ with sync_playwright() as pw:
     page.fill("#username", "admin"); page.fill("#password", "admin"); page.click("#signin")
     page.wait_for_selector("#nav a"); wait(page)
     print("landed on", page.url.split("/ui")[1], "theme", page.evaluate("document.documentElement.dataset.theme"))
-    # rules: editor starts from the defaults, a version can be viewed
-    editor = page.locator("textarea").first
-    print("rules editor filled:", len(editor.input_value()) > 20)
-    if len(editor.input_value()) < 20:
-        note("flow", "rules editor is empty")
+    # rules: a plain summary first; the editor opens on "Change the rules" and its JSON part is filled; a version can be viewed
+    print("summary steps:", page.locator(".rule-step").count(), "| score bar:", page.locator(".score-bar").count())
+    if not page.locator(".score-bar").count():
+        note("flow", "the rules summary has no score bar")
     view = page.get_by_role("button", name="View")
     if view.count():
         view.first.click(); wait(page); print("viewed a rule version")
+    page.get_by_role("button", name="Change the rules").click(); wait(page)
+    page.locator("details.advanced summary", has_text="For experts").click(); page.wait_for_timeout(300)
+    editor = page.locator("textarea.code").first
+    print("rules editor filled:", len(editor.input_value()) > 20)
+    if len(editor.input_value()) < 20:
+        note("flow", "rules editor is empty")
+    page.get_by_role("button", name="Cancel").click(); wait(page)
     bad(page, "rules")
     page.screenshot(path=str(OUT / "10_rules_dark.png"), full_page=True)
 
@@ -70,6 +76,9 @@ with sync_playwright() as pw:
         print("dialog:", page.locator("#dialog h2").inner_text(), "| app inert:", page.evaluate("document.getElementById('app').inert"))
         page.locator("#dialog select").first.select_option("hourly")
         print("time label after hourly:", page.locator("#dialog label", has_text="Minutes past").count() == 1)
+        print("load choices:", page.locator("#dialog .choice-card").count(), "| incremental chosen:", page.locator("#dialog .choice-card input[value=incremental]").is_checked())
+        if page.locator("#dialog .choice-card").count() != 2:
+            note("flow", "the schedule dialog does not offer incremental and full reload")
         page.keyboard.press("Escape"); page.wait_for_timeout(200)
         print("closed:", page.locator("#overlay").is_hidden(), "| focus back on:", page.evaluate("document.activeElement.textContent"))
         if page.evaluate("document.activeElement.textContent") != "Edit":

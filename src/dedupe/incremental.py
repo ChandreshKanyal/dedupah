@@ -11,7 +11,7 @@ learned again on all pairs (standardised rows are still reused).
 
 Reuse is refused, and the run is a full one, when the previous run is missing a file, was made by a different standardisation or
 comparison logic (fingerprints below), or used different run settings. Reused scores keep the term frequencies of the run that made
-them; a full run (portal: "Full re-run") refreshes everything.
+them; a full run (portal: "Full reload", on the New run page or a schedule) refreshes everything.
 """
 import hashlib
 import json

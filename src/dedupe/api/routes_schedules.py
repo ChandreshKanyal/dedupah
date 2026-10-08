@@ -6,7 +6,7 @@ the same permission as starting a run, and every change is written to the projec
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from dedupe.workspace.schedules import FREQUENCIES, SCHEDULE_ID, ScheduleError
+from dedupe.workspace.schedules import FREQUENCIES, MODES, SCHEDULE_ID, ScheduleError
 
 from .auth import Principal
 from .guards import _context, _services, require
@@ -31,6 +31,7 @@ class ScheduleIn(Strict):
     at_time: str = Field("02:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")        # hourly uses only the minutes
     weekday: int | None = Field(None, ge=0, le=6)                                 # weekly: 0 = Monday ... 6 = Sunday
     timezone: str = Field("UTC", max_length=40)
+    mode: str = Field("incremental", pattern="^(" + "|".join(MODES) + ")$")       # incremental: reuse unchanged records' work; full: reload everything
 
 
 class SchedulePatch(Strict):
@@ -40,6 +41,7 @@ class SchedulePatch(Strict):
     at_time: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     weekday: int | None = Field(None, ge=0, le=6)
     timezone: str | None = Field(None, max_length=40)
+    mode: str | None = Field(None, pattern="^(" + "|".join(MODES) + ")$")
     enabled: bool | None = None
 
 
@@ -61,10 +63,11 @@ def create_schedule(request: Request, body: ScheduleIn, project_id: str = PID, p
         if not ps.configs.versions(f"connection/{cid}"):
             raise HTTPException(422, f"Connection {cid!r} does not exist in this project.")
     try:
-        s = _services(request).schedules.create(project_id, body.name, body.connections, body.frequency, body.at_time, body.weekday, body.timezone, p.actor)
+        s = _services(request).schedules.create(project_id, body.name, body.connections, body.frequency, body.at_time, body.weekday, body.timezone, p.actor,
+                                                   body.mode)
     except ScheduleError as e:
         raise HTTPException(422, str(e)) from None
-    _log(request, p, "create_schedule", s["id"], frequency=body.frequency)
+    _log(request, p, "create_schedule", s["id"], frequency=body.frequency, mode=body.mode)
     return s
 
 

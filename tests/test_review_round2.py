@@ -40,7 +40,7 @@ def test_golden_records_can_be_looked_at_masked_searched_and_unmasked_with_a_rea
     assert found["total"] >= 1 and all(name.split()[0].lower() in (r[cols.index("full_name")] or "").lower() or name.split()[0].lower() in r[0].lower()
                                        for r in found["rows"])
     assert c.get(url + "?unmask=true&reason=" + WHY, headers=hdr(s, "viewer")).status_code == 403         # needs pii.unmask
-    assert c.get(url + "?unmask=true&reason=short", headers=hdr(s, "steward")).status_code == 422
+    assert c.get(url + "?unmask=true", headers=hdr(s, "steward")).json()["unmasked"]                   # a reason is optional by default
     open_page = c.get(url + "?limit=100&unmask=true&reason=" + WHY, headers=hdr(s, "steward"))
     assert open_page.status_code == 200 and open_page.json()["unmasked"] and open_page.json()["masked"] == []
     assert {r[cols.index("pan")] for r in open_page.json()["rows"]} & {x[0] for x in raw}

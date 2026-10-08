@@ -2,7 +2,8 @@
 
 Every response is built from an explicit model (property-level allow-list): a column that is added to an output file later does not reach a
 client until someone lists it here. Identifiers (PAN, phone, email, document numbers) are masked unless the caller asks to see them AND holds
-`pii.unmask` AND gives a reason; each such view is written to the security log (who, which person, which fields, why) and is rate limited.
+`pii.unmask` (and gives a reason when the deployment requires one); each such view is written to the security log (who, which person, which
+fields, and the reason when given) and is rate limited.
 Names, dates of birth and addresses are shown to everyone who may read people: that is a policy choice stewards need, not a masking guarantee.
 """
 import json
@@ -147,14 +148,15 @@ def _not_found() -> HTTPException:
 
 
 def _unmask_gate(request: Request, p: Principal, unmask: bool, reason: str | None, object_ref: str) -> bool:
-    """True when identifiers may be shown. Needs the permission, a reason, and stays within the unmask rate limit. Logged by `_log_unmask`."""
+    """True when identifiers may be shown. Needs the permission and stays within the unmask rate limit; a written reason only when the deployment
+    asks for one (DEDUPE_UNMASK_REASON_REQUIRED). Every view is logged by `_log_unmask` (who, when, what), with the reason when one was given."""
     if not unmask:
         return False
     sv = _services(request)
     if "pii.unmask" not in p.permissions:
         sv.seclog.record("permission_denied", actor=p.actor, roles=p.roles, status=403, object_ref=object_ref, detail={"needs": "pii.unmask"}, **_context(request))
         raise HTTPException(403, "You do not have permission to do this.")
-    if not reason or len(reason.strip()) < MIN_REASON:
+    if sv.settings.unmask_reason_required and (not reason or len(reason.strip()) < MIN_REASON):
         raise HTTPException(422, f"Showing identifiers needs a reason of at least {MIN_REASON} characters.")
     if not sv.limiter.allow(f"unmask:{p.sub}", sv.settings.unmask_limit_per_min):
         sv.seclog.record("rate_limited", actor=p.actor, roles=p.roles, status=429, object_ref=object_ref, detail={"scope": "unmask"}, **_context(request))
@@ -162,9 +164,9 @@ def _unmask_gate(request: Request, p: Principal, unmask: bool, reason: str | Non
     return True
 
 
-def _log_unmask(request: Request, p: Principal, object_ref: str, reason: str, what: str) -> None:
+def _log_unmask(request: Request, p: Principal, object_ref: str, reason: str | None, what: str) -> None:
     _services(request).seclog.record("pii_unmasked", actor=p.actor, roles=p.roles, status=200, object_ref=object_ref,
-                                     detail={"fields": list(SENSITIVE), "reason": reason.strip(), "view": what}, **_context(request))
+                                     detail={"fields": list(SENSITIVE), "reason": (reason or "").strip(), "view": what}, **_context(request))
 
 
 # ---- queue -------------------------------------------------------------------------------------------------------------

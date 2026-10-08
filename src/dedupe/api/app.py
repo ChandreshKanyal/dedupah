@@ -59,6 +59,7 @@ class Me(BaseModel):
     username: str
     roles: list[str]
     permissions: list[str]
+    unmask_reason_required: bool = False     # the screens ask for a reason before showing identifiers only when this is on
 
 
 class SecurityEvent(BaseModel):
@@ -176,7 +177,8 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
 
     @app.get("/me", response_model=Me)
     def me(p: Principal = ANY_USER):
-        return Me(sub=p.sub, username=p.username, roles=sorted(p.roles), permissions=sorted(p.permissions))
+        return Me(sub=p.sub, username=p.username, roles=sorted(p.roles), permissions=sorted(p.permissions),
+                  unmask_reason_required=settings.unmask_reason_required)
 
     @app.get("/security/events", response_model=list[SecurityEvent])
     def security_events(after_id: int = Query(0, ge=0), limit: int = Query(100, ge=1), event: str | None = Query(None, pattern=r"^[a-z_]{1,30}$"),

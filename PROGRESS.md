@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 3 | **User additions:** schedules (and New run) choose Incremental or Full reload; Show identifiers no longer asks for a reason (still permission-gated, rate limited, logged; a reason can be required with `DEDUPE_UNMASK_REASON_REQUIRED=1`); Rules page redesigned (live status, plain-words summary, score bar, identifier cards, rules grouped by outcome, editor behind "Change the rules", rule builder in a dialog, history folded away) | 59 |
 | f0f2c2c..8f2fb95 | **User review round 2.** Rules page fixed; Edit on every connection; clickable wizard steps; a mapping page grouped by meaning with examples, roles and "which columns identify a person"; shared customer number field; golden-record preview on screen (masked until a reason is given); delete buttons in the lists; no-code matching rules with a rule builder | 54 |
 | b40b181..c13811e | **Golden records and matching across any sources ("fix all and thoroughly").** Golden values by record date, automatic/chosen source trust, per-field trust and quality, from a form; customer columns carried; no-ID recall measured correctly (0.89); per-source data quality; incremental runs; awkward data shapes handled | 53 |
 | bdd3186 | **Portal audit and fixes.** Three audits (flows, accessibility/design, human-in-the-loop) found ~70 problems, 11 blockers; all blockers fixed. Screen addresses with Back/Forward/reload; Review section (Review inbox, decide-and-next compare page with keys S/D/U/N/P and Undo, Decisions list with undo, split a person, correct a golden value, bulk decide, score filter, paging); Approvals with evidence; delete runs / projects / unused uploads (new permission `data.delete`); rename project; edit schedules; rules editor starts from defaults; newest-first audit log; accessibility (keyboard rows, labels, dialogs, focus, contrast; accent is now the brand teal); browser-tab icon | 52 |
@@ -45,7 +46,8 @@ profiles (confirm with the user first). **Section 57 (connector catalogue, 38 so
    UIDAI, CERT-In), incident procedures; replace the admin / admin demo account; consider switching back to single sign-on.
 8. **Governance choices to confirm with a real customer:** second approval OFF by default for portal-created projects; `admin` and
    `analyst` export unmasked results; who holds `data.delete`; bulk "same person" merges; masked-by-default results preview with
-   one-click unmask with a reason (the user wanted to see values; kept masked by default for DPDP/audit, explained to the user).
+   one-click unmask; since section 59 NO reason is asked by default (user's request), every view is still permission-gated, rate limited
+   and logged (who, when, what); a customer that wants a written purpose sets `DEDUPE_UNMASK_REASON_REQUIRED=1`.
 
 **How the engine works, in the words used with the user (session 2):** pairs, not files: read + map -> clean -> blocking (candidate pairs
 on shared keys) -> score each pair (weights learned: logistic regression on ID-proven pairs = self-supervised; EM when IDs are too few =
@@ -259,6 +261,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 | 2026-10-08 | `second_approval` is a per-project setting, OFF for projects created in the portal, ON for engine-created and pre-existing ones | A one-person project cannot approve its own changes; regulated customers will want it on: CONFIRM with a real customer (section 47) |
 | 2026-10-08 | Runs queue (default 1 at a time) instead of being refused; scheduled runs are ordinary runs started by an in-process scheduler with atomic claiming | Several people use one deployment; user wants schedules now (sections 48, 50) |
 | 2026-10-08 | Results leave unmasked behind `results.export`, a reason, a rate limit and an audit row with counts only; database writes only to the project's approved destinations (an environment variable name), all-or-nothing | User wants Excel/CSV/Parquet and database table options; personal data leaving needs controls (section 49) |
+| 2026-10-08 | Schedules carry a load mode (incremental default, or full reload); showing identifiers needs no written reason by default (`DEDUPE_UNMASK_REASON_REQUIRED` turns it back on) | User request (section 59). Incremental here means reusing earlier work for unchanged records; every record is still READ from the source (no change-data-capture / watermark yet). Dropping the reason weakens purpose logging; who/when/what is still logged |
 | 2026-10-06 | API identity comes from the customer's identity provider (OIDC); verified `sub` is the `actor` in every audit log; six fixed roles with separated duties; dev shared-secret tokens exist only for tests/demos and are refused in production | Banks use SSO; no user database or passwords to protect; four-eyes becomes real (section 34-36) |
 | 2026-10-06 | Aadhaar: customers may supply their own vault reference key (`aadhaar_reference_key`, stored as `ref:<key>`); the full number remains supported but is not the recommended route | UIDAI vault guidance rejects hashing as a reference-key method (section 35); real Aadhaar numbers still need a compliance opinion |
 | 2026-10-06 | Connector configs are untrusted: file paths confined to `DEDUPE_DATA_ROOTS`, one read-only SQL statement, validated sheet ids, redirects only to Google, no token to other hosts | Configs will come from a web screen/API |
@@ -303,6 +306,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-08 (session 3, user additions)** — Schedules: Incremental or Full reload; Show identifiers without a reason; Rules page redesign. Section 59.
 - **2026-10-08 (session 1, step 4 of 6)** — Scheduled runs: hourly, daily or weekly per project in the schedule's own time zone, exactly-once claiming, one catch-up run after downtime, no pile-up, self-pausing after three failures or when the creator can no longer sign in. Section 50.
 - **2026-10-08 (session 1, step 3 of 6)** — Results export: download golden records, person-to-record map and households as Excel, CSV or Parquet; write them into a database as a new table, added to an existing one, or replacing its rows; project database destinations approved like connections. Section 49.
 - **2026-10-08 (session 1, step 2 of 6)** — Run queue (runs wait their turn and survive a restart), run log, rows per connection, connection health (test now, history from runs, column drift). Section 48.
@@ -1387,3 +1391,29 @@ Six findings on the work of sections 53-57, all fixed, each with a test in `test
    suffix changes ('#dup1-2', ...) until every id is unique.
 6. **Record sources read twice:** JSON, XML, Avro, the APIs and MongoDB were read once to find the columns and again to read the rows. The
    `RecordSource` mixin now finds the columns from the first records of the same stream it then reads, so each source is read once per run.
+
+## 59. User additions: schedule load mode, identifiers without a reason, Rules page redesign (2026-10-08)
+1. **Incremental or full reload, per schedule.** New `mode` on a schedule (`incremental` default, `full`), added to existing databases
+   automatically (`create_and_upgrade`). The schedule dialog and the New run page show the same two choice cards; the Schedules table
+   has a Load column. A full-reload scheduled run is started with `full=True` (reason "scheduled: <name> (full reload)").
+   **Honest limit:** "incremental" reuses the previous run's work for unchanged records (section 53); it still READS every record from
+   the source. Reading only new/changed rows (a watermark column such as `updated_at`, or change-data-capture) is NOT built.
+2. **Show identifiers / Show actual values: no reason dialog.** The server no longer requires a reason (`unmask=true` alone works), but
+   still needs `pii.unmask`, applies the unmask rate limit and writes `pii_unmasked` to the security log (reason empty when none given).
+   `DEDUPE_UNMASK_REASON_REQUIRED=1` brings the reason back; `/me` tells the screens which behaviour applies.
+3. **Rules page redesigned** (Matching rules, Golden record, Run settings):
+   - top: what is live (or "built-in defaults in use"), a card per version waiting to go live with its actions (What changes, Try it on
+     the latest run, Approve, Make live, Decline), and the propose -> approve -> make live path in one line;
+   - a read-only summary of the LIVE rules in plain words: how a pair is decided (never merge -> ask a person -> always merge -> score),
+     the score drawn as a bar (keep separate / ask a person / merge), identifier cards (PAN, Aadhaar, customer number: decides or off),
+     the other rules grouped by outcome with short names (full reason and exact condition under Details);
+   - "Change the rules" opens the editor: same layout with number boxes (the bar redraws as you type), tick boxes, "Add your own
+     rule" in a dialog, JSON for experts folded away, and one save bar (why + Save as a new version + Cancel). Edits start from the
+     newest version still waiting (else the live one, never a declined one) and say which one;
+   - golden record: plain summary (trust order, fields grouped by rule, other choices) and the existing form in numbered cards;
+   - version history folded into "Version history (N)" with View and Go back.
+   Kept within the project's flat-design test (no coloured side stripes, drawn switches, pseudo-element arrows or round dots: arrows
+   are icons, outcome colour is on the group icon). Checked live in Edge, light and dark: 0 console errors; the three click-through scripts updated (the rules walk-through now declines
+   the version it proposes, so it no longer leaves waiting versions behind). Removed the empty leftover projects `walk-test-project`
+   and `walk-delete-test` (created by the click-through scripts, no runs).
+
