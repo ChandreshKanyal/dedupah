@@ -36,6 +36,8 @@ from sqlalchemy.engine import Engine
 
 from dedupe.survivorship.config import GOLDEN_FIELDS
 
+from ..dburl import driver_url
+
 DECISION_KINDS = ("same_person", "different_person", "unsure", "split", "field_override")
 META_KINDS = ("revoke", "approve", "decline")
 PAIR_KINDS = ("same_person", "different_person", "unsure")
@@ -169,7 +171,7 @@ class JudgmentStore:
         url = url or os.environ.get("DEDUPE_DATABASE_URL") or DEFAULT_URL
         if url.startswith("sqlite:///") and not url.startswith("sqlite:///:memory:"):
             Path(url[len("sqlite:///"):]).parent.mkdir(parents=True, exist_ok=True)
-        engine = create_engine(url)
+        engine = create_engine(driver_url(url))
         if engine.dialect.name == "sqlite":
             event.listen(engine, "connect", lambda dbapi, _: dbapi.execute("PRAGMA journal_mode=WAL"))
         return cls(engine, clock)

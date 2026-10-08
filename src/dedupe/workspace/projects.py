@@ -12,6 +12,8 @@ from dedupe.governance.store import ConfigStore
 from dedupe.schema import create_and_upgrade
 from dedupe.store import JudgmentStore
 
+from ..dburl import driver_url
+
 PROJECT_ID = r"^[a-z0-9][a-z0-9-]{1,39}$"
 _ID = re.compile(PROJECT_ID)
 
@@ -65,7 +67,7 @@ def _now() -> str:
 def engine_for(url: str):
     if url.startswith("sqlite:///") and not url.startswith("sqlite:///:memory:"):
         Path(url[len("sqlite:///"):]).parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(url, future=True)
+    engine = create_engine(driver_url(url), future=True)
     if engine.dialect.name == "sqlite":
         event.listen(engine, "connect", lambda dbapi, _: dbapi.execute("PRAGMA journal_mode=WAL"))
     return engine

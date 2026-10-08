@@ -18,6 +18,7 @@ from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, MetaD
 
 from dedupe import crypto
 
+from ..dburl import driver_url
 from .config import identifier_ok
 
 EXCEL_MAX_ROWS = 1_048_575
@@ -234,7 +235,7 @@ def write_database(url: str, run_dir: Path, name: str, table: str, mode: str, sc
     if mode == "replace" and not confirm_replace:
         raise ExportError("replacing a table deletes its current rows: confirm it first")
     arrow_schema, batches = _batches(run_dir, name, DB_BATCH)
-    engine = create_engine(url)
+    engine = create_engine(driver_url(url))
     try:
         with engine.begin() as conn:
             exists = inspect(conn).has_table(table, schema=schema)
@@ -269,7 +270,7 @@ def write_database(url: str, run_dir: Path, name: str, table: str, mode: str, sc
 
 def test_destination(url: str, schema: str | None = None) -> None:
     """Can the database be reached? Raises ExportError with a fixed sentence otherwise."""
-    engine = create_engine(url)
+    engine = create_engine(driver_url(url))
     try:
         with engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")

@@ -8,9 +8,9 @@ FROM base AS test
 # Dependencies first so this layer is cached until pyproject.toml changes
 COPY pyproject.toml ./
 RUN mkdir -p src/dedupe && touch src/dedupe/__init__.py \
-    && pip install -e ".[dev,api]"
+    && pip install -e ".[dev,api,connectors]"
 COPY . .
-RUN pip install -e ".[dev,api]" --no-deps
+RUN pip install -e ".[dev,api,connectors]" --no-deps
 CMD ["pytest", "-q"]
 
 # ---- runtime image: only what the API needs, unprivileged user, health check ----

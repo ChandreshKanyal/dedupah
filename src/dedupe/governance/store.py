@@ -28,6 +28,7 @@ from dedupe.results.config import DestinationConfig
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only, serialized
 from dedupe.survivorship.config import SurvivorshipConfig
 
+from ..dburl import driver_url
 from .settings import MatchingSettings
 
 MODELS = {"decision": DecisionConfig, "survivorship": SurvivorshipConfig, "settings": MatchingSettings, "sources": IngestConfig, "connection": SourceConfig, "destination": DestinationConfig}
@@ -120,7 +121,7 @@ class ConfigStore:
         url = url or os.environ.get("DEDUPE_DATABASE_URL") or DEFAULT_URL
         if url.startswith("sqlite:///") and not url.startswith("sqlite:///:memory:"):
             Path(url[len("sqlite:///"):]).parent.mkdir(parents=True, exist_ok=True)
-        engine = create_engine(url)
+        engine = create_engine(driver_url(url))
         if engine.dialect.name == "sqlite":
             event.listen(engine, "connect", lambda dbapi, _: dbapi.execute("PRAGMA journal_mode=WAL"))
         return cls(engine, solo, clock)

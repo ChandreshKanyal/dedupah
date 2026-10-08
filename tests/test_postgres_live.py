@@ -11,6 +11,7 @@ SKIPPED unless you point it at a server. The databases must already exist (the p
 Run twice on purpose: the second run must find the first run's tables and rows and still pass (it uses a fresh project folder each time)."""
 import os
 import sys
+import uuid
 
 import pytest
 
@@ -21,6 +22,7 @@ from api_world import csv_connection, hdr, make_live, small_csv  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from dedupe.api import ApiSettings, create_app  # noqa: E402
+from dedupe.governance.store import ConfigError  # noqa: E402
 from dedupe.workspace import Workspace  # noqa: E402
 
 
@@ -37,7 +39,11 @@ def test_workspace_projects_grants_decisions_rules_and_runs_work_on_postgres(tmp
     judgments, configs = ws.stores(pid)
     assert judgments.engine.dialect.name == "postgresql" and configs.engine.dialect.name == "postgresql"
     assert judgments.verify()["ok"] and configs.verify()["ok"]                       # the hash chains hold on this database too
-    version = configs.propose("settings", {}, "tester", "postgres check")
+    try:
+        version = configs.propose("settings", {}, "tester", "postgres check")
+    except ConfigError as e:                                                           # a second run: the first run's version is still waiting
+        assert "nothing to propose" in str(e)
+        version = 1
     assert version >= 1 and configs.verify()["ok"]
 
 
@@ -48,8 +54,9 @@ def test_the_api_runs_a_project_against_postgres(tmp_path):
     if sv.workspace.get("pgtest") is None:
         sv.workspace.create("pgtest", "Postgres test", "", "tester")
     c = TestClient(app)
-    make_live(c, s, csv_connection(small_csv(tmp_path / "crm.csv"), cid=f"crm{os.getpid()}"))
-    r = c.post("/projects/pgtest/runs", json={"connections": [f"crm{os.getpid()}"]}, headers=hdr(s, "platform_admin", "u-ops"))
+    cid = "crm" + uuid.uuid4().hex[:8]                                                # unique per run (a container always has the same process id)
+    make_live(c, s, csv_connection(small_csv(tmp_path / "crm.csv"), cid=cid), project="pgtest")
+    r = c.post("/projects/pgtest/runs", json={"connections": [cid]}, headers=hdr(s, "platform_admin", "u-ops"))
     assert r.status_code == 202
     assert sv.jobs.wait("pgtest", r.json()["id"], 60).status in ("succeeded", "failed")       # the fake pipeline writes no results; the point is the database round trip
     assert c.get("/projects/pgtest/runs", headers=hdr(s, "viewer")).status_code == 200

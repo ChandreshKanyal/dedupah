@@ -18,6 +18,7 @@ import pytest
 
 from dedupe.connectors import create
 from dedupe.connectors.guard import ConnectorConfigError
+from dedupe.dburl import driver_url
 
 
 def read_all(conf: dict) -> pa.Table:
@@ -46,13 +47,16 @@ def postgres(tmp_path_factory):
     pgserver = pytest.importorskip("pgserver")
     srv = pgserver.get_server(str(tmp_path_factory.mktemp("pg")), cleanup_mode="stop")
     import sqlalchemy as sa
-    eng = sa.create_engine(srv.get_uri())
+    eng = sa.create_engine(driver_url(srv.get_uri()))          # SQLAlchemy 2.1 defaults to psycopg 3; we ship psycopg2
     with eng.begin() as c:
         c.execute(sa.text("CREATE SCHEMA crm; CREATE TABLE crm.customers (cust_id text, full_name text, dob date, mobile text, pan text); "
                           "CREATE SEQUENCE crm.s"))
         c.execute(sa.text("INSERT INTO crm.customers VALUES ('C1', 'Rahul Sharma', '1985-05-12', '9811122222', 'ABCPS1234K'), "
                           "('C2', 'Anita Rao', '1990-01-31', NULL, NULL), ('C3', 'Priya Nair', NULL, '7012345678', 'BBBPS1111C')"))
     u = urllib.parse.urlsplit(srv.get_uri())
+    if u.port is None:                                                        # on Linux pgserver listens on a local socket only; the form needs host + port
+        eng.dispose()
+        pytest.skip("the throwaway PostgreSQL listens on a local socket only (Linux); runs on Windows")
     yield {"host": u.hostname, "port": str(u.port)}
     eng.dispose()
 

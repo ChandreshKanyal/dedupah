@@ -22,6 +22,8 @@ from sqlalchemy.exc import IntegrityError
 from dedupe.schema import create_and_upgrade
 from dedupe.store.judgments import DEFAULT_URL, GENESIS, _json, _now, install_append_only
 
+from ..dburl import driver_url
+
 EVENTS = ("auth_failed", "login", "permission_denied", "rate_limited", "request_rejected", "pii_unmasked", "run_started", "run_finished", "run_cancelled", "export", "config_change",
           "judgment_change", "data_deleted", "server_error", "startup")
 
@@ -101,7 +103,7 @@ class SecurityLog:
         url = url or os.environ.get("DEDUPE_DATABASE_URL") or DEFAULT_URL
         if url.startswith("sqlite:///") and not url.startswith("sqlite:///:memory:"):
             Path(url[len("sqlite:///"):]).parent.mkdir(parents=True, exist_ok=True)
-        engine = create_engine(url)
+        engine = create_engine(driver_url(url))
         if engine.dialect.name == "sqlite":
             event.listen(engine, "connect", lambda dbapi, _: dbapi.execute("PRAGMA journal_mode=WAL"))
         return cls(engine, clock)

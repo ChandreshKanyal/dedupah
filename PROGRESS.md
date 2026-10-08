@@ -1,7 +1,7 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-10-07 (end of session 2)
+> Last updated: 2026-10-08 (session 3)
 
 ## >>> RESUME HERE (latest state: end of session 2, after review round 2) <<<
 
@@ -10,6 +10,8 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 3 | **Landing page redesigned as cut paper:** six scraps of one example customer (note, polaroid, laptop, messages, KYC slip, sign-up sheet) consolidate into a golden record while scrolling; paper landscape, tabs, pinned slips, felt patches | 62 |
+| session 3 | **Docker and PostgreSQL verified** (first time): test image runs the whole suite, runtime image runs read-only and unprivileged on SQLite and PostgreSQL, live PostgreSQL tests pass twice; fixed a real start-up bug with SQLAlchemy 2.1 and plain `postgresql://` addresses | 61 |
 | session 3 | **Landing page at "/"** (public, product information only): animated hero (five records of one example customer merge into a golden record), sources marquee with the connector logos, scroll-linked "how it works" (connect, clean, match, review, golden record), rules, security, sign-in calls to action; Inter shipped with the page; reduced motion respected | 60 |
 | session 3 | **User additions:** schedules (and New run) choose Incremental or Full reload; Show identifiers no longer asks for a reason (still permission-gated, rate limited, logged; a reason can be required with `DEDUPE_UNMASK_REASON_REQUIRED=1`); Rules page redesigned (live status, plain-words summary, score bar, identifier cards, rules grouped by outcome, editor behind "Change the rules", rule builder in a dialog, history folded away) | 59 |
 | f0f2c2c..8f2fb95 | **User review round 2.** Rules page fixed; Edit on every connection; clickable wizard steps; a mapping page grouped by meaning with examples, roles and "which columns identify a person"; shared customer number field; golden-record preview on screen (masked until a reason is given); delete buttons in the lists; no-code matching rules with a rule builder | 54 |
@@ -40,8 +42,9 @@ profiles (confirm with the user first). **Section 57 (connector catalogue, 38 so
 4. **Erasure and retention:** deleting runs, projects and uploads exists. Still waiting for the user's three answers: are we the processor;
    may backups expire by retention; build only the machinery and leave the legal rules to customer configuration.
 5. **Notifications** (email/chat) when a run fails or a schedule pauses.
-6. **Never executed: Docker and PostgreSQL.** The user plans to move to a personal MacBook where Docker works: clone the private repo,
-   `python3 -m venv .venv`, install, run tests, then try Docker/Postgres there. `data/` is git-ignored (copy `data/workspace` for the Trial
+6. **Docker and PostgreSQL now verified on this machine (section 61).** Open: pin dependency versions (lock file), SQL Server ODBC driver in
+   the image, image scanning, try on a Mac / Linux server. If the user moves to a MacBook: clone the private repo,
+   `python3 -m venv .venv`, install, run tests. `data/` is git-ignored (copy `data/workspace` for the Trial
    project); the click-through scripts use Edge (`channel="msedge"`): on a Mac use `channel="chrome"` or Playwright's Chromium.
 7. **Gates before any real data:** compliance opinion on Aadhaar handling, independent penetration test, legal review (DPDP, RBI, IRDAI,
    UIDAI, CERT-In), incident procedures; replace the admin / admin demo account; consider switching back to single sign-on.
@@ -158,7 +161,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 - Windows 11 Pro; shells: PowerShell and Git Bash. 8 CPUs, 31.7 GB RAM, ~31 GB free disk at the time of writing.
 - Python 3.10.11 in the project-local `.venv` (all development and test runs happen there). Git repository on branch `main`, many commits (one per step).
-- Docker 29.4.3 is installed but the Docker Desktop engine was NOT running/healthy all session (containers stayed in "Created", `wsl` hung), so the Docker setup is **unverified**.
+- Docker 29.4.3: broken in session 1 (engine never healthy); working and verified on 2026-10-08 (section 61).
 - Large generated data lives in `data/` (gitignored).
 
 ## 5. Roadmap
@@ -168,8 +171,8 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 - [x] 0.2 Git init, .gitignore, .dockerignore
 - [x] 0.3 Project skeleton (`src/dedupe` package, pyproject.toml, tests dir)
 - [x] 0.4 Dockerfile + docker-compose (app + Postgres), `.env.example`
-- [~] 0.5 Smoke tests pass in local `.venv` (3 passed, 2026-10-05). Container run still unverified — **BLOCKED**: Docker Desktop engine not running / containers hang in "Created" (WSL likely stuck). Needs Docker Desktop restart / PC reboot, then re-run `docker compose run --rm --build app`. Not yet verified.
-- [x] 0.6 README written (`README.md`); the Docker part of it is unverified (see 0.5)
+- [x] 0.5 Container run verified 2026-10-08 (section 61): test image runs the whole suite, runtime image runs on SQLite and PostgreSQL. (Until then Docker Desktop had been broken on this machine.)
+- [x] 0.6 README written (`README.md`); Docker verified in section 61
 
 ### Phase 1 — Core engine
 - [x] 1.1 Synthetic Indian customer generator with ground-truth duplicates — see section 9. Run in `.venv`: `python -m dedupe.synthetic --households 1200 --seed 42 --out data/synthetic`
@@ -307,6 +310,8 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-08 (session 3, paper landing)** — Landing page redesigned in a cut-paper style with scroll consolidation (background agent). Section 62.
+- **2026-10-08 (session 3, Docker)** — Docker and PostgreSQL verified for the first time; SQLAlchemy 2.1 driver bug fixed; test image installs the connectors. Section 61.
 - **2026-10-08 (session 3, landing page)** — Public landing page at "/" with animations; six portal look options shown to the user on a design canvas (choice pending). Section 60.
 - **2026-10-08 (session 3, user additions)** — Schedules: Incremental or Full reload; Show identifiers without a reason; Rules page redesign. Section 59.
 - **2026-10-08 (session 1, step 4 of 6)** — Scheduled runs: hourly, daily or weekly per project in the schedule's own time zone, exactly-once claiming, one catch-up run after downtime, no pile-up, self-pausing after three failures or when the creator can no longer sign in. Section 50.
@@ -1440,3 +1445,52 @@ stay only in the sidebar and on buttons), then asked for a landing page with goo
   `tests/test_landing.py` (policy, no inline code, no third-party URLs, every referenced file served, font licence present).
 - **Not done:** the portal restyle itself (waiting for the user's choice of look); the sign-in page still uses the old look.
 
+
+## 61. Docker and PostgreSQL verified for the first time (2026-10-08)
+Docker Desktop's engine works on this machine now (29.4.3), so Phase 0.5 was finally run.
+- **Test image** (`--target test`): the whole suite runs inside it. First run: 453 passed, 2 failed, 1 error. Causes and fixes:
+  1. The test image installed only `[dev,api]`, the runtime image ships `[api,connectors]`: connector tests needed `fastavro` and
+     `pymysql`. The test image now installs `[dev,api,connectors]` too (tests what we ship).
+  2. **Real product bug:** a fresh install resolves SQLAlchemy **2.1**, which changed the driver behind a plain `postgresql://` address
+     from psycopg2 to psycopg 3 (not installed). `docker-compose.yml` uses exactly such an address, so the API would not have started on
+     PostgreSQL. New `dedupe/dburl.py` `driver_url()` maps `postgresql://` / `postgres://` to `postgresql+psycopg2://` in all six places
+     that open an engine (security log, configuration store, decisions store, workspace, results export x2); `tests/test_dburl.py`.
+     The local venv still has SQLAlchemy 2.0, which is why it never showed here: **dependency versions are not pinned** (gap below).
+  3. The throwaway PostgreSQL used by one connector test listens only on a local socket on Linux (no port for the form): that test now
+     skips there with a clear reason and still runs on Windows.
+- **Live PostgreSQL** (`tests/test_postgres_live.py`, never run before): run against compose's `postgres:16-alpine` (databases
+  `dedupe_main` and `dedupe_pgtest` created), TWICE as designed. Fixed in the test: it published the connection to the wrong project;
+  a second run must accept "nothing to propose"; the connection id used the process id, which is always the same in a container (now
+  random). Both runs: 2 passed.
+- **Runtime image** (`--target runtime`) run as compose runs it (read-only root, tmpfs, uid 10001, all capabilities dropped,
+  no-new-privileges, port on 127.0.0.1 only): healthy; `/`, `/ui`, `/health`, landing files 200; `create-admin` inside the container,
+  sign-in, `/me`, creating a project all work, with SQLite and with PostgreSQL (project, user and security-log rows checked in the
+  database).
+- **Pitfall:** piping the password into `accounts_cli` from Windows PowerShell 5.1 created an account whose password did not match
+  (the pipe changes the text); from Git Bash (`printf 'pw\n' | docker exec -i ...`) it works. Typing it at the prompt is fine.
+- **How to repeat:** `docker build --target test -t dedupe-test .` then `docker run --rm dedupe-test`; for PostgreSQL:
+  `docker compose up -d --wait postgres`, create the two databases, then run the test image on the `dedupe_default` network with
+  `DEDUPE_TEST_PG_MAIN` / `DEDUPE_TEST_PG_PROJECT` set (see the test's docstring). The `app` compose service mounts `./data`; the checks
+  above deliberately did not, to keep the user's workspace untouched.
+- **Still open / honest limits:** no lock file (versions float: build today = SQLAlchemy 2.1, venv = 2.0); SQL Server's ODBC driver is
+  not in the image; the image was checked on Docker Desktop for Windows only (not on a Mac, Linux server or Kubernetes); no image
+  scanning yet; the compose `api` service still needs a `.env` with real settings (see docs/SECURITY.md).
+
+## 62. Landing page redesigned: cut paper, scraps that consolidate on scroll (2026-10-08)
+The user asked for a paper look (inspiration: layered cut-paper / felt illustrations they showed; original art, not a copy): customer data
+as notes, polaroids, a laptop, messages, which consolidate while scrolling. Built by a background agent, checked and committed here.
+- **Look:** cream paper with a fine grain, muted teal / sage / orange / mustard / cream / brown, layered paper shadows; all art is inline
+  SVG or CSS (no new files, no images); "handwriting" is Inter italic (shipping a handwriting font would be a new file).
+- **Story (hero):** six scraps show one example customer six ways (sticky note, polaroid, laptop with a core_banking row, message
+  bubbles, KYC slip with a RECEIVED stamp, torn lead sign-up sheet) over a cut-paper landscape. The section is 300% of the screen tall
+  with a pinned stage; `landing.js` writes only one number `--p` (0..1, once per frame) and CSS derives everything (transform/opacity
+  only): shared values get a highlighter, the scraps drift into a pile, the golden record P000000612 drops on top, the sun rises,
+  captions change. Reduced motion or no script: scraps shown side by side, then the finished golden record.
+- **Rest of the page:** logos as luggage tags on a belt, "how it works" as index tabs over taped sheets, rules as pinned slips with
+  stamps, security as stitched felt patches, call to action with a rising paper sun. Wording and claims unchanged (no numbers).
+- **Checks:** landing + UI tests, ruff, bandit clean; Edge at 1440 and 390, with and without reduced motion: no console errors, no
+  sideways scroll. Fixed after review: hero text said "five different ways" next to six scraps.
+- **Known weaknesses:** scrap text is about 10px on phones while scattered; the "Scroll to bring them together" hint overlaps a tree
+  and one message tag is half hidden at the start (1440); on phones the sun briefly splits the pile into two groups; the golden card
+  passes behind the header for a moment; only Edge tested (uses container query units and `overflow: clip`); contrast of inactive step
+  tabs not measured; the grain layer is not measured on low-end phones.
