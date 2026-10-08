@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 3 | Warm restyle (portal + landing round 2) built, then **rolled back at the user's request** (kept in git stash, uncommitted) | 63 |
 | session 3 | **Landing page redesigned as cut paper:** six scraps of one example customer (note, polaroid, laptop, messages, KYC slip, sign-up sheet) consolidate into a golden record while scrolling; paper landscape, tabs, pinned slips, felt patches | 62 |
 | session 3 | **Docker and PostgreSQL verified** (first time): test image runs the whole suite, runtime image runs read-only and unprivileged on SQLite and PostgreSQL, live PostgreSQL tests pass twice; fixed a real start-up bug with SQLAlchemy 2.1 and plain `postgresql://` addresses | 61 |
 | session 3 | **Landing page at "/"** (public, product information only): animated hero (five records of one example customer merge into a golden record), sources marquee with the connector logos, scroll-linked "how it works" (connect, clean, match, review, golden record), rules, security, sign-in calls to action; Inter shipped with the page; reduced motion respected | 60 |
@@ -44,7 +45,7 @@ profiles (confirm with the user first). **Section 57 (connector catalogue, 38 so
 5. **Notifications** (email/chat) when a run fails or a schedule pauses.
 6. **Docker and PostgreSQL now verified on this machine (section 61).** Open: pin dependency versions (lock file), SQL Server ODBC driver in
    the image, image scanning, try on a Mac / Linux server. If the user moves to a MacBook: clone the private repo,
-   `python3 -m venv .venv`, install, run tests. `data/` is git-ignored (copy `data/workspace` for the Trial
+   `python3 -m venv .venv`, install, run tests. `data/` is git-ignored (copy `data/workspace` for the demo
    project); the click-through scripts use Edge (`channel="msedge"`): on a Mac use `channel="chrome"` or Playwright's Chromium.
 7. **Gates before any real data:** compliance opinion on Aadhaar handling, independent penetration test, legal review (DPDP, RBI, IRDAI,
    UIDAI, CERT-In), incident procedures; replace the admin / admin demo account; consider switching back to single sign-on.
@@ -61,7 +62,7 @@ email, name sounds + birth date/PIN/city-age as keys and requires name + DOB/con
 
 **Where things are described:** engine and accuracy (sections 1-35), API security baseline (36, `docs/SECURITY.md`), encryption at rest (41), sources and mapping (42), workspace (44), members-only projects (45), local accounts and roles (46), project-owned work (47), run queue and health (48), results export (49), schedules (50), scoring without identifiers (51), portal audit and Review section (52).
 
-**Run the portal (Windows, project root):** `$env:DEDUPE_AUTH_MODE="local"; $env:DEDUPE_LOCAL_AUTH_SECRET="<32+ characters>"; $env:DEDUPE_WORK_DIR="data/workspace"; $env:DEDUPE_DATA_ROOTS="$PWD\data"` then `.venv\Scripts\python -m dedupe.api --port 8765`; open http://127.0.0.1:8765/ui. New install: create an administrator with `.venv\Scripts\python -m dedupe.api.accounts_cli create-admin --username admin`. The demo workspace in `data/workspace` (ignored by git; rebuild with `scripts/demo_workspace.py`) has the DEMO account admin / admin (password policy bypassed on purpose). It now also holds the user's own "Trial" project (their uploaded Excel file, three runs): do not wipe `data/workspace` without asking.
+**Run the portal (Windows, project root):** `$env:DEDUPE_AUTH_MODE="local"; $env:DEDUPE_LOCAL_AUTH_SECRET="<32+ characters>"; $env:DEDUPE_WORK_DIR="data/workspace"; $env:DEDUPE_DATA_ROOTS="$PWD\data"` then `.venv\Scripts\python -m dedupe.api --port 8765`; open http://127.0.0.1:8765/ui. New install: create an administrator with `.venv\Scripts\python -m dedupe.api.accounts_cli create-admin --username admin`. The demo workspace in `data/workspace` (ignored by git; rebuild with `scripts/demo_workspace.py`) has the DEMO account admin / admin (password policy bypassed on purpose). The user's own "Trial" project was deleted by the user on 2026-10-08 (section 64); still never wipe `data/workspace` without asking.
 
 **Check the live portal after UI changes:** RESTART the portal (it reads app.js once at start-up), then `.venv\Scripts\python scripts\ui_walkthrough.py`, `scripts\ui_walkthrough_more.py` and `scripts\ui_walkthrough_round2.py` (a minute apart: sign-in rate limit). Both need Playwright in the venv (dev tool only) and fail on any console error, server error or red message.
 
@@ -310,6 +311,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-08 (session 3, warm restyle rolled back)** — Landing round 2 and a portal reskin were built by background agents; the user did not like them; rolled back (git stash). The user deleted their Trial project; walk-through scripts moved to insurance-file. Section 63.
 - **2026-10-08 (session 3, paper landing)** — Landing page redesigned in a cut-paper style with scroll consolidation (background agent). Section 62.
 - **2026-10-08 (session 3, Docker)** — Docker and PostgreSQL verified for the first time; SQLAlchemy 2.1 driver bug fixed; test image installs the connectors. Section 61.
 - **2026-10-08 (session 3, landing page)** — Public landing page at "/" with animations; six portal look options shown to the user on a design canvas (choice pending). Section 60.
@@ -1494,3 +1496,16 @@ as notes, polaroids, a laptop, messages, which consolidate while scrolling. Buil
   and one message tag is half hidden at the start (1440); on phones the sun briefly splits the pile into two groups; the golden card
   passes behind the header for a moment; only Edge tested (uses container query units and `overflow: clip`); contrast of inactive step
   tabs not measured; the grain layer is not measured on low-end phones.
+
+## 63. Warm restyle tried and rolled back (2026-10-08)
+After the paper landing page (section 62) the user asked for a warmer look (Fraunces / Figtree / Caveat, orange-brown-beige) and a subtle
+matching restyle of the portal. Two background agents built both (landing round 2: framed paper scene, three-chapter merge story with a
+MERGED stamp; portal: Figtree text, Fraunces titles, warm light and dark themes, index-tab menu, golden-record card; no flat-design rule
+relaxed; all three click-through scripts 0 problems). **The user did not like it and asked to go back to the old UI.** Nothing was
+committed. The work is kept, uncommitted, in `git stash` ("warm restyle: portal reskin + landing round 2"); `git stash pop` brings it back.
+The portal is therefore the original teal look and the landing page is the paper version of section 62 (commit 48073d9).
+- **Lessons:** show a single screenshot of a new look before building all of it; the six portal look options of section 60 (A-F) were
+  never chosen, so a portal restyle should start from that choice.
+- **Also:** the user deleted their "Trial" project (and "shankar") in the portal on 2026-10-08 15:33 IST (security log rows 337-338, reason
+  "because i want to"). The click-through scripts that read Trial now use the demo `insurance-file` project (connection `insurance`, run
+  R725ae940327a).

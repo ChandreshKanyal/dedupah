@@ -106,7 +106,7 @@ with sync_playwright() as pw:
     for tab in ("Matching rules", "Golden record", "Run settings"):
         page.goto(BASE + "#/projects/customer-master/rules"); wait(page)
         page.get_by_role("tab", name=tab).click(); wait(page); bad(page, "rules/" + tab)
-    for path in ["#/approvals", "#/review/decisions", "#/projects/trial/results", "#/audit"]:
+    for path in ["#/approvals", "#/review/decisions", "#/projects/insurance-file/results", "#/audit"]:
         page.goto(BASE + path); wait(page); bad(page, path)
         print(path, "->", page.locator("#view h1").inner_text())
     page.screenshot(path=str(OUT / "14_audit_dark.png"))

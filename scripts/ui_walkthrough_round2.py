@@ -2,8 +2,8 @@
 guide, actual values with a reason), the golden-record preview (search, paging, unmask), delete buttons in the lists, the no-code matching
 rules form (adds and proposes a rule). Fails on console errors, server errors, red messages and stray [object]/null/undefined text.
 
-Needs the demo workspace portal on http://127.0.0.1:8765 (admin / admin) and Playwright (dev tool only). It READS the user's Trial project
-(run R364a5a4c04fb) and CHANGES only the demo project (one proposed matching-rules version) and a throwaway project it deletes again.
+Needs the demo workspace portal on http://127.0.0.1:8765 (admin / admin) and Playwright (dev tool only). It READS the demo insurance-file project
+(run R725ae940327a) and CHANGES only the demo project (one proposed matching-rules version) and a throwaway project it deletes again.
 The portal allows 10 sign-ins a minute per address.
 """
 import re
@@ -51,14 +51,14 @@ with sync_playwright() as pw:
     page.on("console", lambda m: note("console", m.text) if m.type == "error" else None)
     page.on("pageerror", lambda e: note("page error", str(e)))
     page.on("response", lambda r: note("http", f"{r.status} {r.url}") if r.status >= 500 else None)
-    page.goto(BASE + "#/projects/trial/connections")
+    page.goto(BASE + "#/projects/insurance-file/connections")
     page.fill("#username", "admin"); page.fill("#password", "admin"); page.click("#signin")
     page.wait_for_selector("#nav a"); wait(page)
     leaks(page, "connections tab")
     print("coverage table:", page.get_by_role("heading", name="Which field comes from which source").count())
     page.screenshot(path=str(OUT / "50_connections.png"), full_page=True)
     # 1. Edit from the list opens the mapping step directly
-    page.get_by_role("button", name="Edit connection insurance_synthetic_dedup_test").click(); wait(page)
+    page.get_by_role("button", name="Edit connection insurance").click(); wait(page)
     print("edit opens step:", page.locator(".steps [aria-current=step]").inner_text())
     leaks(page, "mapping")
     # real values with a reason
@@ -76,8 +76,8 @@ with sync_playwright() as pw:
     print("after clicking step 2:", page.locator(".steps [aria-current=step]").inner_text())
     leaks(page, "wizard steps")
     page.get_by_role("button", name="Cancel").click(); wait(page)
-    # 2. results preview on a Trial run
-    page.goto(BASE + "#/projects/trial/runs/R364a5a4c04fb/results"); wait(page)
+    # 2. results preview on a demo insurance-file run
+    page.goto(BASE + "#/projects/insurance-file/runs/R725ae940327a/results"); wait(page)
     rows_masked = page.locator(".preview tbody tr").count()
     print("preview rows:", rows_masked, "| masked hint:", page.locator(".preview .hint").first.inner_text()[:90])
     leaks(page, "results preview")
