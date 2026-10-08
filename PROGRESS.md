@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 3 | **Landing page at "/"** (public, product information only): animated hero (five records of one example customer merge into a golden record), sources marquee with the connector logos, scroll-linked "how it works" (connect, clean, match, review, golden record), rules, security, sign-in calls to action; Inter shipped with the page; reduced motion respected | 60 |
 | session 3 | **User additions:** schedules (and New run) choose Incremental or Full reload; Show identifiers no longer asks for a reason (still permission-gated, rate limited, logged; a reason can be required with `DEDUPE_UNMASK_REASON_REQUIRED=1`); Rules page redesigned (live status, plain-words summary, score bar, identifier cards, rules grouped by outcome, editor behind "Change the rules", rule builder in a dialog, history folded away) | 59 |
 | f0f2c2c..8f2fb95 | **User review round 2.** Rules page fixed; Edit on every connection; clickable wizard steps; a mapping page grouped by meaning with examples, roles and "which columns identify a person"; shared customer number field; golden-record preview on screen (masked until a reason is given); delete buttons in the lists; no-code matching rules with a rule builder | 54 |
 | b40b181..c13811e | **Golden records and matching across any sources ("fix all and thoroughly").** Golden values by record date, automatic/chosen source trust, per-field trust and quality, from a form; customer columns carried; no-ID recall measured correctly (0.89); per-source data quality; incremental runs; awkward data shapes handled | 53 |
@@ -306,6 +307,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-08 (session 3, landing page)** — Public landing page at "/" with animations; six portal look options shown to the user on a design canvas (choice pending). Section 60.
 - **2026-10-08 (session 3, user additions)** — Schedules: Incremental or Full reload; Show identifiers without a reason; Rules page redesign. Section 59.
 - **2026-10-08 (session 1, step 4 of 6)** — Scheduled runs: hourly, daily or weekly per project in the schedule's own time zone, exactly-once claiming, one catch-up run after downtime, no pile-up, self-pausing after three failures or when the creator can no longer sign in. Section 50.
 - **2026-10-08 (session 1, step 3 of 6)** — Results export: download golden records, person-to-record map and households as Excel, CSV or Parquet; write them into a database as a new table, added to an existing one, or replacing its rows; project database destinations approved like connections. Section 49.
@@ -1416,4 +1418,25 @@ Six findings on the work of sections 53-57, all fixed, each with a test in `test
    are icons, outcome colour is on the group icon). Checked live in Edge, light and dark: 0 console errors; the three click-through scripts updated (the rules walk-through now declines
    the version it proposes, so it no longer leaves waiting versions behind). Removed the empty leftover projects `walk-test-project`
    and `walk-delete-test` (created by the click-through scripts, no runs).
+
+## 60. Landing page at "/" (2026-10-08)
+The user asked for a portal restyle (font Inter chosen; six look options A-F shown on a private design canvas, choice PENDING: A
+enterprise console, B minimal mono, C classic dashboard, D top navigation, E icon rail + section menu, F structured enterprise; icons to
+stay only in the sidebar and on buttons), then asked for a landing page with good animations FIRST.
+- **What:** `src/dedupe/api/ui/landing/` (index.html, landing.css, landing.js, fonts/inter-latin.woff2 + OFL.txt) served at `/`
+  (`/landing/<fixed file list>`), public, no data and no API calls. Strict policy like the portal plus `font-src 'self'`; no inline code
+  or styles; nothing loaded from other sites (the font ships with the page).
+- **Sections:** hero "One customer. One record." with a looping merge animation (five records of an EXAMPLE customer from core banking,
+  policy, loans, leads and KYC; shared PAN, mobile, email and birth date light up; the cards merge into a golden record); a marquee of
+  18 connector logos ("38 kinds of source"); "how it works" with a sticky step list that follows five panels (connect chips, cleaning
+  before/after, an example score needle, a review decision with keys, golden-record fields with their source); rules as sentences;
+  a dark security section (Aadhaar token, masking with logged views, hash-chained log, second approval, encryption at rest, own network);
+  closing call to sign in.
+- **Motion:** CSS transitions driven by class changes, IntersectionObserver reveals, the hero loop pauses when off screen or in a hidden
+  tab; `prefers-reduced-motion` shows the finished state with nothing moving.
+- **Honesty:** no accuracy or speed numbers (all our results are synthetic); the hero says "Example data. Not a real person."; the score
+  in "Match" is labelled an example. "Inside your network" is phrased as "designed to run on your own servers" (Docker still unverified).
+- **Checked:** Edge at 1440 px and 390 px and with reduced motion: no console errors, no sideways scrolling, font loaded. Tests:
+  `tests/test_landing.py` (policy, no inline code, no third-party URLs, every referenced file served, font licence present).
+- **Not done:** the portal restyle itself (waiting for the user's choice of look); the sign-in page still uses the old look.
 

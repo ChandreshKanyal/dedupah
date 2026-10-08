@@ -61,3 +61,33 @@ def ui_logo(name: str):
 @router.get("/ui/style.css", dependencies=[Depends(public())], include_in_schema=False)
 def ui_style():
     return _serve("style.css")
+
+
+# ---- the public landing page at "/": product information only, no data and no API calls ---------------------------------------
+LANDING = UI / "landing"
+LANDING_FILES = {"index.html": "text/html; charset=utf-8", "landing.css": "text/css; charset=utf-8", "landing.js": "text/javascript; charset=utf-8",
+                 "fonts/inter-latin.woff2": "font/woff2"}
+LANDING_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; "
+               "frame-ancestors 'none'")
+
+
+def _landing(name: str) -> Response:
+    key = "landing/" + name
+    if key not in _cache:
+        _cache[key] = (LANDING / name).read_bytes()
+    headers = {"Content-Security-Policy": LANDING_CSP, "X-Content-Type-Options": "nosniff"}
+    if name.startswith("fonts/"):
+        headers["Cache-Control"] = "public, max-age=604800"
+    return Response(_cache[key], media_type=LANDING_FILES[name], headers=headers)
+
+
+@router.get("/", dependencies=[Depends(public())], include_in_schema=False)
+def landing_page():
+    return _landing("index.html")
+
+
+@router.get("/landing/{name:path}", dependencies=[Depends(public())], include_in_schema=False)
+def landing_file(name: str):
+    if name not in LANDING_FILES or name == "index.html":            # a fixed list: nothing else in the folder (or outside it) is reachable
+        raise HTTPException(404, "Not found")
+    return _landing(name)

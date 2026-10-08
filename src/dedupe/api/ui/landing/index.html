@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurionpro Dedupe: one customer, one record</title>
+<meta name="description" content="Find the same customer across core banking, policy, loan and lead systems, merge them with rules people can read, and keep one golden record.">
+<link rel="icon" href="/ui/favicon.png">
+<link rel="preload" href="/landing/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/landing/landing.css">
+<script src="/landing/landing.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" id="top">
+  <div class="wrap nav-row">
+    <a class="brand" href="/" aria-label="Aurionpro Dedupe, home"><img src="/ui/wordmark-light.png" alt="Aurionpro" width="122" height="28"><span>Dedupe</span></a>
+    <nav aria-label="Page">
+      <a href="#how">How it works</a>
+      <a href="#rules">Rules</a>
+      <a href="#security">Security</a>
+    </nav>
+    <a class="btn btn-dark" href="/ui">Sign in</a>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow reveal">Customer data deduplication for banks and insurers</p>
+        <h1 class="headline">
+          <span class="line"><span>One customer.</span></span>
+          <span class="line"><span>One record.</span></span>
+        </h1>
+        <p class="lede reveal">The same person sits in your core banking, policy, loan and lead systems, written five different ways. Dedupe finds them, merges them with rules your auditors can read, and keeps one golden record you can trust.</p>
+        <div class="cta reveal">
+          <a class="btn btn-primary" href="/ui">Sign in to the portal</a>
+          <a class="btn btn-ghost" href="#how">See how it works</a>
+        </div>
+      </div>
+
+      <div class="demo" id="demo" role="img" aria-label="Animation: five records of one customer, from five systems, are matched on PAN, phone and email and merged into one golden record.">
+        <div class="rec r1" aria-hidden="true">
+          <span class="src">Core banking</span>
+          <strong>PRIYA RAMANATHAN</strong>
+          <span class="f k-ph">98450 12345</span>
+          <span class="f">Chennai 600041</span>
+        </div>
+        <div class="rec r2" aria-hidden="true">
+          <span class="src">Policy admin</span>
+          <strong>Ramanathan, Priya</strong>
+          <span class="f k-pan">PAN ABCPR1234K</span>
+          <span class="f k-dob">DOB 14/03/1988</span>
+        </div>
+        <div class="rec r3" aria-hidden="true">
+          <span class="src">Loans</span>
+          <strong>Priya R.</strong>
+          <span class="f k-ph">091-98450-12345</span>
+          <span class="f k-em">priya.r@example.com</span>
+        </div>
+        <div class="rec r4" aria-hidden="true">
+          <span class="src">Leads</span>
+          <strong>Priya Ramanathan</strong>
+          <span class="f k-em">PRIYA.R@EXAMPLE.COM</span>
+          <span class="f">Adyar, Chennai</span>
+        </div>
+        <div class="rec r5" aria-hidden="true">
+          <span class="src">KYC</span>
+          <strong>P. Ramanathan</strong>
+          <span class="f k-pan">PAN ABCPR1234K</span>
+          <span class="f k-dob">1988-03-14</span>
+        </div>
+        <div class="golden" aria-hidden="true">
+          <div class="golden-head"><span>Golden record</span><span class="pid">P000000612</span></div>
+          <strong>Priya Ramanathan</strong>
+          <dl>
+            <dt>Born</dt><dd>14 Mar 1988</dd>
+            <dt>PAN</dt><dd>ABCPR1234K</dd>
+            <dt>Mobile</dt><dd>98450 12345</dd>
+            <dt>Email</dt><dd>priya.r@example.com</dd>
+            <dt>City</dt><dd>Adyar, Chennai 600041</dd>
+          </dl>
+          <div class="golden-foot">5 records, 5 systems, 1 person</div>
+        </div>
+        <p class="demo-status" aria-hidden="true"><span class="s s1">Reading five systems</span><span class="s s2">Same PAN, same mobile, same email</span><span class="s s3">Merging</span><span class="s s4">One person</span></p>
+      </div>
+    </div>
+    <p class="wrap example-note">Example data. Not a real person.</p>
+  </section>
+
+  <section class="sources" aria-labelledby="sources-title">
+    <div class="wrap">
+      <h2 id="sources-title" class="small-title reveal">Reads where your customers already live: 38 kinds of source</h2>
+    </div>
+    <div class="marquee" aria-hidden="true">
+      <div class="track">
+        <span class="logo"><img src="/ui/logos/oracle.svg" alt="" width="28" height="28">Oracle</span>
+        <span class="logo"><img src="/ui/logos/sqlserver.svg" alt="" width="28" height="28">SQL Server</span>
+        <span class="logo"><img src="/ui/logos/postgresql.svg" alt="" width="28" height="28">PostgreSQL</span>
+        <span class="logo"><img src="/ui/logos/mysql.svg" alt="" width="28" height="28">MySQL</span>
+        <span class="logo"><img src="/ui/logos/db2.svg" alt="" width="28" height="28">Db2</span>
+        <span class="logo"><img src="/ui/logos/snowflake.svg" alt="" width="28" height="28">Snowflake</span>
+        <span class="logo"><img src="/ui/logos/databricks.svg" alt="" width="28" height="28">Databricks</span>
+        <span class="logo"><img src="/ui/logos/bigquery.svg" alt="" width="28" height="28">BigQuery</span>
+        <span class="logo"><img src="/ui/logos/aws.svg" alt="" width="28" height="28">Amazon S3</span>
+        <span class="logo"><img src="/ui/logos/azure.svg" alt="" width="28" height="28">Azure Blob</span>
+        <span class="logo"><img src="/ui/logos/salesforce.svg" alt="" width="28" height="28">Salesforce</span>
+        <span class="logo"><img src="/ui/logos/dynamics.svg" alt="" width="28" height="28">Dynamics 365</span>
+        <span class="logo"><img src="/ui/logos/mongodb.svg" alt="" width="28" height="28">MongoDB</span>
+        <span class="logo"><img src="/ui/logos/sftp.svg" alt="" width="28" height="28">SFTP</span>
+        <span class="logo"><img src="/ui/logos/xlsx.svg" alt="" width="28" height="28">Excel</span>
+        <span class="logo"><img src="/ui/logos/csv.svg" alt="" width="28" height="28">CSV</span>
+        <span class="logo"><img src="/ui/logos/parquet.svg" alt="" width="28" height="28">Parquet</span>
+        <span class="logo"><img src="/ui/logos/googlesheets.svg" alt="" width="28" height="28">Google Sheets</span>
+      </div>
+    </div>
+    <p class="wrap sr-only">Sources include Oracle, SQL Server, PostgreSQL, MySQL, Db2, Snowflake, Databricks, BigQuery, Amazon S3, Azure Blob storage, Salesforce, Dynamics 365, MongoDB, SFTP, Excel, CSV, Parquet and Google Sheets.</p>
+  </section>
+
+  <section class="how" id="how" aria-labelledby="how-title">
+    <div class="wrap how-grid">
+      <div class="how-side">
+        <div class="how-sticky">
+          <p class="eyebrow">How it works</p>
+          <h2 id="how-title" class="section-title">From five systems to one customer</h2>
+          <ol class="steps" id="steps">
+            <li data-step="0"><span class="n">01</span>Connect</li>
+            <li data-step="1"><span class="n">02</span>Clean</li>
+            <li data-step="2"><span class="n">03</span>Match</li>
+            <li data-step="3"><span class="n">04</span>Review</li>
+            <li data-step="4"><span class="n">05</span>Golden record</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="panels">
+        <article class="panel" data-step="0">
+          <h3><span class="n">01</span>Connect your sources</h3>
+          <p>Upload a file or connect a database, warehouse, object store, SFTP folder or CRM. Each source is read the way its vendor documents, and passwords stay in your environment, never in the portal.</p>
+          <div class="viz viz-connect" aria-hidden="true">
+            <span class="chip"><img src="/ui/logos/oracle.svg" alt="" width="22" height="22">core_banking</span>
+            <span class="chip"><img src="/ui/logos/sqlserver.svg" alt="" width="22" height="22">policy_admin</span>
+            <span class="chip"><img src="/ui/logos/postgresql.svg" alt="" width="22" height="22">loans</span>
+            <span class="chip"><img src="/ui/logos/salesforce.svg" alt="" width="22" height="22">leads</span>
+            <span class="chip"><img src="/ui/logos/xlsx.svg" alt="" width="22" height="22">kyc_upload.xlsx</span>
+            <span class="chip"><img src="/ui/logos/sftp.svg" alt="" width="22" height="22">branch_drop</span>
+          </div>
+        </article>
+
+        <article class="panel" data-step="1">
+          <h3><span class="n">02</span>Clean every value</h3>
+          <p>Phones, dates, names, addresses and identifiers are put into one form before anything is compared. Column types are recognised from the values themselves, and Aadhaar numbers become a keyed token the moment they arrive.</p>
+          <div class="viz viz-clean" aria-hidden="true">
+            <div class="row"><code>091-98450-12345</code><span class="arrow"></span><code class="after">9845012345</code></div>
+            <div class="row"><code>14/3/88</code><span class="arrow"></span><code class="after">1988-03-14</code></div>
+            <div class="row"><code>RAMANATHAN, PRIYA</code><span class="arrow"></span><code class="after">priya ramanathan</code></div>
+            <div class="row"><code>Chennai - 600 041</code><span class="arrow"></span><code class="after">chennai 600041</code></div>
+            <div class="row"><code>XXXX XXXX 4821</code><span class="arrow"></span><code class="after">token only</code></div>
+          </div>
+        </article>
+
+        <article class="panel" data-step="2">
+          <h3><span class="n">03</span>Match with evidence</h3>
+          <p>Every likely pair gets a score from all the fields the two records share, and you can see exactly which fields agreed. High scores merge, the middle goes to a person, the rest stay apart.</p>
+          <div class="viz viz-match" aria-hidden="true">
+            <div class="pair"><span>Policy admin: Ramanathan, Priya</span><span>KYC: P. Ramanathan</span></div>
+            <ul class="evidence">
+              <li><span>PAN</span><b>identical</b></li>
+              <li><span>Date of birth</span><b>identical</b></li>
+              <li><span>Name</span><b>initial matches</b></li>
+            </ul>
+            <div class="meter"><span class="z z1"></span><span class="z z2"></span><span class="z z3"></span><span class="needle"></span></div>
+            <div class="meter-keys"><span>Keep apart</span><span>Ask a person</span><span>Merge</span></div>
+            <p class="score">Example score <b class="count" data-to="94">0</b>%</p>
+          </div>
+        </article>
+
+        <article class="panel" data-step="3">
+          <h3><span class="n">04</span>A person decides the close calls</h3>
+          <p>Uncertain pairs land in a review inbox. Stewards compare the two people side by side and decide with one key. Every decision is recorded, can be undone, and is respected by every later run.</p>
+          <div class="viz viz-review" aria-hidden="true">
+            <div class="cmp">
+              <div><span class="src">Leads</span><strong>Priya Ramanathan</strong><span>Adyar, Chennai</span></div>
+              <div><span class="src">Loans</span><strong>Priya R.</strong><span>Chennai</span></div>
+            </div>
+            <div class="keys">
+              <span class="key k-same"><kbd>S</kbd>Same person</span>
+              <span class="key"><kbd>D</kbd>Different</span>
+              <span class="key"><kbd>U</kbd>Not sure</span>
+            </div>
+            <p class="toast">Recorded. Next pair.</p>
+          </div>
+        </article>
+
+        <article class="panel" data-step="4">
+          <h3><span class="n">05</span>One golden record</h3>
+          <p>For each field, the best value wins by the rule you choose: newest, most trusted source, most complete or most agreed. You can see where every value came from, and correct it if needed.</p>
+          <div class="viz viz-golden" aria-hidden="true">
+            <div class="g-row"><span>Name</span><b>Priya Ramanathan</b><em>Leads</em></div>
+            <div class="g-row"><span>Born</span><b>14 Mar 1988</b><em>KYC</em></div>
+            <div class="g-row"><span>PAN</span><b>ABCPR1234K</b><em>KYC</em></div>
+            <div class="g-row"><span>Mobile</span><b>98450 12345</b><em>Core banking</em></div>
+            <div class="g-row"><span>Email</span><b>priya.r@example.com</b><em>Loans</em></div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="rules" id="rules" aria-labelledby="rules-title">
+    <div class="wrap">
+      <p class="eyebrow reveal">Rules</p>
+      <h2 id="rules-title" class="section-title reveal">Rules written in sentences, not code</h2>
+      <p class="section-lede reveal">The rules that overrule a score read like policy. Change one, try it on your latest run, then make it live, with a second person's approval when your process needs one.</p>
+      <div class="rule-cards">
+        <div class="rule-card reveal"><span class="outcome o-never">Never merge</span><p>Two different valid PANs</p></div>
+        <div class="rule-card reveal"><span class="outcome o-ask">Ask a person</span><p>Minors with the same birth date and PIN code: possible twins</p></div>
+        <div class="rule-card reveal"><span class="outcome o-merge">Merge</span><p>Same PAN and a compatible name</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="security" id="security" aria-labelledby="security-title">
+    <div class="wrap">
+      <p class="eyebrow on-dark reveal">Security</p>
+      <h2 id="security-title" class="section-title on-dark reveal">Built for regulated customer data</h2>
+      <div class="sec-grid">
+        <div class="sec reveal"><span class="n">01</span><h3>Aadhaar is never stored</h3><p>It becomes a keyed token at the door. Only that token is compared.</p></div>
+        <div class="sec reveal"><span class="n">02</span><h3>Masked until needed</h3><p>Identifiers stay hidden until someone with permission opens them, and every view is logged.</p></div>
+        <div class="sec reveal"><span class="n">03</span><h3>A log that shows tampering</h3><p>Sign-ins, views, exports and decisions are chained by hash, so an edited entry stands out.</p></div>
+        <div class="sec reveal"><span class="n">04</span><h3>Two people for rule changes</h3><p>A project can require a second person to approve a change before it goes live.</p></div>
+        <div class="sec reveal"><span class="n">05</span><h3>Encrypted at rest</h3><p>Working files of every run are encrypted with your own key.</p></div>
+        <div class="sec reveal"><span class="n">06</span><h3>Inside your network</h3><p>Designed to run on your own servers. Customer data does not leave them.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap final-inner">
+      <h2 class="final-title reveal">Start with one file.</h2>
+      <p class="section-lede reveal">Upload a spreadsheet or connect a database, and see who appears twice.</p>
+      <div class="cta reveal"><a class="btn btn-primary" href="/ui">Sign in to the portal</a></div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-row">
+    <span>Aurionpro Dedupe</span>
+    <a href="#top">Back to top</a>
+  </div>
+</footer>
+</body>
+</html>

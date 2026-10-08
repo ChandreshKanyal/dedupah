@@ -42,7 +42,7 @@ dev = ["pytest>=8", "ruff>=0.5", "httpx>=0.27", "bandit>=1.7", "pip-audit>=2.7",
 where = ["src"]
 
 [tool.setuptools.package-data]
-"dedupe.api" = ["ui/*", "ui/logos/*"]
+"dedupe.api" = ["ui/*", "ui/logos/*", "ui/landing/*", "ui/landing/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
