@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Aurionpro Dedupe: one customer, one record</title>
 <meta name="description" content="Find the same customer across core banking, policy, loan and lead systems, merge them with rules people can read, and keep one golden record.">
+<meta name="theme-color" content="#f3ead9">
 <link rel="icon" href="/ui/favicon.png">
 <link rel="preload" href="/landing/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/landing/landing.css">
@@ -12,6 +13,13 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+
+<!-- paper grain over the whole page: drawn once, never repainted while scrolling -->
+<svg class="grain" aria-hidden="true" focusable="false">
+  <filter id="grain-f"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" stitchTiles="stitch"/>
+    <feColorMatrix values="0 0 0 0 .24  0 0 0 0 .16  0 0 0 0 .08  0 0 0 .5 0"/></filter>
+  <rect width="100%" height="100%" filter="url(#grain-f)"/>
+</svg>
 
 <header class="nav" id="top">
   <div class="wrap nav-row">
@@ -26,68 +34,124 @@
 </header>
 
 <main id="main">
-  <section class="hero">
-    <div class="wrap hero-grid">
+  <!-- The story: one customer's details lie scattered as paper scraps. Scrolling brings them together into one golden record. -->
+  <section class="story" id="story" aria-labelledby="hero-title">
+    <div class="story-grid">
       <div class="hero-copy">
-        <p class="eyebrow reveal">Customer data deduplication for banks and insurers</p>
-        <h1 class="headline">
-          <span class="line"><span>One customer.</span></span>
-          <span class="line"><span>One record.</span></span>
-        </h1>
-        <p class="lede reveal">The same person sits in your core banking, policy, loan and lead systems, written five different ways. Dedupe finds them, merges them with rules your auditors can read, and keeps one golden record you can trust.</p>
-        <div class="cta reveal">
-          <a class="btn btn-primary" href="/ui">Sign in to the portal</a>
-          <a class="btn btn-ghost" href="#how">See how it works</a>
+        <div class="hero-copy-inner">
+          <p class="eyebrow reveal">Customer data deduplication for banks and insurers</p>
+          <h1 class="headline" id="hero-title">
+            <span class="line"><span>One customer.</span></span>
+            <span class="line"><span>One record.</span></span>
+          </h1>
+          <p class="lede reveal">The same person sits in your core banking, policy, loan and lead systems, written a different way in each. Dedupe finds them, merges them with rules your auditors can read, and keeps one golden record you can trust.</p>
+          <div class="cta reveal">
+            <a class="btn btn-primary" href="/ui">Sign in to the portal</a>
+            <a class="btn btn-ghost" href="#how">See how it works</a>
+          </div>
         </div>
       </div>
 
-      <div class="demo" id="demo" role="img" aria-label="Animation: five records of one customer, from five systems, are matched on PAN, phone and email and merged into one golden record.">
-        <div class="rec r1" aria-hidden="true">
-          <span class="src">Core banking</span>
-          <strong>PRIYA RAMANATHAN</strong>
-          <span class="f k-ph">98450 12345</span>
-          <span class="f">Chennai 600041</span>
+      <div class="track">
+        <div class="desk" id="desk">
+          <!-- the cut-paper landscape: a sun that rises and hills that settle as the record comes together -->
+          <div class="scenery" aria-hidden="true">
+            <svg class="layer l-sun" viewBox="0 0 200 200"><path class="sun-ring" d="M199.8 100.0 L199.7 113.1 L197.5 126.1 L190.0 137.3 L184.9 149.0 L178.3 160.1 L170.2 170.2 L159.8 178.0 L148.8 184.5 L137.1 189.6 L125.4 194.8 L112.9 198.0 L100.0 201.3 L86.8 200.1 L73.9 197.3 L61.2 193.6 L49.4 187.7 L39.4 179.0 L28.9 171.1 L23.1 159.0 L13.5 149.9 L8.1 138.1 L5.3 125.4 L1.5 113.0 L-1.2 100.0 L1.9 87.1 L3.7 74.2 L9.4 62.5 L14.9 50.9 L20.0 38.6 L31.6 31.6 L40.6 22.6 L50.1 13.5 L62.2 8.8 L74.9 6.3 L87.0 1.1 L100.0 1.6 L113.0 1.5 L125.5 4.8 L137.9 8.4 L149.7 14.0 L160.0 21.9 L168.7 31.3 L177.3 40.7 L187.4 49.6 L191.7 62.0 L193.8 74.9 L199.9 86.9 Z"/><path class="sun" d="M193.1 100.0 L192.6 112.2 L187.8 123.5 L185.8 135.6 L180.6 146.5 L173.6 156.5 L164.7 164.7 L155.4 172.2 L146.5 180.6 L135.0 184.5 L123.7 188.5 L112.0 191.4 L100.0 191.6 L87.9 192.3 L76.4 188.1 L65.4 183.6 L53.9 179.9 L43.7 173.3 L34.2 165.8 L26.5 156.4 L19.2 146.6 L13.7 135.8 L11.2 123.8 L8.8 112.0 L9.1 100.0 L9.4 88.1 L10.9 76.1 L16.2 65.3 L19.8 53.7 L27.9 44.6 L35.1 35.1 L43.1 25.8 L54.7 21.5 L65.4 16.4 L76.2 11.3 L88.1 9.8 L100.0 7.3 L111.8 10.4 L124.1 10.1 L135.6 14.0 L146.5 19.5 L155.9 27.2 L164.6 35.4 L173.4 43.7 L179.7 54.0 L184.8 64.9 L188.4 76.3 L191.0 88.0 Z"/></svg>
+            <svg class="layer l-cloud c1" viewBox="0 0 104 50"><path d="M10 46 C2 46 0 34 10 30 C8 18 24 12 34 20 C40 6 64 6 70 20 C82 14 96 22 92 32 C102 34 102 46 92 46 Z"/></svg>
+            <svg class="layer l-cloud c2" viewBox="0 0 104 50"><path d="M10 46 C2 46 0 34 10 30 C8 18 24 12 34 20 C40 6 64 6 70 20 C82 14 96 22 92 32 C102 34 102 46 92 46 Z"/></svg>
+            <svg class="layer l-far" viewBox="0 0 1440 480" preserveAspectRatio="xMidYMax slice"><path d="M0 480 L0 200.3 16 203.7 31 204.9 49 204.4 67 204.2 84 203.4 100 203.0 120 199.9 136 199.3 157 196.6 174 195.9 189 194.2 206 191.3 222 191.4 242 191.3 260 193.7 277 195.0 293 195.5 309 199.4 327 201.0 345 204.0 362 207.2 381 207.5 400 209.4 420 210.0 437 209.7 452 206.3 472 202.0 490 197.4 509 193.7 527 187.6 544 180.6 563 172.9 580 166.4 601 157.3 620 149.3 639 144.8 660 139.8 677 135.2 696 131.6 714 130.8 729 130.3 749 131.2 765 133.3 786 134.7 803 138.4 824 142.1 844 143.2 861 145.3 882 148.6 898 147.0 914 147.2 932 147.6 948 144.9 966 144.2 984 143.6 1004 139.9 1022 138.0 1038 136.9 1057 135.1 1077 133.0 1094 132.4 1113 133.7 1129 136.1 1145 139.4 1160 142.2 1176 147.0 1193 152.5 1213 161.7 1229 166.9 1246 174.2 1262 181.8 1283 188.7 1301 193.9 1316 199.3 1333 204.9 1349 205.8 1370 210.0 1386 211.1 1401 211.2 1422 211.3 1440 211.3 L1440 480 Z"/></svg>
+            <svg class="layer l-mid" viewBox="0 0 1440 480" preserveAspectRatio="xMidYMax slice"><path d="M0 480 L0 269.0 13 269.5 29 270.5 45 269.0 57 268.9 74 265.7 90 261.3 105 254.4 119 249.1 130 243.2 143 237.9 158 232.3 172 225.3 189 217.0 202 208.7 214 203.2 227 199.6 243 194.8 257 190.6 273 186.1 288 186.7 303 185.7 317 184.4 333 186.1 349 189.8 362 190.2 379 193.7 391 194.0 403 197.9 418 197.8 434 201.6 449 200.7 464 200.4 475 202.7 490 201.0 506 199.8 523 199.9 535 197.6 548 197.0 562 196.7 576 196.6 592 198.4 606 200.8 622 203.6 639 208.3 653 213.1 664 217.1 676 221.0 692 228.8 706 237.0 720 243.0 734 250.5 750 256.5 764 263.0 777 269.3 791 273.1 807 277.9 820 279.4 834 280.5 849 280.6 864 280.0 880 278.7 896 276.7 909 273.1 926 270.2 938 265.6 951 262.4 964 259.9 979 259.2 995 255.1 1010 255.0 1022 254.8 1039 252.4 1056 252.8 1070 254.6 1086 252.6 1099 253.7 1112 252.7 1125 253.6 1136 252.4 1150 249.3 1163 248.9 1177 244.3 1194 241.5 1211 233.8 1223 228.7 1239 222.5 1251 217.6 1267 210.9 1280 203.2 1296 197.0 1311 189.5 1323 187.1 1336 181.2 1353 178.8 1369 174.9 1385 173.9 1401 175.4 1414 177.0 1431 178.9 1440 178.9 L1440 480 Z"/>
+              <g class="tree"><path d="M1094 236 l0 -40" /><circle cx="1094" cy="186" r="26"/></g>
+              <g class="tree"><path d="M1150 246 l0 -30" /><circle cx="1150" cy="206" r="18"/></g>
+              <g class="tree"><path d="M262 230 l0 -34" /><circle cx="262" cy="186" r="22"/></g>
+            </svg>
+            <svg class="layer l-teal" viewBox="0 0 1440 480" preserveAspectRatio="xMidYMax slice"><path d="M0 480 L0 280.7 12 279.1 24 278.0 37 277.4 49 276.8 62 273.8 74 270.9 85 268.3 96 267.3 111 262.9 125 262.7 136 261.0 150 259.2 166 259.2 180 261.6 197 264.1 213 269.9 228 274.8 241 279.6 252 285.2 268 293.4 280 298.9 296 308.8 311 313.6 323 318.3 337 322.2 351 325.8 368 330.3 382 329.3 399 329.6 412 328.1 425 328.3 439 326.3 453 324.4 466 323.7 479 322.8 490 323.3 503 324.3 517 325.4 532 326.6 548 327.5 561 330.8 573 331.5 588 331.1 604 334.3 619 333.8 634 330.9 649 329.6 665 326.5 681 320.5 697 314.0 712 305.6 723 299.8 736 293.1 752 286.4 767 279.8 782 273.4 793 270.5 809 265.5 823 263.5 834 262.6 847 260.4 859 262.6 872 263.8 889 265.5 902 267.7 917 271.2 932 273.4 943 273.8 956 277.0 968 277.7 980 276.9 992 278.9 1007 278.7 1020 277.8 1034 277.0 1046 277.7 1058 277.6 1074 275.0 1088 278.0 1105 279.1 1118 281.0 1134 285.5 1149 290.4 1163 298.4 1175 303.4 1189 310.2 1204 315.7 1220 324.1 1231 327.5 1245 334.1 1258 337.2 1271 340.8 1287 342.3 1303 345.3 1315 345.0 1330 343.2 1343 339.4 1356 338.1 1370 332.5 1384 328.6 1395 325.1 1411 321.7 1428 318.1 1440 318.1 L1440 480 Z"/></svg>
+            <svg class="layer l-near" viewBox="0 0 1440 480" preserveAspectRatio="xMidYMax slice"><path d="M0 480 L0 350.6 10 349.3 25 349.2 39 346.9 53 346.4 66 345.0 75 344.7 87 345.0 99 344.7 109 347.7 118 348.2 130 350.1 143 355.7 154 357.9 164 361.1 176 363.7 186 366.9 200 371.8 210 375.5 225 377.1 235 377.7 245 378.9 254 378.9 265 379.7 279 379.4 291 377.3 303 375.7 314 373.4 325 374.6 334 372.3 347 372.3 357 370.3 368 370.8 379 373.0 394 374.2 403 373.3 416 378.1 428 379.7 437 381.1 451 385.3 466 388.3 476 387.4 486 389.6 499 391.3 512 390.2 526 388.3 538 385.2 552 382.8 566 380.3 577 375.8 588 374.3 601 369.3 610 368.2 623 365.2 633 364.1 642 362.2 654 363.1 667 362.6 679 361.1 689 363.7 703 363.0 712 364.4 725 365.4 735 366.8 750 366.2 759 366.5 771 366.9 781 366.3 794 363.4 804 362.6 815 359.5 826 355.0 839 351.1 854 347.2 864 343.4 876 341.5 890 336.7 902 334.9 916 333.1 926 332.5 937 335.0 951 335.5 966 337.9 977 337.5 992 341.5 1001 342.8 1012 343.7 1023 344.5 1032 345.7 1044 348.2 1053 348.3 1064 346.3 1077 346.5 1089 342.9 1101 342.1 1115 339.2 1127 339.3 1136 336.5 1150 335.8 1159 333.0 1168 335.1 1179 334.7 1193 334.6 1204 337.8 1217 338.3 1230 341.7 1240 343.8 1254 350.5 1267 354.5 1276 355.2 1288 360.5 1303 362.4 1313 364.4 1325 367.4 1335 367.8 1349 368.2 1362 367.2 1373 365.7 1384 366.1 1394 363.5 1407 362.4 1417 361.2 1429 361.4 1440 361.4 L1440 480 Z"/></svg>
+          </div>
+
+          <div class="pile" role="img" aria-label="Six paper scraps hold six versions of one example customer: a sticky note, a photo, a laptop screen, text messages, a KYC form and a sign-up sheet. They share a mobile number, PAN, email and birth date, and come together as one golden record, person P000000612, Priya Ramanathan.">
+            <div class="bit b-sticky" aria-hidden="true">
+              <span class="tape"></span>
+              <p class="hand">Priya R.<br>call back on<br><mark>98450 12345</mark></p>
+              <span class="tag">Branch desk</span>
+            </div>
+
+            <div class="bit b-photo" aria-hidden="true">
+              <span class="tape tape-r"></span>
+              <svg class="portrait" viewBox="0 0 160 130">
+                <rect width="160" height="130" fill="#c9d3b8"/>
+                <circle cx="128" cy="30" r="17" fill="#e39a5c"/>
+                <path d="M0 108 C40 92 70 104 100 98 C126 92 146 100 160 96 L160 130 L0 130 Z" fill="#7d9a86"/>
+                <path d="M57 70 C52 40 68 29 81 30 C97 31 108 43 104 72 C102 86 98 94 94 100 L67 100 C61 92 58 82 57 70 Z" fill="#3b2a20"/>
+                <path d="M73 84 L87 84 L88 98 L72 98 Z" fill="#b07a55"/>
+                <ellipse cx="80" cy="63" rx="17" ry="21" fill="#c48d65"/>
+                <path d="M63 56 C66 40 92 38 98 54 C90 46 74 46 63 56 Z" fill="#3b2a20"/>
+                <path d="M30 130 C33 106 52 95 80 95 C108 95 127 106 130 130 Z" fill="#c4672f"/>
+                <path d="M58 99 C72 108 96 116 120 108 L127 130 L104 130 C94 120 74 112 58 99 Z" fill="#e7b46c"/>
+              </svg>
+              <p class="hand">P. Ramanathan, Adyar</p>
+              <span class="tag">Branch visit</span>
+            </div>
+
+            <div class="bit b-laptop" aria-hidden="true">
+              <div class="screen">
+                <div class="win"><i></i><i></i><i></i><span>core_banking</span></div>
+                <dl class="crm">
+                  <dt>CUST_NAME</dt><dd>RAMANATHAN, PRIYA</dd>
+                  <dt>MOBILE</dt><dd><mark>+91-9845012345</mark></dd>
+                  <dt>PIN</dt><dd>600041</dd>
+                </dl>
+              </div>
+              <div class="base"></div>
+            </div>
+
+            <div class="bit b-chat" aria-hidden="true">
+              <p class="who">Priya</p>
+              <p class="bubble">Hi, Priya Ramanathan here</p>
+              <p class="bubble">please send it to <mark>priya.r@example.com</mark></p>
+              <span class="tag">Messages</span>
+            </div>
+
+            <div class="bit b-form" aria-hidden="true">
+              <p class="form-head">KYC form <span>No. 0412</span></p>
+              <dl>
+                <dt>Name</dt><dd>P. RAMANATHAN</dd>
+                <dt>Born</dt><dd><mark>14/03/1988</mark></dd>
+                <dt>PAN</dt><dd><mark>ABCPR1234K</mark></dd>
+              </dl>
+              <span class="stamp">Received</span>
+            </div>
+
+            <div class="bit b-lined" aria-hidden="true">
+              <p class="hand">Priya Ramanathan<br><mark>PRIYA.R@EXAMPLE.COM</mark><br>born <mark>1988-03-14</mark></p>
+              <span class="tag">Lead sign-up sheet</span>
+            </div>
+
+            <div class="golden" aria-hidden="true">
+              <span class="tape"></span>
+              <div class="g-head"><span>Golden record</span><span class="pid">P000000612</span></div>
+              <strong>Priya Ramanathan</strong>
+              <dl>
+                <dt>Born</dt><dd>14 Mar 1988</dd>
+                <dt>PAN</dt><dd>ABCPR1234K</dd>
+                <dt>Mobile</dt><dd>98450 12345</dd>
+                <dt>Email</dt><dd>priya.r@example.com</dd>
+                <dt>City</dt><dd>Adyar, Chennai 600041</dd>
+              </dl>
+              <div class="g-foot">6 scraps, 1 person</div>
+            </div>
+          </div>
+
+          <div class="captions" aria-hidden="true">
+            <p class="cap cap1">Six scraps. Six versions of one customer.</p>
+            <p class="cap cap2">Same mobile, same PAN, same email.</p>
+            <p class="cap cap3">One person. One golden record.</p>
+          </div>
+          <p class="hint" aria-hidden="true">Scroll to bring them together</p>
+          <p class="example-note">Example data. Not a real person.</p>
         </div>
-        <div class="rec r2" aria-hidden="true">
-          <span class="src">Policy admin</span>
-          <strong>Ramanathan, Priya</strong>
-          <span class="f k-pan">PAN ABCPR1234K</span>
-          <span class="f k-dob">DOB 14/03/1988</span>
-        </div>
-        <div class="rec r3" aria-hidden="true">
-          <span class="src">Loans</span>
-          <strong>Priya R.</strong>
-          <span class="f k-ph">091-98450-12345</span>
-          <span class="f k-em">priya.r@example.com</span>
-        </div>
-        <div class="rec r4" aria-hidden="true">
-          <span class="src">Leads</span>
-          <strong>Priya Ramanathan</strong>
-          <span class="f k-em">PRIYA.R@EXAMPLE.COM</span>
-          <span class="f">Adyar, Chennai</span>
-        </div>
-        <div class="rec r5" aria-hidden="true">
-          <span class="src">KYC</span>
-          <strong>P. Ramanathan</strong>
-          <span class="f k-pan">PAN ABCPR1234K</span>
-          <span class="f k-dob">1988-03-14</span>
-        </div>
-        <div class="golden" aria-hidden="true">
-          <div class="golden-head"><span>Golden record</span><span class="pid">P000000612</span></div>
-          <strong>Priya Ramanathan</strong>
-          <dl>
-            <dt>Born</dt><dd>14 Mar 1988</dd>
-            <dt>PAN</dt><dd>ABCPR1234K</dd>
-            <dt>Mobile</dt><dd>98450 12345</dd>
-            <dt>Email</dt><dd>priya.r@example.com</dd>
-            <dt>City</dt><dd>Adyar, Chennai 600041</dd>
-          </dl>
-          <div class="golden-foot">5 records, 5 systems, 1 person</div>
-        </div>
-        <p class="demo-status" aria-hidden="true"><span class="s s1">Reading five systems</span><span class="s s2">Same PAN, same mobile, same email</span><span class="s s3">Merging</span><span class="s s4">One person</span></p>
       </div>
     </div>
-    <p class="wrap example-note">Example data. Not a real person.</p>
   </section>
 
   <section class="sources" aria-labelledby="sources-title">
@@ -95,31 +159,32 @@
       <h2 id="sources-title" class="small-title reveal">Reads where your customers already live: 38 kinds of source</h2>
     </div>
     <div class="marquee" aria-hidden="true">
-      <div class="track">
-        <span class="logo"><img src="/ui/logos/oracle.svg" alt="" width="28" height="28">Oracle</span>
-        <span class="logo"><img src="/ui/logos/sqlserver.svg" alt="" width="28" height="28">SQL Server</span>
-        <span class="logo"><img src="/ui/logos/postgresql.svg" alt="" width="28" height="28">PostgreSQL</span>
-        <span class="logo"><img src="/ui/logos/mysql.svg" alt="" width="28" height="28">MySQL</span>
-        <span class="logo"><img src="/ui/logos/db2.svg" alt="" width="28" height="28">Db2</span>
-        <span class="logo"><img src="/ui/logos/snowflake.svg" alt="" width="28" height="28">Snowflake</span>
-        <span class="logo"><img src="/ui/logos/databricks.svg" alt="" width="28" height="28">Databricks</span>
-        <span class="logo"><img src="/ui/logos/bigquery.svg" alt="" width="28" height="28">BigQuery</span>
-        <span class="logo"><img src="/ui/logos/aws.svg" alt="" width="28" height="28">Amazon S3</span>
-        <span class="logo"><img src="/ui/logos/azure.svg" alt="" width="28" height="28">Azure Blob</span>
-        <span class="logo"><img src="/ui/logos/salesforce.svg" alt="" width="28" height="28">Salesforce</span>
-        <span class="logo"><img src="/ui/logos/dynamics.svg" alt="" width="28" height="28">Dynamics 365</span>
-        <span class="logo"><img src="/ui/logos/mongodb.svg" alt="" width="28" height="28">MongoDB</span>
-        <span class="logo"><img src="/ui/logos/sftp.svg" alt="" width="28" height="28">SFTP</span>
-        <span class="logo"><img src="/ui/logos/xlsx.svg" alt="" width="28" height="28">Excel</span>
-        <span class="logo"><img src="/ui/logos/csv.svg" alt="" width="28" height="28">CSV</span>
-        <span class="logo"><img src="/ui/logos/parquet.svg" alt="" width="28" height="28">Parquet</span>
-        <span class="logo"><img src="/ui/logos/googlesheets.svg" alt="" width="28" height="28">Google Sheets</span>
+      <div class="belt">
+        <span class="logo"><img src="/ui/logos/oracle.svg" alt="" width="26" height="26">Oracle</span>
+        <span class="logo"><img src="/ui/logos/sqlserver.svg" alt="" width="26" height="26">SQL Server</span>
+        <span class="logo"><img src="/ui/logos/postgresql.svg" alt="" width="26" height="26">PostgreSQL</span>
+        <span class="logo"><img src="/ui/logos/mysql.svg" alt="" width="26" height="26">MySQL</span>
+        <span class="logo"><img src="/ui/logos/db2.svg" alt="" width="26" height="26">Db2</span>
+        <span class="logo"><img src="/ui/logos/snowflake.svg" alt="" width="26" height="26">Snowflake</span>
+        <span class="logo"><img src="/ui/logos/databricks.svg" alt="" width="26" height="26">Databricks</span>
+        <span class="logo"><img src="/ui/logos/bigquery.svg" alt="" width="26" height="26">BigQuery</span>
+        <span class="logo"><img src="/ui/logos/aws.svg" alt="" width="26" height="26">Amazon S3</span>
+        <span class="logo"><img src="/ui/logos/azure.svg" alt="" width="26" height="26">Azure Blob</span>
+        <span class="logo"><img src="/ui/logos/salesforce.svg" alt="" width="26" height="26">Salesforce</span>
+        <span class="logo"><img src="/ui/logos/dynamics.svg" alt="" width="26" height="26">Dynamics 365</span>
+        <span class="logo"><img src="/ui/logos/mongodb.svg" alt="" width="26" height="26">MongoDB</span>
+        <span class="logo"><img src="/ui/logos/sftp.svg" alt="" width="26" height="26">SFTP</span>
+        <span class="logo"><img src="/ui/logos/xlsx.svg" alt="" width="26" height="26">Excel</span>
+        <span class="logo"><img src="/ui/logos/csv.svg" alt="" width="26" height="26">CSV</span>
+        <span class="logo"><img src="/ui/logos/parquet.svg" alt="" width="26" height="26">Parquet</span>
+        <span class="logo"><img src="/ui/logos/googlesheets.svg" alt="" width="26" height="26">Google Sheets</span>
       </div>
     </div>
     <p class="wrap sr-only">Sources include Oracle, SQL Server, PostgreSQL, MySQL, Db2, Snowflake, Databricks, BigQuery, Amazon S3, Azure Blob storage, Salesforce, Dynamics 365, MongoDB, SFTP, Excel, CSV, Parquet and Google Sheets.</p>
   </section>
 
   <section class="how" id="how" aria-labelledby="how-title">
+    <svg class="tear" viewBox="0 0 1440 40" preserveAspectRatio="none" aria-hidden="true"><path d="M0 40 L0 18.7 15 19.3 30 20.2 46 17.1 59 17.8 73 17.6 89 18.2 98 16.5 106 17.3 112 17.5 120 17.8 131 18.1 147 15.1 162 16.6 174 18.5 189 17.4 200 20.5 207 19.8 220 15.9 233 18.3 249 17.1 266 17.7 277 20.3 283 20.2 296 17.9 312 17.2 323 17.8 337 16.2 348 16.8 360 19.5 370 20.6 380 19.0 389 18.5 406 19.1 420 17.4 430 16.6 442 18.2 457 15.3 471 19.2 483 15.8 492 14.2 500 19.0 513 19.3 528 21.0 540 19.9 553 19.9 566 19.9 574 19.7 585 20.3 592 17.0 599 19.2 615 19.4 625 20.5 640 19.4 648 17.4 659 16.7 670 18.3 686 15.5 698 14.2 706 18.3 718 20.7 729 16.1 739 17.8 755 20.8 767 18.6 774 19.1 782 16.4 788 14.4 802 14.3 818 14.0 834 14.2 840 17.8 849 19.3 857 15.8 871 18.4 887 19.5 894 19.4 908 18.3 924 16.7 940 18.8 947 15.4 960 18.9 967 17.2 981 15.7 996 17.0 1003 16.8 1015 17.2 1028 15.5 1043 16.2 1056 18.1 1067 17.3 1082 20.4 1096 19.4 1105 15.9 1122 18.4 1137 17.1 1150 20.5 1165 19.6 1174 18.2 1190 17.3 1204 18.3 1220 20.0 1229 15.8 1238 16.7 1250 19.4 1266 15.8 1281 19.0 1297 18.8 1306 20.4 1320 20.1 1336 17.9 1343 18.3 1358 16.3 1372 19.9 1381 19.4 1394 18.4 1403 16.7 1417 19.2 1428 16.0 1440 18.0 L1440 40 Z"/></svg>
     <div class="wrap how-grid">
       <div class="how-side">
         <div class="how-sticky">
@@ -210,19 +275,21 @@
   </section>
 
   <section class="rules" id="rules" aria-labelledby="rules-title">
+    <svg class="tear" viewBox="0 0 1440 40" preserveAspectRatio="none" aria-hidden="true"><path d="M0 40 L0 19.6 9 19.1 24 20.8 36 19.0 49 16.5 57 15.5 70 16.2 83 16.7 94 15.4 101 19.9 111 16.4 124 19.1 132 19.0 141 18.5 148 15.4 165 19.2 176 18.9 185 20.0 195 21.5 210 21.3 227 17.8 233 16.1 241 14.8 247 17.0 263 17.4 279 20.2 286 19.5 297 16.3 313 15.9 325 18.0 342 19.0 352 18.1 360 20.8 377 17.5 383 16.3 393 19.7 409 20.7 416 20.8 429 20.0 446 16.1 454 18.8 470 19.4 479 19.1 494 16.1 503 15.8 511 17.0 519 16.0 526 18.3 532 19.4 540 15.8 557 15.4 573 19.2 589 16.3 600 14.9 616 18.8 629 18.0 638 20.0 650 19.6 657 17.0 664 18.9 676 16.2 692 15.9 702 15.1 711 18.9 721 16.4 732 16.3 748 15.0 765 14.1 781 17.5 789 17.7 798 16.4 806 16.5 823 20.4 839 16.5 849 19.8 855 20.1 865 21.7 871 21.3 880 17.2 886 19.7 898 16.8 909 20.0 917 19.2 925 16.6 939 18.7 948 15.8 955 17.8 966 16.5 974 18.1 988 19.9 1001 17.0 1007 19.0 1018 19.7 1024 20.6 1034 21.1 1050 19.2 1056 20.9 1067 21.4 1076 17.5 1091 17.0 1099 16.8 1111 14.6 1123 16.3 1135 15.0 1149 18.7 1164 17.2 1178 17.0 1192 15.0 1208 19.5 1219 18.7 1231 18.5 1237 21.0 1246 17.3 1253 16.2 1268 14.5 1275 17.8 1283 15.0 1296 17.3 1307 18.9 1315 20.6 1328 16.3 1336 17.3 1347 16.4 1355 16.8 1362 18.1 1378 15.9 1390 18.6 1398 20.2 1414 18.2 1425 20.1 1436 18.2 1440 18.0 L1440 40 Z"/></svg>
     <div class="wrap">
       <p class="eyebrow reveal">Rules</p>
       <h2 id="rules-title" class="section-title reveal">Rules written in sentences, not code</h2>
       <p class="section-lede reveal">The rules that overrule a score read like policy. Change one, try it on your latest run, then make it live, with a second person's approval when your process needs one.</p>
       <div class="rule-cards">
-        <div class="rule-card reveal"><span class="outcome o-never">Never merge</span><p>Two different valid PANs</p></div>
-        <div class="rule-card reveal"><span class="outcome o-ask">Ask a person</span><p>Minors with the same birth date and PIN code: possible twins</p></div>
-        <div class="rule-card reveal"><span class="outcome o-merge">Merge</span><p>Same PAN and a compatible name</p></div>
+        <div class="rule-card reveal"><span class="pin" aria-hidden="true"></span><span class="outcome o-never">Never merge</span><p>Two different valid PANs</p></div>
+        <div class="rule-card reveal"><span class="pin" aria-hidden="true"></span><span class="outcome o-ask">Ask a person</span><p>Minors with the same birth date and PIN code: possible twins</p></div>
+        <div class="rule-card reveal"><span class="pin" aria-hidden="true"></span><span class="outcome o-merge">Merge</span><p>Same PAN and a compatible name</p></div>
       </div>
     </div>
   </section>
 
   <section class="security" id="security" aria-labelledby="security-title">
+    <svg class="tear" viewBox="0 0 1440 40" preserveAspectRatio="none" aria-hidden="true"><path d="M0 40 L0 19.7 10 17.1 19 17.3 36 19.5 52 20.5 68 16.3 79 20.1 96 17.3 106 18.5 116 18.4 123 17.8 135 15.0 142 19.6 157 21.3 170 21.2 185 21.6 192 20.3 201 20.0 210 19.0 226 19.1 235 18.6 245 20.9 254 18.0 268 15.7 280 19.8 292 17.3 303 17.9 311 15.7 318 15.8 328 15.9 337 14.7 349 18.7 362 18.7 375 16.5 389 17.2 401 18.3 412 17.0 421 15.9 432 16.5 445 14.5 455 18.8 463 18.6 475 17.0 491 16.4 506 15.3 513 19.1 524 15.8 534 16.8 548 15.2 556 19.6 571 16.6 580 16.5 594 18.1 609 20.0 621 20.2 635 20.4 646 20.7 660 21.6 667 21.7 673 21.1 686 19.2 702 18.9 713 20.1 729 19.5 739 18.3 750 19.5 759 17.9 771 17.3 781 19.4 796 18.6 807 16.3 816 15.2 829 17.4 836 20.3 845 21.0 860 21.9 869 19.1 885 15.5 891 17.4 903 20.3 917 19.1 934 18.6 946 19.3 956 17.7 969 17.0 985 18.7 997 15.9 1007 16.5 1019 17.9 1035 20.7 1046 18.7 1059 21.3 1069 19.5 1084 16.6 1093 20.3 1108 19.0 1116 20.8 1129 21.0 1146 21.5 1157 17.4 1166 17.8 1177 16.1 1185 18.0 1198 17.1 1215 18.5 1221 17.7 1236 16.7 1250 14.5 1259 18.7 1271 19.3 1280 18.5 1292 16.8 1305 17.7 1322 18.3 1332 15.9 1340 18.7 1347 15.9 1355 17.3 1370 18.4 1385 15.5 1391 18.6 1401 19.5 1411 16.6 1420 15.1 1435 17.3 1440 18.0 L1440 40 Z"/></svg>
     <div class="wrap">
       <p class="eyebrow on-dark reveal">Security</p>
       <h2 id="security-title" class="section-title on-dark reveal">Built for regulated customer data</h2>
@@ -238,10 +305,17 @@
   </section>
 
   <section class="final">
+    <svg class="tear" viewBox="0 0 1440 40" preserveAspectRatio="none" aria-hidden="true"><path d="M0 40 L0 17.7 10 15.2 26 17.4 43 17.4 55 16.3 62 19.9 77 17.6 93 19.8 103 19.3 119 18.5 136 16.7 146 18.8 154 17.2 170 17.6 185 16.3 193 16.5 201 20.2 210 19.3 217 18.7 227 17.7 234 15.6 249 16.2 258 15.4 267 15.4 273 17.9 283 15.9 297 14.7 306 18.7 313 17.9 328 19.8 336 17.8 350 17.2 367 15.9 383 17.2 392 17.4 399 19.0 408 20.8 420 18.3 429 18.8 437 20.5 445 19.1 457 17.1 471 16.9 484 18.0 494 17.3 501 15.8 516 16.0 529 14.9 542 15.9 553 15.9 560 16.0 568 15.0 582 15.5 593 19.4 607 20.9 623 16.9 632 14.8 645 17.7 655 17.3 668 18.9 677 20.5 687 19.8 695 16.4 711 18.8 725 15.5 731 15.0 739 15.6 750 14.3 759 17.3 767 19.8 779 20.0 788 18.4 802 17.3 808 19.7 822 17.4 829 19.9 841 16.0 850 14.9 865 15.0 881 18.3 888 19.3 898 20.0 913 17.5 920 20.5 931 21.6 944 20.9 960 19.9 971 16.1 984 16.8 996 20.1 1003 20.4 1010 20.2 1025 17.4 1037 20.6 1050 19.3 1058 15.9 1068 16.6 1076 16.3 1084 18.6 1097 16.7 1106 17.6 1117 20.4 1127 17.8 1143 15.8 1155 16.1 1170 17.5 1184 15.8 1197 17.7 1208 19.5 1224 16.3 1233 16.5 1241 14.8 1250 14.9 1264 16.4 1271 16.3 1282 16.5 1290 14.8 1296 19.7 1310 16.2 1324 20.2 1337 16.5 1348 17.0 1356 17.9 1362 20.5 1375 19.8 1392 19.6 1400 17.1 1408 14.8 1422 18.8 1432 16.4 1440 18.0 L1440 40 Z"/></svg>
+    <svg class="final-sun" viewBox="0 0 200 200" aria-hidden="true"><path class="sun-ring" d="M199.8 100.0 L199.7 113.1 L197.5 126.1 L190.0 137.3 L184.9 149.0 L178.3 160.1 L170.2 170.2 L159.8 178.0 L148.8 184.5 L137.1 189.6 L125.4 194.8 L112.9 198.0 L100.0 201.3 L86.8 200.1 L73.9 197.3 L61.2 193.6 L49.4 187.7 L39.4 179.0 L28.9 171.1 L23.1 159.0 L13.5 149.9 L8.1 138.1 L5.3 125.4 L1.5 113.0 L-1.2 100.0 L1.9 87.1 L3.7 74.2 L9.4 62.5 L14.9 50.9 L20.0 38.6 L31.6 31.6 L40.6 22.6 L50.1 13.5 L62.2 8.8 L74.9 6.3 L87.0 1.1 L100.0 1.6 L113.0 1.5 L125.5 4.8 L137.9 8.4 L149.7 14.0 L160.0 21.9 L168.7 31.3 L177.3 40.7 L187.4 49.6 L191.7 62.0 L193.8 74.9 L199.9 86.9 Z"/><path class="sun" d="M193.1 100.0 L192.6 112.2 L187.8 123.5 L185.8 135.6 L180.6 146.5 L173.6 156.5 L164.7 164.7 L155.4 172.2 L146.5 180.6 L135.0 184.5 L123.7 188.5 L112.0 191.4 L100.0 191.6 L87.9 192.3 L76.4 188.1 L65.4 183.6 L53.9 179.9 L43.7 173.3 L34.2 165.8 L26.5 156.4 L19.2 146.6 L13.7 135.8 L11.2 123.8 L8.8 112.0 L9.1 100.0 L9.4 88.1 L10.9 76.1 L16.2 65.3 L19.8 53.7 L27.9 44.6 L35.1 35.1 L43.1 25.8 L54.7 21.5 L65.4 16.4 L76.2 11.3 L88.1 9.8 L100.0 7.3 L111.8 10.4 L124.1 10.1 L135.6 14.0 L146.5 19.5 L155.9 27.2 L164.6 35.4 L173.4 43.7 L179.7 54.0 L184.8 64.9 L188.4 76.3 L191.0 88.0 Z"/></svg>
     <div class="wrap final-inner">
       <h2 class="final-title reveal">Start with one file.</h2>
       <p class="section-lede reveal">Upload a spreadsheet or connect a database, and see who appears twice.</p>
       <div class="cta reveal"><a class="btn btn-primary" href="/ui">Sign in to the portal</a></div>
+    </div>
+    <div class="final-hills" aria-hidden="true">
+      <svg class="fh fh1" viewBox="0 0 1440 220" preserveAspectRatio="xMidYMax slice"><path d="M0 220 L0 118.3 17 120.6 28 122.5 42 126.7 56 127.2 70 129.6 85 130.6 101 130.1 112 129.9 125 127.9 138 126.5 151 123.0 163 120.2 179 117.7 192 114.1 209 110.3 222 108.1 237 105.2 248 101.3 264 99.2 281 94.4 293 93.0 306 94.1 320 92.9 333 92.0 347 89.9 363 91.5 374 90.4 389 89.2 402 88.8 414 88.8 429 89.3 441 86.7 454 87.3 466 84.9 479 84.5 493 80.1 504 78.8 519 76.4 530 72.4 545 69.4 558 65.9 575 61.9 589 58.8 603 57.4 620 53.2 632 52.6 644 49.4 661 49.9 677 50.1 693 51.3 705 51.5 719 55.5 736 57.2 750 61.5 764 64.4 777 68.8 794 72.1 808 77.7 824 80.1 836 84.8 853 86.9 864 90.0 878 91.8 892 93.2 904 94.1 917 93.7 933 95.5 945 94.0 958 95.0 971 94.0 984 95.8 1000 94.2 1015 96.7 1026 97.6 1038 97.8 1052 99.4 1065 100.4 1079 102.7 1094 105.5 1108 107.0 1123 111.5 1135 115.0 1151 117.6 1163 120.1 1174 121.5 1188 123.7 1202 126.8 1213 128.4 1224 129.5 1240 129.3 1251 129.1 1265 129.6 1276 128.1 1293 125.1 1309 120.4 1326 117.2 1343 113.9 1355 110.2 1372 103.4 1385 101.6 1397 98.7 1409 95.2 1421 91.6 1438 87.3 1440 87.3 L1440 220 Z"/></svg>
+      <svg class="fh fh2" viewBox="0 0 1440 220" preserveAspectRatio="xMidYMax slice"><path d="M0 220 L0 143.7 13 139.4 25 136.6 42 133.3 58 127.0 74 122.1 88 119.5 101 116.8 115 112.7 132 108.6 149 108.2 162 108.0 175 108.6 189 107.7 205 109.6 217 112.3 228 114.5 241 116.4 257 119.7 272 122.0 283 123.3 295 127.0 309 128.8 325 129.8 338 132.5 349 131.5 362 132.4 375 133.2 390 134.6 402 135.0 416 134.1 432 135.2 444 135.6 459 139.3 475 140.2 487 141.3 502 145.9 515 149.2 529 153.6 544 155.8 561 159.6 575 164.2 587 166.0 603 168.9 617 173.5 629 172.6 644 174.0 659 174.5 671 172.1 683 169.8 700 169.0 715 163.6 731 161.8 745 158.3 759 153.5 770 150.7 782 148.5 797 146.5 813 143.9 826 141.9 839 141.2 853 138.7 868 140.0 881 139.3 892 137.3 904 138.3 921 137.6 934 137.2 947 134.4 963 133.6 978 131.5 995 127.9 1011 125.2 1027 120.9 1043 117.8 1056 114.0 1070 110.7 1087 108.2 1098 106.7 1115 106.2 1126 105.1 1138 107.4 1152 108.6 1168 109.1 1182 112.8 1198 117.9 1215 120.3 1231 127.3 1248 129.8 1260 133.1 1271 138.0 1287 141.0 1303 143.9 1316 144.2 1327 147.4 1339 147.2 1353 147.1 1365 148.3 1381 148.8 1394 150.7 1408 150.6 1422 148.8 1436 150.6 1440 150.6 L1440 220 Z"/></svg>
+      <svg class="fh fh3" viewBox="0 0 1440 220" preserveAspectRatio="xMidYMax slice"><path d="M0 220 L0 199.0 13 199.3 24 199.7 33 198.9 43 195.7 53 196.9 68 193.4 80 193.8 94 192.0 106 192.0 120 191.7 135 192.3 145 194.1 157 193.5 170 194.9 183 198.3 197 199.9 208 200.7 220 203.3 229 204.1 238 202.8 249 205.1 261 203.7 275 202.6 287 202.5 300 201.5 313 198.5 324 196.1 338 195.0 352 191.3 363 191.1 376 187.4 388 188.2 398 185.3 409 186.1 423 184.1 433 184.5 444 185.5 454 185.5 464 187.9 477 186.3 492 187.2 503 190.3 517 189.9 529 188.4 542 187.7 552 187.7 561 186.9 575 185.9 587 183.9 599 180.4 611 178.8 625 177.6 636 174.6 650 171.9 660 171.3 674 170.0 688 169.4 701 168.5 712 167.8 725 167.9 737 170.7 750 171.6 760 172.1 772 174.0 784 175.3 798 175.1 811 177.5 822 177.0 837 175.6 850 175.4 863 176.6 875 173.1 888 172.9 901 171.3 914 170.8 926 168.6 941 167.1 954 167.2 967 166.6 982 168.2 992 168.9 1003 169.6 1015 172.5 1028 174.6 1038 176.2 1052 180.7 1064 180.9 1078 183.6 1088 184.3 1102 187.7 1115 187.6 1127 187.4 1142 187.7 1155 188.6 1168 186.9 1179 186.4 1189 186.6 1200 185.9 1211 184.1 1221 183.9 1231 182.7 1245 183.8 1255 184.4 1267 185.9 1280 188.0 1291 190.5 1305 190.4 1319 195.3 1333 195.6 1347 199.3 1356 198.9 1371 202.5 1381 201.8 1391 202.7 1405 203.2 1415 204.5 1428 201.6 1440 201.6 L1440 220 Z"/></svg>
     </div>
   </section>
 </main>

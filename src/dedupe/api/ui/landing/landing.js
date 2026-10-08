@@ -1,6 +1,8 @@
-// Aurionpro Dedupe landing page: the merge animation in the hero, reveals as sections scroll in, the step list that follows the panel in
-// view, and the sources marquee. Everything is plain DOM with class changes (no inline code: strict content-security policy). People who
-// ask their system for reduced motion get every element in its finished state and nothing that moves.
+// Aurionpro Dedupe landing page. The story at the top is driven by scroll: this script only measures how far the visitor has scrolled through
+// it and writes that as one number (--p, from 0 to 1) on the story; the stylesheet works out every scrap's position, the sun and the golden
+// record from it, so only transform and opacity change. Also: reveals as sections scroll in, the step list that follows the panel in view,
+// and the sources belt. Plain DOM with class changes and CSSOM only (strict content-security policy, no inline code).
+// People who ask their system for reduced motion (prefers-reduced-motion) get everything in its finished state and nothing that moves.
 (() => {
   "use strict";
   const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -11,7 +13,30 @@
   const ready = () => requestAnimationFrame(() => document.body.classList.add("ready"));
   if (document.fonts && document.fonts.ready && !still) document.fonts.ready.then(ready); else ready();
 
-  // a hairline under the header once the page has scrolled
+  // the story: scraps drift together as the page scrolls. Without motion the stylesheet lays them out still, side by side.
+  const story = $("#story");
+  const track = $(".track");
+  if (story && track && !still) {
+    document.documentElement.classList.add("motion");
+    let queued = false;
+    let last = -1;
+    const update = () => {
+      queued = false;
+      const box = track.getBoundingClientRect();
+      const run = box.height - window.innerHeight;
+      const p = run > 0 ? Math.min(Math.max(-box.top / run, 0), 1) : 1;
+      const rounded = Math.round(p * 1000) / 1000;
+      if (rounded === last) return;
+      last = rounded;
+      story.style.setProperty("--p", String(rounded));
+    };
+    const ask = () => { if (!queued) { queued = true; requestAnimationFrame(update); } };
+    window.addEventListener("scroll", ask, { passive: true });
+    window.addEventListener("resize", ask);
+    update();
+  }
+
+  // a soft shadow under the header once the page has scrolled
   const nav = $(".nav");
   const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 8);
   window.addEventListener("scroll", onScroll, { passive: true });
@@ -58,34 +83,7 @@
     mark("0");
   }
 
-  // the sources marquee: a second copy of the logos makes the loop seamless
-  const track = $(".track");
-  if (track && !still) $$(".logo", track).forEach((l) => track.append(l.cloneNode(true)));
-
-  // the hero: five records appear, their shared values light up, they merge, the golden record appears; then it starts again
-  const demo = $("#demo");
-  if (!demo) return;
-  const show = (phase) => { demo.className = "demo " + phase; };
-  if (still) { show("p1 p2 p3 p4"); return; }
-  const timeline = [[0, "p1"], [1500, "p1 p2"], [4100, "p1 p2 p3"], [5000, "p1 p2 p3 p4"], [10000, "p1 p2 p3 p4 out"], [10700, "reset"]];
-  const LOOP = 11000;
-  let timers = [];
-  let playing = false;
-  const stop = () => { timers.forEach(clearTimeout); timers = []; playing = false; };
-  const play = (delay) => {
-    stop();
-    playing = true;
-    timers = timeline.map(([t, phase]) => setTimeout(() => show(phase), t + delay));
-    timers.push(setTimeout(() => play(0), LOOP + delay));
-  };
-  let visible = true;
-  const resume = () => { if (visible && !document.hidden && !playing) { show("reset"); play(300); } };
-  if ("IntersectionObserver" in window) {
-    new IntersectionObserver(([e]) => {
-      visible = e.isIntersecting;
-      if (visible) resume(); else { stop(); show("p1 p2 p3 p4"); }
-    }, { threshold: 0.25 }).observe(demo);
-  }
-  document.addEventListener("visibilitychange", () => { if (document.hidden) stop(); else resume(); });
-  play(700);
+  // the sources belt: a second copy of the tags makes the loop seamless
+  const belt = $(".belt");
+  if (belt && !still) $$(".logo", belt).forEach((l) => belt.append(l.cloneNode(true)));
 })();
