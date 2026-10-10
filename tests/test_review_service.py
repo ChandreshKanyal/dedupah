@@ -97,12 +97,16 @@ def test_approve_reject_split_and_override_take_effect_on_the_next_run(env):
     open_now = {_item_keys(i) for i in env.svc.queue(limit=1000)}
     assert _item_keys(a_item) not in open_now and _item_keys(r_item) not in open_now
     # a person with 3+ records is split, and a golden field is overridden
-    big = next(p for p in duckdb.sql(f"select cluster_id from '{env.work / 'clusters' / 'clusters.parquet'}' group by 1 having count(*) >= 3").fetchall())[0]
+    # chosen in a fixed order and never a person another decision here touches (an unordered GROUP BY made this test flaky: "other" was
+    # sometimes the approved pair's person, whose id is gone after the rerun)
+    clusters = env.work / "clusters" / "clusters.parquet"
+    touched = {*_item_keys(a_item), *_item_keys(r_item)}
+    sized = duckdb.sql(f"select cluster_id, count(*) from '{clusters}' group by 1 order by 1").fetchall()
+    big = next(c for c, n in sized if n >= 3 and c not in touched)
     keys = env.members(big)
     split = env.svc.split_person(big, [[keys[0]], keys[1:]], "asha", "two different people share these records")
-    other = next(p for p in duckdb.sql(f"select cluster_id from '{env.work / 'clusters' / 'clusters.parquet'}' group by 1 having count(*) >= 2").fetchall())[0]
-    if other == big:
-        other = _item_keys(a_item)[0]
+    other = next(c for c, n in sized if n >= 2 and c not in touched and c != big)
+    other_key = env.members(other)[0]                                       # a record of that person: ids may change at the rerun
     ov = env.svc.override_field(other, "occupation", "Retired", "ravi", "customer told us at the branch")
     assert split["judgment_ids"] and ov["judgment_ids"]
     env.rerun()
@@ -110,7 +114,7 @@ def test_approve_reject_split_and_override_take_effect_on_the_next_run(env):
     assert env.person_of(before[_item_keys(a_item)[0]][0]) == env.person_of(before[_item_keys(a_item)[1]][0])
     assert env.person_of(before[_item_keys(r_item)[0]][0]) != env.person_of(before[_item_keys(r_item)[1]][0])
     assert env.person_of(keys[0]) != env.person_of(keys[1])
-    assert env.golden(env.person_of(env.members(other)[0]), "occupation") == ("Retired", "steward", "steward_override")
+    assert env.golden(env.person_of(other_key), "occupation") == ("Retired", "steward", "steward_override")
     assert _item_keys(r_item) not in {_item_keys(i) for i in env.svc.queue(limit=10**5)}     # a rejected pair does not come back
 
 

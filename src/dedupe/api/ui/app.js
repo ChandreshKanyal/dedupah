@@ -117,7 +117,7 @@ function setTheme(t, keep) {
 function initTheme() {
   let t = null;
   try { t = localStorage.getItem(THEME_KEY); } catch (_) { /* default */ }
-  if (t !== "light" && t !== "dark") t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  if (t !== "light" && t !== "dark") t = "light";                     // the enterprise look is light; dark stays one click away
   setTheme(t, false);
 }
 

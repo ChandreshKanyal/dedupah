@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Enterprise look, step 1:** Informatica-style frame (black top bar, dark grey menu), black-and-grey controls with no accent colour, dense grids, light by default; Review split view approved as a mockup, to be built next | 65 |
 | session 4 | **First runs on the EC2 server:** synthetic data generated in the container, the two demo projects built through the API (temporary account, disabled after); **fixed: `psutil` was never declared, every run failed in the runtime image**; new dependency test | 64 |
 | session 3 | Warm restyle (portal + landing round 2) built, then **rolled back at the user's request** (kept in git stash, uncommitted) | 63 |
 | session 3 | **Landing page redesigned as cut paper:** six scraps of one example customer (note, polaroid, laptop, messages, KYC slip, sign-up sheet) consolidate into a golden record while scrolling; paper landscape, tabs, pinned slips, felt patches | 62 |
@@ -312,6 +313,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-10 (session 4, enterprise look)** — Neo-industrial try rejected; Informatica-style mockup approved (no green); step 1 (frame, palette, controls, grids) built and checked in both themes. Section 65.
 - **2026-10-10 (session 4, EC2 server)** — Data built on the server (synthetic seed 42, projects customer-master and insurance-file via the API); undeclared psutil broke every run in the runtime image: declared, dependency test added; both runs succeed. Section 64.
 - **2026-10-08 (session 3, warm restyle rolled back)** — Landing round 2 and a portal reskin were built by background agents; the user did not like them; rolled back (git stash). The user deleted their Trial project; walk-through scripts moved to insurance-file. Section 63.
 - **2026-10-08 (session 3, paper landing)** — Landing page redesigned in a cut-paper style with scroll consolidation (background agent). Section 62.
@@ -1539,3 +1541,38 @@ The project now also runs on a shared EC2 Linux server (Docker Compose: `postgre
   passed alone, with its file (twice) and in two more full runs: a flaky test, cause not found yet (order or timing).
 - **Honest limits:** synthetic data only; the review, golden-record preview and export screens have not yet been clicked through on the
   server; package versions are still not pinned (a lock file would have shown psutil as a transitive dev package only).
+
+## 65. Enterprise look, step 1 of the portal redesign (2026-10-10, session 4)
+The user wants the portal to look and work like a classic enterprise MDM tool (reference: an Informatica MDM 10.4 webinar deck,
+Entity 360 / Task Manager screens): "legacy, functional, sharp, hard, enterprise", not "soft, AI, modern, round". The buttons and the
+layout of options must change too, not only the colours. History of this step:
+- A first "neo-industrial" stylesheet (monospace capital labels, a teal line on top, amber badges) was rejected as "too funky" and
+  reverted without a commit. Lesson kept: capitals turn case-sensitive IDs into wrong text (a run id became REBD...), never uppercase data.
+- A static mockup of the Review inbox in Task Manager layout (black top bar, dark grey menu, header strip with a toolbar of plain
+  buttons, tabs with counts, a work list with selection / find / sort / filter / pager on the left, the selected pair with one row of
+  action buttons, sub-tabs and a comparison grid on the right) was APPROVED ("right direction, keep going"), with one change: **no green
+  (or teal) buttons or selected areas; black and grey only.** Gradients were also mentioned; the flat rules (and tests) forbid them, flat
+  greys are used. Green / amber / red stay only as status text (a match, a warning, an error), never on controls or selection.
+- **Step 1 built (this commit): the frame and the look for every screen** (`style.css`, `index.html`, one line of `app.js`):
+  black top bar with the logo and the product name "Dedupe Workspace", dark grey menu with the active item in black and the review count
+  in white; light grey workspace, white header strip per page (tabs right under it join the strip); 12px text; square corners, 2px on
+  buttons and inputs; grey 26px buttons, the only filled one is black (white in the dark theme); links are underlined text; grids with a
+  grey bold header row, 5px/8px cells and light zebra rows; tabs with a black underline. **Light is now the default theme** (dark stays on
+  the toggle, still remembered per browser). No new files, CSP unchanged, flat-design test still passes (dividers in the top bar drawn
+  with a right border, `border-left` stays banned).
+- **Checked:** UI and landing tests pass; screenshots of the inbox, a run and the projects list in both themes through the preview copy on
+  port 8001 (no console errors). Screenshots and mockups are kept outside the repo in `~/mockups/` on the server.
+- **User edit after step 1:** "less of these boxes": status labels (Succeeded, Failed, You...) lost their filled box and border; a status
+  is now a coloured mark and plain text (green tick + "Succeeded" in normal text, red cross + red "Failed", amber for warnings, grey for
+  neutral labels), like Informatica's job monitor. Count badges are plain text too.
+- **Flaky test fixed:** `test_approve_reject_split_and_override_take_effect_on_the_next_run` (section 64) failed again in a full run with
+  an IndexError on line 113. Cause: it picked the people to split and to correct with an unordered GROUP BY, so on some runs the person
+  to correct was one the test had just merged, whose id no longer exists after the rerun. Now chosen in a fixed order, never a person
+  another decision in the test touches, and followed through one of its records instead of its id. The product was not at fault.
+- **Next (step 2):** the Review screen rebuilt as the approved split work view (list + selected pair on one page), then Runs, Projects,
+  Connections and Rules, one screen at a time with a screenshot each. Not built yet: priority labels, an Evidence tab, "Export list",
+  and a plain-words "why is this pair here" line (the mockup's line was illustrative).
+- **How the screenshots are taken on the server:** a throwaway preview container of the `dedupah-api` image on 127.0.0.1:8001 with the UI
+  folder mounted read-only and the scheduler off; the Playwright image `mcr.microsoft.com/playwright/python:v1.48.0-noble` (plus
+  `pip install playwright==1.48.0`) signs in as `setup-bot`, which is enabled with a one-time random password only for the shot and
+  disabled again (each change in the security log).
