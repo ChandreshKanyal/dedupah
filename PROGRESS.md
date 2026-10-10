@@ -1,7 +1,7 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-10-08 (session 3)
+> Last updated: 2026-10-10 (session 4, EC2 server)
 
 ## >>> RESUME HERE (latest state: end of session 2, after review round 2) <<<
 
@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **First runs on the EC2 server:** synthetic data generated in the container, the two demo projects built through the API (temporary account, disabled after); **fixed: `psutil` was never declared, every run failed in the runtime image**; new dependency test | 64 |
 | session 3 | Warm restyle (portal + landing round 2) built, then **rolled back at the user's request** (kept in git stash, uncommitted) | 63 |
 | session 3 | **Landing page redesigned as cut paper:** six scraps of one example customer (note, polaroid, laptop, messages, KYC slip, sign-up sheet) consolidate into a golden record while scrolling; paper landscape, tabs, pinned slips, felt patches | 62 |
 | session 3 | **Docker and PostgreSQL verified** (first time): test image runs the whole suite, runtime image runs read-only and unprivileged on SQLite and PostgreSQL, live PostgreSQL tests pass twice; fixed a real start-up bug with SQLAlchemy 2.1 and plain `postgresql://` addresses | 61 |
@@ -311,6 +312,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-10 (session 4, EC2 server)** — Data built on the server (synthetic seed 42, projects customer-master and insurance-file via the API); undeclared psutil broke every run in the runtime image: declared, dependency test added; both runs succeed. Section 64.
 - **2026-10-08 (session 3, warm restyle rolled back)** — Landing round 2 and a portal reskin were built by background agents; the user did not like them; rolled back (git stash). The user deleted their Trial project; walk-through scripts moved to insurance-file. Section 63.
 - **2026-10-08 (session 3, paper landing)** — Landing page redesigned in a cut-paper style with scroll consolidation (background agent). Section 62.
 - **2026-10-08 (session 3, Docker)** — Docker and PostgreSQL verified for the first time; SQLAlchemy 2.1 driver bug fixed; test image installs the connectors. Section 61.
@@ -1509,3 +1511,31 @@ The portal is therefore the original teal look and the landing page is the paper
 - **Also:** the user deleted their "Trial" project (and "shankar") in the portal on 2026-10-08 15:33 IST (security log rows 337-338, reason
   "because i want to"). The click-through scripts that read Trial now use the demo `insurance-file` project (connection `insurance`, run
   R725ae940327a).
+
+## 64. First end-to-end runs on the EC2 server, and a missing dependency (2026-10-10, session 4)
+The project now also runs on a shared EC2 Linux server (Docker Compose: `postgres` + `api`, API on 127.0.0.1:8000 only, demo mode
+`DEDUPE_ENV=dev`, local sign-in, main store in the compose PostgreSQL). The server started empty; the user asked to build the data there.
+- **Data:** `python -m dedupe.synthetic --households 1200 --seed 42 --out /data/synthetic` run inside the `api` container (the generator is
+  seeded and never reads today's date, so the files are identical to the laptop's): 8,375 records in 5 sources plus ground truth.
+- **Why not `scripts/demo_workspace.py`:** it creates the admin / admin demo login (never on a server), keeps its store in SQLite in the
+  workspace folder (the server uses PostgreSQL) and wipes the workspace first. Instead the same two projects were built through the real
+  HTTP API by a temporary administrator `setup-bot` (random password kept only in shell memory, created with `accounts_cli`), which was
+  **disabled** afterwards (security log `config_change` / `disable_user`). The user's own `admin` sees both projects (`projects.all`).
+- **Built:** projects `customer-master` (the 5 synthetic sources, connections tested: all ok) and `insurance-file` (the policy workbook).
+  Left out on purpose: the weekly schedule (it would run jobs on a shared machine) and the demo warehouse export (needs `DEDUPE_DST_DEMO`
+  in `.env` and a restart).
+- **Real bug found:** the first two runs FAILED in seconds: `ModuleNotFoundError: No module named 'psutil'` (the pipeline measures peak
+  memory with it). `psutil` was never declared in `pyproject.toml`; the laptop venv and the test image get it indirectly through dev
+  tools, so no test or earlier check (section 61 only started the API and created a project, it never ran a job) could see it. Every
+  run on any production install would have failed. Fix: `psutil>=5.9` in the core dependencies; new `tests/test_dependencies.py` checks
+  that every third-party package imported anywhere in `src` is declared (checked: it fails without the fix). An import sweep of every
+  module inside the runtime image found nothing else missing.
+- **After the rebuild:** both runs succeeded. customer-master: records 8,375 | candidates 12,341 | decisions 8,426 auto / 1,101 review /
+  2,814 reject | 3,586 people | 2,150 households | 9.2 s total, peak memory 789 MB. insurance-file succeeded too.
+- **Tests on this server (Docker test image):** 460 passed, 4 skipped; ruff and bandit clean. Two server-specific findings: (1) containers
+  here get a soft limit of 1,024 open files and the full suite then crashes with "Too many open files" - run it with
+  `docker run --rm --ulimit nofile=65536:65536 dedupe-test` (the suite probably leaves files or connections open: worth a look);
+  (2) `tests/test_review_service.py::test_approve_reject_split_and_override_take_effect_on_the_next_run` failed ONCE in a full run and
+  passed alone, with its file (twice) and in two more full runs: a flaky test, cause not found yet (order or timing).
+- **Honest limits:** synthetic data only; the review, golden-record preview and export screens have not yet been clicked through on the
+  server; package versions are still not pinned (a lock file would have shown psutil as a transitive dev package only).

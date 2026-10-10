@@ -16,6 +16,7 @@ dependencies = [
     "openpyxl>=3.1",
     "sqlalchemy>=2",
     "numpy>=1.26",
+    "psutil>=5.9",                               # peak-memory figures in the pipeline and benchmark
 ]
 
 [project.optional-dependencies]
