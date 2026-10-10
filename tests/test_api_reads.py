@@ -56,6 +56,9 @@ def test_queue_is_paged_capped_and_allow_listed(api):
     assert [(i["person_l"], i["person_r"]) for i in second] == [(i["person_l"], i["person_r"]) for i in page[2:4]]
     assert c.get(run + "/queue?offset=999999999", headers=h).status_code == 422 and c.get(run + "/queue?status=bogus", headers=h).status_code == 422
     assert c.get(run + "/queue?min_probability=2", headers=h).status_code == 422
+    assert c.get(run + "/queue?q=" + "x" * 65, headers=h).status_code == 422 and c.get(run + "/queue?forced=maybe", headers=h).status_code == 422
+    assert all(i["forced"] for i in c.get(run + "/queue?forced=true", headers=h).json())
+    assert c.get(run + "/queue?q=nobody%20at%20all", headers=h).json() == []
     assert c.get(run + "/queue/summary", headers=h).json()["queue_items_in_last_run"] >= len(page)
 
 

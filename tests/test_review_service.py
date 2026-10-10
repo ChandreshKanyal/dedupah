@@ -67,6 +67,16 @@ def test_queue_is_ranked_paged_and_filterable(env):
     assert 0 < len(hi) < len(items) and all(i["top_probability"] >= 0.5 for i in hi)
     with pytest.raises(ReviewError):
         env.svc.queue(status="whatever")
+    # why it is here: a rule or the score; the two filters split the queue between them
+    ruled, scored = env.svc.queue(limit=1000, forced=True), env.svc.queue(limit=1000, forced=False)
+    assert all(i["forced"] for i in ruled) and not any(i["forced"] for i in scored) and len(ruled) + len(scored) == len(items)
+    # search: part of a name (any case, extra spaces ignored), a person id, or nothing found
+    who = items[0]["name_l"]
+    found = env.svc.queue(limit=1000, text="  " + who.split()[0].upper() + "  ")
+    assert found and all(who.split()[0].lower() in (i["name_l"] + " " + i["name_r"] + " " + (i["city_l"] or "")).lower() for i in found)
+    assert [_item_keys(i) for i in env.svc.queue(limit=1000, text=items[1]["cluster_r"])] == [_item_keys(items[1])]
+    assert env.svc.queue(limit=1000, text="no such person anywhere") == []
+    assert len(env.svc.queue(limit=2, text=who.split()[0])) <= 2                                       # paging still applies
 
 
 def test_explain_shows_both_people_the_evidence_and_masks_sensitive_values(env):

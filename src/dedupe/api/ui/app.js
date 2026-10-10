@@ -225,7 +225,7 @@ function dispatch(path) {
     if (c === "new-run") return newRun(b, 2);
     return viewProject(b, c);
   }
-  const top = { runs: viewRuns, "new-run": () => newRun(), review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c)), approvals: viewApprovals,
+  const top = { runs: viewRuns, "new-run": () => newRun(), review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c, d)), approvals: viewApprovals,
     audit: () => viewAudit(), users: viewUsers, roles: viewRoles, password: () => viewPassword(false), account: viewAccount, settings: viewSettings }[a];
   return top ? top() : viewHome();
 }
@@ -2164,30 +2164,49 @@ async function openQueueItem(ctx, index, doneText) {
 // selected pair on the right with its decision buttons. Deciding moves to the next pair in place; Undo is offered in the message.
 const REVIEW_STATUS = ["open", "unsure", "all"];
 const pairName = (it) => (it.name_l || it.person_l) + " and " + (it.name_r || it.person_r);
-async function viewInbox(pidArg, statusArg) {
+const WHY_FILTER = [["any", "Any reason"], ["rule", "Flagged by a rule"], ["score", "Its score only"]];
+async function viewInbox(pidArg, statusArg, ridArg) {
   const status = REVIEW_STATUS.includes(statusArg) ? statusArg : "open";
   const [rows] = await Promise.all([api("GET", "/review/inbox"), refreshCache()]);
   const usable = rows.filter((x) => x.run_id);
   const cur = usable.find((x) => x.project_id === pidArg) || [...usable].sort((a, b) => (b.open || 0) - (a.open || 0))[0];
-  here(cur ? "/review/" + cur.project_id + (status === "open" ? "" : "/" + status) : "/review");
+  const finished = cur ? (await api("GET", P(cur.project_id) + "/runs")).filter((r) => r.status === "succeeded") : [];
+  const newest = cur && cur.run_id;
+  const chosenRun = finished.find((r) => r.id === ridArg) ? ridArg : newest;
+  here(cur ? "/review/" + cur.project_id + (status !== "open" || chosenRun !== newest ? "/" + status : "") + (chosenRun !== newest ? "/" + chosenRun : "") : "/review");
   if (!cur) {
     show(page("Review inbox", "Pairs that need a person appear here after a project's first finished run."),
       empty(rows.length ? "No project has a finished run yet." : "You are not in any project yet."));
     return;
   }
   const pid = cur.project_id;
-  const rid = cur.run_id;
-  const ctx = { pid, rid, status, band: "all", offset: 0 };
-  const picker = el("select", { "aria-label": "Project" }, usable.map((x) => el("option", { value: x.project_id, selected: x.project_id === pid },
+  const rid = chosenRun;
+  const older = rid !== newest;
+  const ctx = { pid, rid, status, band: "all", why: "any", q: "", offset: 0 };
+  const filtered = () => ctx.band !== "all" || ctx.why !== "any" || !!ctx.q;
+  // the filter bar: where the pairs come from (project, run) and which of them to list (score, why it is here, a name, id or city)
+  const picker = el("select", {}, usable.map((x) => el("option", { value: x.project_id, selected: x.project_id === pid },
     x.project_name + (x.open == null ? "" : " (" + num(x.open) + ")"))));
   picker.addEventListener("change", () => go(() => viewInbox(picker.value, status)));
-  const actions = [picker,
+  const runPick = el("select", {}, finished.map((r) => el("option", { value: r.id, selected: r.id === rid }, r.id + " \u00b7 " + when(r.finished_at) + (r.id === newest ? " (newest)" : ""))));
+  runPick.addEventListener("change", () => go(() => viewInbox(pid, status, runPick.value)));
+  const band = el("select", {}, BANDS.map(([v, t]) => el("option", { value: v }, t)));
+  const why = el("select", {}, WHY_FILTER.map(([v, t]) => el("option", { value: v }, t)));
+  const text = el("input", { type: "search", maxlength: "64", placeholder: "for example Sharma or P000001411" });
+  const apply = () => { ctx.band = band.value; ctx.why = why.value; ctx.q = text.value.trim(); return loadList(0, 0); };
+  for (const x of [band, why]) x.addEventListener("change", () => run(apply));
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); run(apply); } });
+  const filters = el("div", { class: "filters", role: "search", "aria-label": "Filter the pairs" },
+    field("Project", picker), field("Run", runPick), field("Match score", band), field("Why it is here", why), field("Name, person ID or city", text),
+    btn("Search", apply, "", "search"), btn("Clear", () => { band.value = "all"; why.value = "any"; text.value = ""; return apply(); }, "ghost"));
+  const actions = [
     cur.pending_approval ? btn("Waiting for a second person (" + num(cur.pending_approval) + ")", link("/approvals"), "", "check") : null,
     cur.waiting_for_run ? btn("Decided, next run (" + num(cur.waiting_for_run) + ")", link("/review/decisions"), "", "list") : null,
     cur.waiting_for_run && can("runs.start") ? btn("Run again", () => startRun(pid, [], rid, "apply the latest review decisions"), "", "play") : null,
-    btn("", () => go(() => viewInbox(pid, status)), "icon", "refresh", { "aria-label": "Refresh", title: "Refresh" })];
-  const count = { open: cur.open, unsure: cur.unsure }[status];
-  const tabList = [["open", "Open" + (cur.open == null ? "" : " (" + num(cur.open) + ")")], ["unsure", "Not sure (" + num(cur.unsure) + ")"], ["all", "All, including decided"]];
+    btn("", () => go(() => viewInbox(pid, status, older ? rid : null)), "icon", "refresh", { "aria-label": "Refresh", title: "Refresh" })];
+  const count = older ? null : { open: cur.open, unsure: cur.unsure }[status];                  // the inbox counts the newest run only
+  const tabList = older ? [["open", "Open"], ["unsure", "Not sure"], ["all", "All, including decided"]]
+    : [["open", "Open" + (cur.open == null ? "" : " (" + num(cur.open) + ")")], ["unsure", "Not sure (" + num(cur.unsure) + ")"], ["all", "All, including decided"]];
   const listPane = el("section", { class: "pane list-pane", "aria-label": "Pairs to review" });
   const detail = el("section", { class: "pane detail-pane", "aria-label": "Selected pair", "aria-live": "polite" });
   const writer = can("judgment.write");
@@ -2197,17 +2216,15 @@ async function viewInbox(pidArg, statusArg) {
 
   async function loadList(offset, select) {
     ctx.offset = Math.max(0, offset);
-    items = await api("GET", queueUrl(ctx, QUEUE_PAGE, ctx.offset));
+    items = await api("GET", queueUrl(ctx, QUEUE_PAGE, ctx.offset) + (ctx.why === "any" ? "" : "&forced=" + (ctx.why === "rule")) + (ctx.q ? "&q=" + encodeURIComponent(ctx.q) : ""));
     chosen.clear();
     at = Math.min(Math.max(select || 0, 0), Math.max(items.length - 1, 0));
     drawList();
     if (items.length) await openPair(at);
-    else detail.replaceChildren(el("div", { class: "pane-empty" }, status === "open" ? "Nothing to review here." + (ctx.band === "all" ? "" : " Try another score.") : "No pairs in this view."));
+    else detail.replaceChildren(el("div", { class: "pane-empty" }, filtered() ? "No pairs match these filters." : status === "open" ? "Nothing to review here." : "No pairs in this view."));
   }
   function drawList() {
     const selCount = el("span", { class: "sel-count" }, num(chosen.size) + " selected");
-    const band = el("select", { "aria-label": "Match score" }, BANDS.map(([v, t]) => el("option", { value: v, selected: v === ctx.band }, t)));
-    band.addEventListener("change", () => run(async () => { ctx.band = band.value; await loadList(0, 0); }));
     const bulk = async (decision) => {
       if (!chosen.size) { say("Tick the pairs first.", "bad"); return; }
       const what = decision === "approve" ? "Same person" : "Different people";
@@ -2233,13 +2250,13 @@ async function viewInbox(pidArg, statusArg) {
       el("div", { class: "pane-tool" }, selCount,
         writer ? btn("Same person", () => bulk("approve"), "small", null, { title: "Same person for the ticked pairs" }) : null,
         writer ? btn("Different people", () => bulk("reject"), "small", null, { title: "Different people for the ticked pairs" }) : null,
-        el("span", { class: "grow" }), band),
-      items.length ? el("div", { class: "wl" }, rowsEl) : el("div", { class: "pane-empty" }, "No pairs."),
+        el("span", { class: "grow" })),
+      items.length ? el("div", { class: "wl" }, rowsEl) : el("div", { class: "pane-empty" }, filtered() ? "No pairs match these filters." : "No pairs."),
       el("div", { class: "pane-foot" },
         btn("", () => loadList(ctx.offset - QUEUE_PAGE, 0), "small icon", "prev", { "aria-label": "Previous page", disabled: ctx.offset === 0 }),
         btn("", () => loadList(ctx.offset + QUEUE_PAGE, 0), "small icon", "next", { "aria-label": "Next page", disabled: items.length < QUEUE_PAGE }),
         el("span", { class: "grow" }),
-        items.length ? (ctx.offset + 1) + " - " + last + (count != null && ctx.band === "all" ? " of " + num(count) : "") : ""));
+        items.length ? (ctx.offset + 1) + " - " + last + (count != null && !filtered() ? " of " + num(count) : "") : ""));
   }
 
   async function openPair(i, reveal) {
@@ -2314,7 +2331,7 @@ async function viewInbox(pidArg, statusArg) {
       subBody.replaceChildren(...panes[key]().flat().filter(Boolean));
     };
     subNames.forEach(([key, text]) => subBar.append(el("button", { type: "button", role: "tab", id: "sub-" + key, "data-key": key, "aria-controls": "subpanel", onclick: () => pick(key) }, text)));
-    const position = "pair " + num(ctx.offset + i + 1) + (count != null && ctx.band === "all" ? " of " + num(count) : "");
+    const position = "pair " + num(ctx.offset + i + 1) + (count != null && !filtered() ? " of " + num(count) : "");
     detail.replaceChildren(...[                                            // filtered: replaceChildren would print an empty slot as "null"
       el("div", { class: "pane-head" }, el("div", { class: "pane-title" },
         el("h2", {}, pairName({ ...it, name_l: A.golden.full_name || it.name_l, name_r: Bp.golden.full_name || it.name_r }), el("span", { class: "muted" }, " (" + position + ")")), el("span", { class: "grow" }), B.prev, B.next),
@@ -2329,8 +2346,11 @@ async function viewInbox(pidArg, statusArg) {
   }
 
   show(page("Review inbox", null, actions, crumbs(crumb(cur.project_name, P(pid)), crumb("Run " + rid, R(pid, rid)))),
-    tabs(tabList, status, (s) => go(() => viewInbox(pid, s))),
-    cur.scoring_mode ? scoringNotice({ scoring: { mode: cur.scoring_mode } }) : null,
+    tabs(tabList, status, (s) => go(() => viewInbox(pid, s, older ? rid : null))),
+    filters,
+    older ? el("div", { class: "notice warn", role: "note" }, "This is an older run. Decisions made here still count, but the newest run may already show these people differently.",
+      el("div", { class: "row" }, btn("Review the newest run", () => go(() => viewInbox(pid, status)), "small"))) : null,
+    !older && cur.scoring_mode ? scoringNotice({ scoring: { mode: cur.scoring_mode } }) : null,
     el("div", { class: "work" }, listPane, detail));
   await loadList(0, 0);
 }

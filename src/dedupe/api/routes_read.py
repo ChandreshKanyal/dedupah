@@ -176,10 +176,11 @@ def _log_unmask(request: Request, p: Principal, object_ref: str, reason: str | N
 @router.get(RUN + "/queue", response_model=list[QueueItem])
 def queue(request: Request, project_id: str = PID, run_id: str = RID, limit: int = Query(50, ge=1), offset: int = Query(0, ge=0, le=100_000),
           status: Literal["open", "unsure", "all"] = "open", min_probability: float = Query(0.0, ge=0.0, le=1.0),
-          max_probability: float = Query(1.0, ge=0.0, le=1.0), p: Principal = READ_QUEUE):
+          max_probability: float = Query(1.0, ge=0.0, le=1.0), forced: bool | None = None, q: str | None = Query(None, max_length=64),
+          p: Principal = READ_QUEUE):
     rs = run_scope(request, project_id, run_id)
     rows = rs.review.queue(limit=min(limit, _services(request).settings.max_page_size), offset=offset, status=status, min_probability=min_probability,
-                           max_probability=max_probability)
+                           max_probability=max_probability, forced=forced, text=q)
     return [QueueItem(person_l=r["cluster_l"], person_r=r["cluster_r"], **{k: r[k] for k in (
         "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state", "name_l", "name_r", "city_l") if k in r}) for r in rows]
 

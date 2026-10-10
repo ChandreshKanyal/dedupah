@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Review filters:** project, run, match score, why it is here, name / person ID / city; backend `forced` and `q` on the queue | 68 |
 | session 4 | **Light only; account menu:** the name in the top bar opens My account, Settings, Sign out (real pages); dark mode removed; nothing kept in browser storage | 67 |
 | session 4 | **Enterprise look, step 2:** Review inbox rebuilt as one work screen (work list left, selected pair right with Same / Different / Not sure, sub-tabs, Undo); queue items carry the people's names | 66 |
 | session 4 | **Enterprise look, step 1:** Informatica-style frame (black top bar, dark grey menu), black-and-grey controls with no accent colour, dense grids, light by default; Review split view approved as a mockup, to be built next | 65 |
@@ -315,6 +316,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-10 (session 4, review filters)** — Filter bar on the Review inbox with a backend search; checked in a browser. Section 68.
 - **2026-10-10 (session 4, account menu)** — Dark mode removed; name menu with My account and Settings pages; checked in a browser. Section 67.
 - **2026-10-10 (session 4, review work screen)** — Review inbox as the approved split view; names on queue items; checked with a decide-and-undo round trip in a real browser. Section 66.
 - **2026-10-10 (session 4, enterprise look)** — Neo-industrial try rejected; Informatica-style mockup approved (no green); step 1 (frame, palette, controls, grids) built and checked in both themes. Section 65.
@@ -1630,3 +1632,21 @@ opens options (My account, Settings, Sign out) that lead to real pages, "like a 
 - **Checked in a real browser:** menu opens, arrows and Escape, My account and Settings at their addresses, a link from Settings to the
   Audit log, a click elsewhere closes, Sign out returns to the sign-in page; no console errors. Panels side by side now line up and tables
   inside panels no longer draw a double border.
+
+## 68. Filters on the Review inbox (2026-10-10, session 4)
+The user asked for filters "like project id, run id, etc., whatever is relevant". A filter bar (Informatica's search criteria: labelled
+fields in one row) now sits under the tabs: **Project**, **Run** (the newest by default; any earlier finished run of the project can be
+picked, with its own address `#/review/<project>/<status>/<run>` and a note that it is an older run), **Match score** (any, 90%+, 50-90%,
+below 50%), **Why it is here** (any reason, flagged by a rule, its score only), **Name, person ID or city** (Enter or Search), and Clear.
+The project picker moved from the header into the bar; the score filter moved out of the list's toolbar.
+- **Backend:** `ReviewService.queue(forced=..., text=...)` and the queue API's `forced` and `q` (at most 64 characters) parameters. The
+  rule filter is part of the SQL; the text filter compares, case-insensitively and with spaces squeezed, against both golden names, both
+  person ids and the first person's city, page by page, so paging still works. No identifier (PAN, mobile...) can be searched.
+- **Counts stay honest:** "1 - 25 of 244" and "pair 1 of 244" show the total only when no filter narrows the list and the run is the
+  newest (the inbox counts the newest run only); tab counts are left out for an older run.
+- **Tests:** rule / score filters split the queue between them; a name in any case with extra spaces, a person id, nothing found, paging;
+  the API refuses a 65-character search and a non-boolean `forced`.
+- **Checked in a real browser:** search "vikram" (4 pairs, all matching, "1 - 4"), Clear (back to "1 - 25 of 244"), "its score only"
+  (no flagged pair), a person id (its one pair), nothing found ("No pairs match these filters."), switching project. The browser check
+  caught two boxes both labelled "Search" (the top bar's and the filter's); the filter's is now "Name, person ID or city".
+- **Not verified:** choosing an older run with real data (both demo projects have one finished run; the first runs failed, section 64).

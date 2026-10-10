@@ -123,24 +123,35 @@ class ReviewService:
                 "contributions": contrib, "decided_by": pair["decided_by"], "reason": pair["reason"]}
 
     # ---- reading -------------------------------------------------------------------------------------------------
-    def queue(self, limit: int = 50, offset: int = 0, status: str = "open", min_probability: float = 0.0, max_probability: float = 1.0) -> list[dict]:
+    def queue(self, limit: int = 50, offset: int = 0, status: str = "open", min_probability: float = 0.0, max_probability: float = 1.0,
+              forced: bool | None = None, text: str | None = None) -> list[dict]:
         """Ranked person pairs. status: 'open' (nothing decided yet), 'unsure' (snoozed), 'all'. A pair is hidden once a steward decided any of its
-        record pairs, even before the next pipeline run (the next run applies the decision and rebuilds the queue)."""
+        record pairs, even before the next pipeline run (the next run applies the decision and rebuilds the queue). forced: only pairs a rule
+        sent here (True) or only pairs their score sent here (False). text: part of either person's name or id, or the first one's city."""
         if status not in ("open", "unsure", "all"):
             raise ReviewError("status is 'open', 'unsure' or 'all'")
+        needle = " ".join((text or "").lower().split())
+        where, args = "top_probability >= ? AND top_probability <= ?", [min_probability, max_probability]
+        if forced is not None:
+            where += " AND forced = ?"
+            args.append(bool(forced))
         con = self._con()
         decided = {frozenset((tuple(j.subject["a"]), tuple(j.subject["b"]))): j.kind for j in self.store.history(("same_person", "different_person", "unsure"))
                    if j.status in ("active", "pending_approval")}
         out, skipped, batch, pos = [], 0, 500, 0
         while len(out) < limit:
-            rows = con.execute(f"SELECT * FROM {crypto.rp(self.f['queue'])} WHERE top_probability >= ? AND top_probability <= ? "
-                               "ORDER BY priority DESC, cluster_l, cluster_r LIMIT ? OFFSET ?", [min_probability, max_probability, batch, pos]).fetchall()
+            rows = con.execute(f"SELECT * FROM {crypto.rp(self.f['queue'])} WHERE {where} "
+                               "ORDER BY priority DESC, cluster_l, cluster_r LIMIT ? OFFSET ?", [*args, batch, pos]).fetchall()
             if not rows:
                 break
             cols = [d[0] for d in con.description]
             pos += len(rows)
             items = [dict(zip(cols, r, strict=True)) for r in rows]
             kinds_by_item = self._decided_kinds(con, items, decided) if decided else {}
+            if needle:
+                self._add_names(con, items)
+                items = [i for i in items if any(needle in " ".join(str(i.get(k) or "").lower().split())
+                                                 for k in ("name_l", "name_r", "cluster_l", "cluster_r", "city_l"))]
             for item in items:
                 kinds = kinds_by_item.get((item["cluster_l"], item["cluster_r"]), set())
                 state = "open" if not kinds else ("unsure" if kinds == {"unsure"} else "decided")
@@ -153,7 +164,8 @@ class ReviewService:
                 out.append(item)
                 if len(out) >= limit:
                     break
-        self._add_names(con, out)
+        if not needle:
+            self._add_names(con, out)
         return out
 
     def _add_names(self, con, items: list[dict]) -> None:
