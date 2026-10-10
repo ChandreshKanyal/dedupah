@@ -1601,6 +1601,11 @@ Built from the mockup the user approved in section 65 (Informatica Task Manager 
 - **Checked in the preview (port 8001, real browser, both themes, no console errors):** picking a pair, the sub-tabs, deciding "Not
   sure" with the U key (moved to the next pair, message with Undo), Undo (the pair came back), the Not sure tab. That round trip left
   the demo data as it was and is in the decision history and audit log.
+- **User edit after step 2:** no ticks or crosses in status labels either: a status is its word alone ("Succeeded" in normal text,
+  "Failed" in red, warnings in amber); the word carries the meaning, colour only helps. `TAG_ICON` removed.
+- **Possible timing flake noted:** `tests/test_api_runs.py::test_a_run_starts_with_202_runs_alone_and_earlier_runs_stay_readable` failed
+  once in a full run on the server (passed alone twice and in the full runs before and after). It waits up to 30 s for background
+  runs; on this shared machine under full load that may be too short. Failing line not captured; watch for it.
 - **Not done yet / honest limits:** field names in the comparison are still the raw lower-case names ("full name", "dob"); the score filter
   and bulk buttons are plain controls, not Informatica's "n selected" drop-down; no priority labels or plain-words "why is this pair here"
   (the rule name is shown); a run's own Review queue tab still uses the older list; the work list does not remember the selected pair in

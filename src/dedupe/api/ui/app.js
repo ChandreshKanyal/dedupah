@@ -397,9 +397,8 @@ const wide = (cols, rows) => table(cols, rows, "wide");
 const kv = (pairs) => el("table", { class: "kv" }, el("tbody", {}, pairs.filter(Boolean).map(([k, v]) => el("tr", {}, el("th", { scope: "row" }, k), el("td", {}, v)))));
 const empty = (text, ...buttons) => el("div", { class: "empty" }, el("span", { class: "empty-icon" }, icon("layers")), el("div", {}, text),
   buttons.filter(Boolean).length ? el("div", { class: "row" }, buttons) : null);
-// Every coloured tag carries a symbol as well as a colour, so its meaning does not depend on seeing the colour.
-const TAG_ICON = { success: "check", danger: "x", warn: "alert", info: "info" };
-const tag = (text, kind) => el("span", { class: "tag" + (kind ? " " + kind : "") }, TAG_ICON[kind] ? icon(TAG_ICON[kind]) : null, text);
+// A status is its word alone ("Succeeded", "Failed"): the word carries the meaning, the colour only helps (no boxes, ticks or crosses).
+const tag = (text, kind) => el("span", { class: "tag" + (kind ? " " + kind : "") }, text);
 // Logos of the products a connection reads from (served from /ui/logos; decorative: the product's name is always written next to them).
 const TYPE_LOGO = { upload: "upload", csv: "csv", tsv: "tsv", xlsx: "xlsx", excel: "xlsx", xls: "xls", json: "json", jsonl: "jsonl", xml: "xml", fixed_width: "fixedwidth",
   parquet: "parquet", avro: "avro", orc: "orc", folder: "folder", postgres: "postgresql", mysql: "mysql", mariadb: "mariadb", sqlserver: "sqlserver", azure_sql: "azuresql",

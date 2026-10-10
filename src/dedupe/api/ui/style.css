@@ -186,11 +186,9 @@ table.diff td.flag { width: 1%; white-space: nowrap; }
 
 /* ---- small elements ------------------------------------------------------------------------------------------------ */
 .tag { display: inline-block; padding: 0; border: 0; border-radius: 0; background: none; color: var(--muted); font-size: 12px; line-height: 18px; white-space: nowrap; }
-.tag.success { color: var(--text); }                      /* status = a coloured mark and plain text, no box (Informatica: a green tick, "Success") */
-.tag.success svg.icon { color: var(--success); }
+.tag.success { color: var(--text); }                      /* a status is plain text: red for failures, amber for warnings */
 .tag.danger { color: var(--danger); }
 .tag.info { color: var(--text); }
-.tag.info svg.icon { color: var(--muted); }
 .tag.warn { color: var(--warn); }
 .muted { color: var(--muted); }
 .bad { color: var(--danger); }
@@ -395,7 +393,6 @@ img.logo-chip.big { width: 36px; height: 36px; padding: 5px; border-radius: 0; }
 .page-icon { display: inline-flex; width: 18px; height: 22px; align-items: center; justify-content: center; flex: none; border-radius: 0; background: none; color: var(--text); }
 .page-icon svg { width: 16px; height: 16px; }
 .tag { display: inline-flex; align-items: center; gap: 4px; }
-.tag svg.icon { width: 13px; height: 13px; stroke-width: 2.5; }
 .stat .label { display: flex; align-items: center; gap: 6px; }
 .stat .label svg { width: 14px; height: 14px; color: var(--muted); }
 .tabs button svg { width: 14px; height: 14px; }
