@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,8 +11,7 @@
 <a id="skip" href="#content">Skip to content</a>
 <div id="login">
   <form id="login-form" autocomplete="off">
-    <img class="logo logo-on-dark" src="/ui/logo-dark.png" alt="Aurionpro - Lead the next">
-    <img class="logo logo-on-light" src="/ui/logo-light.png" alt="Aurionpro - Lead the next">
+    <img class="logo" src="/ui/logo-light.png" alt="Aurionpro - Lead the next">
     <h1>Sign in</h1>
     <p id="login-help">Paste your access token. It is kept in this page's memory only and is gone when you close or reload the tab.</p>
     <p id="login-error" class="bad" role="alert" hidden></p>
@@ -35,7 +34,7 @@
 </div>
 <div id="app" hidden>
   <header id="topbar">
-    <div id="brand"><img class="logo-on-dark" src="/ui/wordmark-dark.png" alt="Aurionpro"><img class="logo-on-light" src="/ui/wordmark-light.png" alt="Aurionpro"><span id="product">Dedupe Workspace</span></div>
+    <div id="brand"><img src="/ui/wordmark-dark.png" alt="Aurionpro"><span id="product">Dedupe Workspace</span></div>
     <div id="search-wrap">
       <input id="search" type="search" placeholder="Search projects and runs" aria-label="Search" autocomplete="off"
              role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list">
@@ -43,11 +42,13 @@
       <div id="search-results" role="listbox" aria-label="Search results" hidden></div>
     </div>
     <div id="account">
-      <button id="theme" class="ghost" aria-label="Switch between dark and light"></button>
-      <span id="avatar" aria-hidden="true"></span>
-      <span id="who"></span>
-      <button id="password-btn" class="ghost" hidden>Password</button>
-      <button id="signout" class="ghost">Sign out</button>
+      <button id="user-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu"><span id="who"></span></button>
+      <div id="user-menu" role="menu" aria-labelledby="user-btn" hidden>
+        <div id="menu-who"></div>
+        <button id="menu-account" type="button" role="menuitem">My account</button>
+        <button id="menu-settings" type="button" role="menuitem">Settings</button>
+        <button id="menu-signout" type="button" role="menuitem">Sign out</button>
+      </div>
     </div>
   </header>
   <nav id="nav" aria-label="Main"></nav>

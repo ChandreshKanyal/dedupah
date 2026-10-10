@@ -1,8 +1,8 @@
 /* Aurionpro dedupe workspace, enterprise look (Informatica Entity 360 style): a black top bar and a dark grey menu, light grey
    workspace with white panels, square corners (2px on buttons and inputs), dense grids, tabs with counts. No accent colour: buttons,
    selection and tabs are black and grey. Red, amber and green appear only as status (an error, a warning, a match), never on controls.
-   Light by default, dark on request. Flat: 1px borders, no shadows, gradients or animation. Every text colour meets WCAG AA (4.5:1). */
-:root, html[data-theme="light"] {
+   Light only. Flat: 1px borders, no shadows, gradients or animation. Every text colour meets WCAG AA (4.5:1). */
+:root {
   --bg: #eceeef; --bg-panel: #ffffff; --bg-subtle: #f5f6f7; --bg-hover: #eceef0; --bg-selected: #dfe2e5; --bg-zebra: #fafbfb; --bg-head: #eef0f1;
   --border: #d9dde0; --border-strong: #b3b9bf; --text: #1f2224; --muted: #5a6168; --link: #1f2224; --selected-text: #1f2224;
   --primary: #1c1d1f; --primary-hover: #3b3e42; --primary-text: #ffffff; --focus: #1c1d1f;
@@ -14,17 +14,6 @@
   --font: "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
   color-scheme: light;
-}
-html[data-theme="dark"] {
-  --bg: #141516; --bg-panel: #1c1d1f; --bg-subtle: #222426; --bg-hover: #2a2c2f; --bg-selected: #35383b; --bg-zebra: #1f2022; --bg-head: #26282a;
-  --border: #33363a; --border-strong: #5c6268; --text: #e6e8ea; --muted: #a2a9af; --link: #e6e8ea; --selected-text: #ffffff;
-  --primary: #e6e8ea; --primary-hover: #c9cdd1; --primary-text: #111214; --focus: #e6e8ea;
-  --button-bg: #26282b; --button-hover: #303337;
-  --danger: #f08497; --danger-bg: #3a1d24; --danger-border: #6b2d3a; --success: #74c991; --success-bg: #18241c; --success-border: #2c5a3c;
-  --warn: #e9c46a; --warn-bg: #33290f; --warn-border: #6b5520; --amber: #e9c46a; --highlight: #4a3f14;
-  --info-bg: #222426; --info-border: #3d4145; --overlay: rgba(0, 0, 0, 0.6);
-  --chrome-top: #000000; --chrome-nav: #18191b; --chrome-line: #2c2f32; --chrome-text: #d9dbdd; --chrome-muted: #9ea4aa; --chrome-hover: #26282b; --chrome-on: #000000;
-  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -50,10 +39,16 @@ a { color: var(--link); text-decoration-color: var(--border-strong); }
 #search-results [role=option]:hover, #search-results [role=option][aria-selected="true"] { background: var(--bg-hover); }
 #search-results .kind { margin-left: auto; color: var(--muted); font-size: 12px; }
 #search-results .none { padding: 10px 12px; color: var(--muted); }
-#account { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 8px 0 4px; color: #ffffff; }
-#account button { height: 26px; border-color: transparent; background: none; color: #ffffff; }
-#account button:hover { background: #26282b; }
-#avatar { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 0; background: #3b3e42; color: #ffffff; font-weight: 600; }
+#account { position: relative; display: flex; align-items: stretch; height: 100%; }
+#user-btn { height: 100%; padding: 0 14px; border: 0; border-radius: 0; background: none; color: #ffffff; font-weight: 600; }
+#user-btn:hover, #user-btn[aria-expanded="true"] { background: #26282b; }
+#user-btn svg { width: 14px; height: 14px; }
+#user-menu { position: absolute; top: 100%; right: 0; z-index: 45; min-width: 220px; padding: 4px 0; border: 1px solid var(--border-strong); background: var(--bg-panel); color: var(--text); }
+#menu-who { padding: 6px 12px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border); color: var(--muted); }
+#menu-who strong { display: block; color: var(--text); }
+#user-menu [role=menuitem] { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 12px; border: 0; border-radius: 0; background: none; text-align: left; }
+#user-menu [role=menuitem]:hover, #user-menu [role=menuitem]:focus-visible { background: var(--bg-hover); outline: none; }
+#user-menu [role=menuitem] svg { color: var(--muted); }
 #nav { overflow-y: auto; padding: 6px 0; background: var(--chrome-nav); color: var(--chrome-text); }
 #new-btn { display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; margin: 0; padding: 0 14px; border: 0; border-radius: 0; background: none; color: var(--chrome-text); }
 #new-btn:hover { background: var(--chrome-hover); }
@@ -149,6 +144,9 @@ button.tile[aria-pressed="true"] { border-color: var(--text); background: var(--
 .panel > h3 { margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--bg-head); font-size: 12px; font-weight: 600; }
 .panel > .body { padding: 10px 12px; }
 .panel + .panel { margin-top: 12px; }
+.cols > .panel + .panel { margin-top: 0; }                 /* side by side, not stacked */
+.panel > .kv, .panel > .scroll > table { border: 0; }      /* the panel is the frame */
+.panel > .scroll { border-radius: 0; }
 .panel.danger-zone { border-color: var(--danger-border); }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 16px; align-items: start; }
 .steps { display: flex; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none; color: var(--muted); flex-wrap: wrap; }
@@ -231,21 +229,16 @@ ul.plain li { margin: 3px 0; }
 .todo-mark .icon { width: 14px; height: 14px; color: var(--success); }
 .log { margin: 0; max-height: 360px; overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 0; background: var(--bg-panel); font-family: var(--mono); font-size: 12px; line-height: 18px; white-space: pre-wrap; word-break: break-word; }
 
-/* Company logo: the dark-background artwork in the dark theme, the light-background artwork in the light theme. */
+/* Company logo: the dark-background wordmark on the black top bar, the light-background logo on the sign-in page. */
 #brand img { height: 18px; width: auto; display: block; padding-right: 14px; border-right: 1px solid #444444; box-sizing: content-box; }
 #login img.logo { display: block; width: 240px; max-width: 100%; height: auto; margin: 0 0 20px; }
-.logo-on-light { display: none !important; }
-html[data-theme="light"] .logo-on-light { display: block !important; }
-html[data-theme="light"] .logo-on-dark { display: none !important; }
-html[data-theme="light"] #brand .logo-on-dark { display: block !important; }
-html[data-theme="light"] #brand .logo-on-light { display: none !important; }
 
 @media (max-width: 860px) {
   #app { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
   #topbar { grid-template-columns: auto 1fr auto; gap: 8px; padding: 8px 0; }
   #brand { padding: 0 0 0 12px; }
   #account { padding: 0 12px 0 0; gap: 4px; }
-  #who, #search-hint, #avatar { display: none; }
+  #search-hint { display: none; }
   #nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--border); }
   #nav h2 { display: none; }
   #new-btn { width: auto; margin: 0; height: 32px; }
@@ -386,7 +379,7 @@ ol.plain-order li { display: list-item; padding: 2px 0; }
 @media (max-width: 640px) { ol.decision-flow li.sep { display: none; } }
 
 /* ---- logos, source catalogue and symbols ------------------------------------------------------------------------------ */
-/* Brand logos sit on a light chip in both themes, so dark marks (Snowflake, Oracle) stay readable on the dark background. */
+/* Brand logos sit on a white chip, so every mark stays readable whatever the row behind it. */
 img.logo-chip { display: inline-block; width: 20px; height: 20px; flex: none; padding: 2px; border-radius: 0; background: #ffffff; border: 1px solid var(--border); object-fit: contain; vertical-align: middle; }
 img.logo-chip.big { width: 36px; height: 36px; padding: 5px; border-radius: 0; }
 .type-cell { display: inline-flex; align-items: center; gap: 8px; }

@@ -14,7 +14,6 @@ let uid = 0;
 const cache = { projects: [], runs: [] };
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
-const THEME_KEY = "dedupe-theme";
 
 // ---- small helpers -----------------------------------------------------------------------------------------------------
 function el(tag, props, ...kids) {
@@ -29,6 +28,7 @@ function el(tag, props, ...kids) {
 }
 const PATHS = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z",
+  down: "m6 9 6 6 6-6",
   folder: "M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
   play: "M7 4.5v15l12-7.5z",
   database: "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3",
@@ -104,22 +104,6 @@ const STATUS_KIND = { active: "success", succeeded: "success", in_force: "succes
   proposed: "info", approved: "info", running: "info", queued: "info", waiting_for_run: "info", pending_approval: "warn", unsure: "warn" };
 const KIND_LABEL = { same_person: "Same person", different_person: "Different people", unsure: "Not sure", split: "Split", field_override: "Corrected a field" };
 const statusTag = (s) => tag(STATUS_LABEL[s] || label(s), STATUS_KIND[s]);
-
-// ---- theme (the one thing kept in browser storage) ---------------------------------------------------------------------
-function setTheme(t, keep) {
-  document.documentElement.setAttribute("data-theme", t);
-  if (keep) { try { localStorage.setItem(THEME_KEY, t); } catch (_) { /* storage may be blocked */ } }
-  const b = $("theme");
-  b.replaceChildren(icon(t === "dark" ? "sun" : "moon"));
-  b.setAttribute("title", t === "dark" ? "Switch to light" : "Switch to dark");
-  b.setAttribute("aria-label", t === "dark" ? "Switch to the light theme" : "Switch to the dark theme");
-}
-function initTheme() {
-  let t = null;
-  try { t = localStorage.getItem(THEME_KEY); } catch (_) { /* default */ }
-  if (t !== "light" && t !== "dark") t = "light";                     // the enterprise look is light; dark stays one click away
-  setTheme(t, false);
-}
 
 // ---- messages and dialogs ----------------------------------------------------------------------------------------------
 // One message at a time, fixed to the corner so it is seen wherever the page is scrolled. It may carry one action (for example Undo).
@@ -242,7 +226,7 @@ function dispatch(path) {
     return viewProject(b, c);
   }
   const top = { runs: viewRuns, "new-run": () => newRun(), review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c)), approvals: viewApprovals,
-    audit: () => viewAudit(), users: viewUsers, roles: viewRoles, password: () => viewPassword(false) }[a];
+    audit: () => viewAudit(), users: viewUsers, roles: viewRoles, password: () => viewPassword(false), account: viewAccount, settings: viewSettings }[a];
   return top ? top() : viewHome();
 }
 const SECTIONS = [["/review/decisions", "Decisions"], ["/review", "Review inbox"], ["/runs", "Runs"], ["/new-run", "Runs"], ["/approvals", "Approvals"],
@@ -253,6 +237,8 @@ function here(path) {
   const sec = path === "/" ? "Home" : (SECTIONS.find(([p]) => path.startsWith(p)) || [null, ""])[1];
   sectionIcon = (NAV.flatMap(([, items]) => items).find(([name]) => name === sec) || [null, null, "home"])[2];
   if (/\/connections|\/add-data/.test(path)) sectionIcon = "plug";
+  if (/^\/(account|password)/.test(path)) sectionIcon = "user";
+  if (path.startsWith("/settings")) sectionIcon = "sliders";
   for (const a of $("nav").querySelectorAll("a")) {
     if (a.dataset.name === sec) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
@@ -306,10 +292,8 @@ async function signIn(ev) {
   } finally { $("signin").disabled = false; }
   $("login").hidden = true;
   $("app").hidden = false;
-  $("avatar").textContent = (me.username || "?").slice(0, 1).toUpperCase();
-  $("who").textContent = me.username;
-  $("who").setAttribute("title", me.roles.map(label).join(", "));
-  $("password-btn").hidden = mode !== "local";
+  $("who").replaceChildren(me.username, icon("down"));
+  $("menu-who").replaceChildren(el("strong", {}, me.username), me.roles.map(label).join(", "));
   if (mustChange) { $("nav").replaceChildren(); await run(() => viewPassword(true)); return; }       // nothing else works until the password is changed
   buildNav();
   go(() => dispatch(readAddress() || "/"));                 // back to the screen that was open (the address survives a reload; the sign-in does not)
@@ -2809,14 +2793,62 @@ async function deleteRole(r) {
   say("Role deleted.", "good");
 }
 
+// ---- the account menu, My account and Settings ------------------------------------------------------------------------------
+// The name in the top bar opens a small menu (a real menu: arrow keys move, Escape and a click elsewhere close it).
+function initUserMenu() {
+  const opener = $("user-btn");
+  const menu = $("user-menu");
+  const items = () => [...menu.querySelectorAll("[role=menuitem]")];
+  const toggle = (open) => { menu.hidden = !open; opener.setAttribute("aria-expanded", String(open)); if (open) items()[0].focus(); };
+  const pick = (fn) => () => { toggle(false); fn(); };
+  opener.addEventListener("click", () => toggle(menu.hidden));
+  $("menu-account").addEventListener("click", pick(() => go(viewAccount)));
+  $("menu-settings").addEventListener("click", pick(() => go(viewSettings)));
+  $("menu-signout").addEventListener("click", pick(() => signOut("")));
+  menu.addEventListener("keydown", (e) => {
+    const all = items();
+    const i = all.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); toggle(false); opener.focus(); return; }
+    const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: all.length - 1 }[e.key];
+    if (to !== undefined) { e.preventDefault(); all[(to + all.length) % all.length].focus(); }
+  });
+  document.addEventListener("click", (e) => { if (!menu.hidden && !menu.contains(e.target) && !opener.contains(e.target)) toggle(false); });
+}
+const SIGN_IN_WORDS = { local: "Username and password, kept by this workspace", oidc: "Your organisation's single sign-on", dev: "Access token (development)" };
+async function viewAccount() {
+  here("/account");
+  const cfg = await api("GET", "/auth/config");
+  show(page("My account", null, [cfg.mode === "local" ? btn("Change password", () => go(() => viewPassword(false)), "", "key") : null, btn("Sign out", () => signOut(""), "", "lock")]),
+    el("div", { class: "cols" },
+      el("div", { class: "panel" }, el("h3", {}, "Profile"), kv([["Name", me.username], ["User ID", el("span", { class: "mono" }, me.sub)],
+        ["Signs in with", SIGN_IN_WORDS[cfg.mode] || label(cfg.mode)]])),
+      el("div", { class: "panel" }, el("h3", {}, "Roles"), el("div", { class: "body" }, el("ul", { class: "plain" }, me.roles.map((r) => el("li", {}, label(r))))),
+        el("details", { class: "advanced body" }, el("summary", {}, "What these roles allow (" + me.permissions.length + ")"),
+          el("ul", { class: "plain" }, me.permissions.map((x) => el("li", { class: "mono" }, x)))))),
+    el("p", { class: "hint" }, "Roles are given by an administrator under Users. " + (cfg.mode === "local" ? "Changing your password signs you out of every other session." : "")));
+}
+async function viewSettings() {
+  here("/settings");
+  const cfg = await api("GET", "/auth/config");
+  const admin = [["Users", "users.manage", "users", "/users", "Add people, reset passwords, turn accounts off, give roles."],
+    ["Roles", "roles.manage", "sliders", "/roles", "Decide what each role may do."],
+    ["Approvals", "config.read", "check", "/approvals", "Rules, connections and decisions waiting for a second person."],
+    ["Audit log", "logs.read", "shield", "/audit", "Who did what and when: sign-ins, exports, shown identifiers, changes."]].filter((x) => can(x[1]));
+  show(page("Settings", "How this workspace is set up. How matching works is set per project, under its Rules tab."),
+    el("div", { class: "panel" }, el("h3", {}, "Workspace"), kv([["Sign-in", SIGN_IN_WORDS[cfg.mode] || label(cfg.mode)],
+      ["Showing masked identifiers", me.unmask_reason_required ? "Allowed for permitted roles with a written reason; every view is logged"
+        : "Allowed for permitted roles; every view is logged"]])),
+    admin.length ? el("div", { class: "panel" }, el("h3", {}, "Administration"), table(["Page", "What it is for"], admin.map(([name, , ic, path, text]) =>
+      linkRow(el("span", { class: "type-cell" }, icon(ic), name), () => dispatch(path), el("td", {}, text))))) : null,
+    el("div", { class: "panel" }, el("h3", {}, "Keyboard shortcuts"), kv([["Ctrl + K", "Search projects and runs"],
+      ["S, D, U", "Review: Same person, Different people, Not sure"], ["N, P", "Review: next and previous pair"], ["Escape", "Close a menu or dialog"]])));
+}
+
 // ---- start ------------------------------------------------------------------------------------------------------------------
-initTheme();
 initSearch();
+initUserMenu();
 initLogin();
-$("theme").addEventListener("click", () => setTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark", true));
 $("login-form").addEventListener("submit", signIn);
-$("signout").addEventListener("click", () => signOut(""));
-$("password-btn").addEventListener("click", () => go(() => viewPassword(false)));
 $("skip").addEventListener("click", (e) => { e.preventDefault(); $("content").focus(); });
 window.addEventListener("hashchange", () => {
   const p = readAddress();

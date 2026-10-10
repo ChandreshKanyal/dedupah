@@ -44,9 +44,8 @@ def test_nothing_in_the_page_or_script_can_inject_markup_or_leak_the_token():
     assert js.count("location.hash") == 2
     assert "function readAddress() { return window.location.hash" in js and "window.location.hash = path;" in js
     assert 'const PART = /^[A-Za-z0-9_.-]{1,64}$/;' in js and "parts.every((x) => PART.test(x))" in js
-    # browser storage holds the colour theme and nothing else (never the token)
-    assert re.findall(r"localStorage\.(\w+)\(([^,)]*)", js) == [("setItem", "THEME_KEY"), ("getItem", "THEME_KEY")]
-    assert 'const THEME_KEY = "dedupe-theme";' in js
+    # nothing is kept in browser storage (never the token; since the light-only look not even a theme)
+    assert "localStorage" not in js and "indexedDB" not in js
     # every request stays on this origin; the only absolute address is the SVG namespace name, which is never fetched
     assert js.replace('"http://www.w3.org/2000/svg"', "").count("http://") == 0 and "https://" not in js
     assert all(not u.startswith("//") for u in re.findall(r'"(//[^"]*)"', js))

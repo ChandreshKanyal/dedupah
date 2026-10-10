@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Light only; account menu:** the name in the top bar opens My account, Settings, Sign out (real pages); dark mode removed; nothing kept in browser storage | 67 |
 | session 4 | **Enterprise look, step 2:** Review inbox rebuilt as one work screen (work list left, selected pair right with Same / Different / Not sure, sub-tabs, Undo); queue items carry the people's names | 66 |
 | session 4 | **Enterprise look, step 1:** Informatica-style frame (black top bar, dark grey menu), black-and-grey controls with no accent colour, dense grids, light by default; Review split view approved as a mockup, to be built next | 65 |
 | session 4 | **First runs on the EC2 server:** synthetic data generated in the container, the two demo projects built through the API (temporary account, disabled after); **fixed: `psutil` was never declared, every run failed in the runtime image**; new dependency test | 64 |
@@ -314,6 +315,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-10 (session 4, account menu)** — Dark mode removed; name menu with My account and Settings pages; checked in a browser. Section 67.
 - **2026-10-10 (session 4, review work screen)** — Review inbox as the approved split view; names on queue items; checked with a decide-and-undo round trip in a real browser. Section 66.
 - **2026-10-10 (session 4, enterprise look)** — Neo-industrial try rejected; Informatica-style mockup approved (no green); step 1 (frame, palette, controls, grids) built and checked in both themes. Section 65.
 - **2026-10-10 (session 4, EC2 server)** — Data built on the server (synthetic seed 42, projects customer-master and insurance-file via the API); undeclared psutil broke every run in the runtime image: declared, dependency test added; both runs succeed. Section 64.
@@ -1610,3 +1612,21 @@ Built from the mockup the user approved in section 65 (Informatica Task Manager 
   and bulk buttons are plain controls, not Informatica's "n selected" drop-down; no priority labels or plain-words "why is this pair here"
   (the rule name is shown); a run's own Review queue tab still uses the older list; the work list does not remember the selected pair in
   the address (reload opens the first pair); on screens narrower than 1000px the two panes stack. Next: Runs, Projects, Connections, Rules.
+
+## 67. Light only, and an account menu (2026-10-10, session 4)
+The user asked: no dark mode, only light; in the top bar no letter box, no "Password" and "Sign out" buttons, only the user's name, which
+opens options (My account, Settings, Sign out) that lead to real pages, "like a proper full working website".
+- **Light only:** the dark palette, the theme button, `setTheme` / `initTheme` and the remembered choice are gone. Nothing is kept in
+  browser storage any more; the UI test that allowed exactly one stored item (the theme) now requires none. One logo each: the
+  light-background logo on the sign-in page, the dark-background wordmark on the black top bar.
+- **Account menu:** the name in the top bar (with a small down arrow) opens a menu: name and roles at the top, then My account, Settings,
+  Sign out. A real menu: `aria-haspopup`, focus moves into it, Up / Down / Home / End move, Escape closes and returns focus, a click
+  elsewhere closes it.
+- **My account** (`#/account`): name, user id, how the person signs in, their roles, the permissions these roles allow (folded), buttons
+  Change password (password sign-in only; the existing password page) and Sign out.
+- **Settings** (`#/settings`): how the workspace is set up (sign-in method, the rule for showing masked identifiers), links to the
+  administration pages the person's role allows (Users, Roles, Approvals, Audit log) and the keyboard shortcuts. Only facts, no pretend
+  switches; matching settings stay per project under Rules. No backend change (`/me` and `/auth/config` already had what is shown).
+- **Checked in a real browser:** menu opens, arrows and Escape, My account and Settings at their addresses, a link from Settings to the
+  Audit log, a click elsewhere closes, Sign out returns to the sign-in page; no console errors. Panels side by side now line up and tables
+  inside panels no longer draw a double border.
