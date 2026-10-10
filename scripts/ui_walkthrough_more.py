@@ -93,7 +93,7 @@ with sync_playwright() as pw:
 
     # compare page, dark, decision panel near the top
     page.goto(BASE + "#/review"); wait(page)
-    page.get_by_role("button", name="Start reviewing").first.click(); wait(page)
+    page.get_by_role("button", name="Open full page").first.click(); wait(page)
     y = page.get_by_role("button", name="Same person").first.bounding_box()["y"]
     print("Same person button at y =", round(y))
     if y > 900:

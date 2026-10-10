@@ -99,7 +99,7 @@ with sync_playwright() as pw:
 
     # review: start from the inbox, decide with the keyboard, undo from the message
     page.click("#nav a[data-name='Review inbox']"); wait(page)
-    start = page.get_by_role("button", name="Start reviewing").first
+    start = page.get_by_role("button", name="Open full page").first           # the inbox is a work screen; this opens the full compare page
     if start.count():
         start.click(); wait(page)
         first = check(page, "compare (first)")
@@ -131,7 +131,7 @@ with sync_playwright() as pw:
         if page.url != here:
             note("flow", "reload did not come back to " + here)
     else:
-        note("flow", "no Start reviewing button in the inbox")
+        note("flow", "no pair to open in the inbox")
 
     # create a throwaway project from the UI, then delete it from its settings
     page.click("#nav a[data-name='Projects']"); wait(page)

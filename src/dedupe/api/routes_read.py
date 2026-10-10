@@ -47,6 +47,9 @@ class QueueItem(BaseModel):
     size_r: int
     priority: float
     state: str
+    name_l: str | None = None          # the golden names of both people and the first one's city, for work lists
+    name_r: str | None = None
+    city_l: str | None = None
 
 
 class RecordView(BaseModel):
@@ -178,7 +181,7 @@ def queue(request: Request, project_id: str = PID, run_id: str = RID, limit: int
     rows = rs.review.queue(limit=min(limit, _services(request).settings.max_page_size), offset=offset, status=status, min_probability=min_probability,
                            max_probability=max_probability)
     return [QueueItem(person_l=r["cluster_l"], person_r=r["cluster_r"], **{k: r[k] for k in (
-        "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state")}) for r in rows]
+        "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state", "name_l", "name_r", "city_l") if k in r}) for r in rows]
 
 
 @router.get(RUN + "/queue/summary", response_model=QueueSummary)

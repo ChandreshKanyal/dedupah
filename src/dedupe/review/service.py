@@ -19,6 +19,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+import duckdb
+
 from dedupe import crypto
 from dedupe.scoring.comparisons import COMPARISONS
 from dedupe.store import JudgmentError, JudgmentStore
@@ -151,7 +153,23 @@ class ReviewService:
                 out.append(item)
                 if len(out) >= limit:
                     break
+        self._add_names(con, out)
         return out
+
+    def _add_names(self, con, items: list[dict]) -> None:
+        """The golden name of both people (and the city of the first) on each item, so a work list can show names, not only ids. Names and
+        cities are not identifiers and are shown unmasked everywhere else too; older runs without golden records simply get no names."""
+        ids = sorted({i[k] for i in items for k in ("cluster_l", "cluster_r")})
+        if not ids:
+            return
+        try:
+            rows = con.execute(f"SELECT cluster_id, full_name, city FROM {crypto.rp(self.f['gold'])} WHERE cluster_id IN (SELECT unnest(?))", [ids]).fetchall()
+        except duckdb.Error:
+            return
+        names = {c: (n, city) for c, n, city in rows}
+        for i in items:
+            i["name_l"], i["city_l"] = names.get(i["cluster_l"], (None, None))
+            i["name_r"] = names.get(i["cluster_r"], (None, None))[0]
 
     def _decided_kinds(self, con, items: list[dict], decided: dict) -> dict:
         """{(cluster_l, cluster_r): set of steward decision kinds on its record pairs}, for a whole page in one query."""

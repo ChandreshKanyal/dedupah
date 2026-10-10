@@ -47,7 +47,9 @@ def test_queue_is_paged_capped_and_allow_listed(api):
     h = hdr(s, "viewer")
     page = c.get(run + "/queue?limit=1000", headers=h).json()
     assert 0 < len(page) <= 5                                                       # max_page_size is enforced by the server
-    assert set(page[0]) == {"person_l", "person_r", "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state"}
+    assert set(page[0]) == {"person_l", "person_r", "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state",
+                            "name_l", "name_r", "city_l"}                    # names and a city for the work list; no identifiers
+    assert all(i["name_l"] and i["name_r"] for i in page)
     assert page[0]["state"] == "open" and page[0]["person_l"].startswith("P")
     assert page == sorted(page, key=lambda i: -i["priority"])
     second = c.get(run + "/queue?limit=2&offset=2", headers=h).json()

@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Enterprise look, step 2:** Review inbox rebuilt as one work screen (work list left, selected pair right with Same / Different / Not sure, sub-tabs, Undo); queue items carry the people's names | 66 |
 | session 4 | **Enterprise look, step 1:** Informatica-style frame (black top bar, dark grey menu), black-and-grey controls with no accent colour, dense grids, light by default; Review split view approved as a mockup, to be built next | 65 |
 | session 4 | **First runs on the EC2 server:** synthetic data generated in the container, the two demo projects built through the API (temporary account, disabled after); **fixed: `psutil` was never declared, every run failed in the runtime image**; new dependency test | 64 |
 | session 3 | Warm restyle (portal + landing round 2) built, then **rolled back at the user's request** (kept in git stash, uncommitted) | 63 |
@@ -313,6 +314,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-10 (session 4, review work screen)** — Review inbox as the approved split view; names on queue items; checked with a decide-and-undo round trip in a real browser. Section 66.
 - **2026-10-10 (session 4, enterprise look)** — Neo-industrial try rejected; Informatica-style mockup approved (no green); step 1 (frame, palette, controls, grids) built and checked in both themes. Section 65.
 - **2026-10-10 (session 4, EC2 server)** — Data built on the server (synthetic seed 42, projects customer-master and insurance-file via the API); undeclared psutil broke every run in the runtime image: declared, dependency test added; both runs succeed. Section 64.
 - **2026-10-08 (session 3, warm restyle rolled back)** — Landing round 2 and a portal reskin were built by background agents; the user did not like them; rolled back (git stash). The user deleted their Trial project; walk-through scripts moved to insurance-file. Section 63.
@@ -1576,3 +1578,30 @@ layout of options must change too, not only the colours. History of this step:
   folder mounted read-only and the scheduler off; the Playwright image `mcr.microsoft.com/playwright/python:v1.48.0-noble` (plus
   `pip install playwright==1.48.0`) signs in as `setup-bot`, which is enabled with a one-time random password only for the shot and
   disabled again (each change in the security log).
+
+## 66. Enterprise look, step 2: the Review inbox as one work screen (2026-10-10, session 4)
+Built from the mockup the user approved in section 65 (Informatica Task Manager layout), black and grey only.
+- **Before:** three places: an inbox summary table ("Start reviewing" per project), each run's review-queue tab, and a separate compare
+  page. **Now `#/review` is one work screen** (`#/review/<project>` and `#/review/<project>/unsure|all`):
+  - header strip: breadcrumb (project / run), title, a project picker with open counts, buttons for "Waiting for a second person (n)",
+    "Decided, next run (n)" and "Run again" when they apply, Refresh; tabs with counts: Open (n), Not sure (n), All, including decided;
+  - **left, the work list** (25 per page): tick boxes with "n selected" and bulk Same person / Different people (a reason is asked, as
+    before), a score filter, each pair as "Name and Name", score, "7 + 1 records", city, "flagged by a rule"; pager with "1 - 25 of 244";
+  - **right, the selected pair**: names and position (pair 1 of 244), Previous / Next, the score, both person ids, the rule that sent it
+    here, masked or not; one row of actions: **Same person** (the only filled button), Different people, Not sure, a note, Show
+    identifiers, Open full page; sub-tabs **Comparison** (golden values side by side), **Records (n)** (every source record of both
+    people), **Evidence** (for / against, from the best-matching record pair), **History** (earlier decisions). Conflicting identifiers
+    still need the confirmation tick and a 10-character note. Keys S / D / U / N / P as before (never while typing).
+  - deciding records the decision and opens the next pair in place; the message offers **Undo**, which brings the pair back.
+- **Backend:** queue items now carry `name_l`, `name_r` (golden full names) and `city_l`, one extra query per page on the golden
+  records (`ReviewService._add_names`); names and cities are not identifiers and were already shown unmasked on the compare and person
+  pages; runs without golden records just get no names. The allow-list test of queue fields now includes them and checks names arrive.
+- **Kept:** the full compare page (reached with "Open full page", and still used by a run's Review queue tab), the Decisions and
+  Approvals pages. The click-through scripts now open a pair through "Open full page" (they looked for "Start reviewing").
+- **Checked in the preview (port 8001, real browser, both themes, no console errors):** picking a pair, the sub-tabs, deciding "Not
+  sure" with the U key (moved to the next pair, message with Undo), Undo (the pair came back), the Not sure tab. That round trip left
+  the demo data as it was and is in the decision history and audit log.
+- **Not done yet / honest limits:** field names in the comparison are still the raw lower-case names ("full name", "dob"); the score filter
+  and bulk buttons are plain controls, not Informatica's "n selected" drop-down; no priority labels or plain-words "why is this pair here"
+  (the rule name is shown); a run's own Review queue tab still uses the older list; the work list does not remember the selected pair in
+  the address (reload opens the first pair); on screens narrower than 1000px the two panes stack. Next: Runs, Projects, Connections, Rules.

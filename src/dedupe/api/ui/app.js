@@ -241,7 +241,7 @@ function dispatch(path) {
     if (c === "new-run") return newRun(b, 2);
     return viewProject(b, c);
   }
-  const top = { runs: viewRuns, "new-run": () => newRun(), review: () => (b === "decisions" ? viewDecisions() : viewInbox()), approvals: viewApprovals,
+  const top = { runs: viewRuns, "new-run": () => newRun(), review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c)), approvals: viewApprovals,
     audit: () => viewAudit(), users: viewUsers, roles: viewRoles, password: () => viewPassword(false) }[a];
   return top ? top() : viewHome();
 }
@@ -2177,29 +2177,179 @@ async function openQueueItem(ctx, index, doneText) {
   await go(() => viewCompare(ctx.pid, ctx.rid, it.person_l, it.person_r));
 }
 
-async function viewInbox() {
-  here("/review");
+// The Review inbox is one work screen (the Task Manager layout of classic MDM tools): the project's open pairs in a work list on the left, the
+// selected pair on the right with its decision buttons. Deciding moves to the next pair in place; Undo is offered in the message.
+const REVIEW_STATUS = ["open", "unsure", "all"];
+const pairName = (it) => (it.name_l || it.person_l) + " and " + (it.name_r || it.person_r);
+async function viewInbox(pidArg, statusArg) {
+  const status = REVIEW_STATUS.includes(statusArg) ? statusArg : "open";
   const [rows] = await Promise.all([api("GET", "/review/inbox"), refreshCache()]);
-  const total = (k) => rows.reduce((n, x) => n + (x[k] || 0), 0);
-  const start = (x, status) => openQueueItem({ pid: x.project_id, rid: x.run_id, status, band: "all" }, 0);
-  const lines = rows.map((x) => el("tr", {},
-    el("td", {}, el("button", { type: "button", class: "link", onclick: () => go(() => viewProject(x.project_id)) }, x.project_name)),
-    el("td", {}, x.run_id ? el("button", { type: "button", class: "link mono", onclick: () => go(() => viewRun(x.project_id, x.run_id)) }, x.run_id) : el("span", { class: "muted" }, "no finished run")),
-    el("td", { class: "num" }, x.open == null ? (x.run_id ? "many" : "") : num(x.open)), el("td", { class: "num" }, num(x.unsure)),
-    el("td", { class: "num" }, num(x.pending_approval)), el("td", { class: "num" }, num(x.waiting_for_run)),
-    el("td", {}, x.scoring_mode && x.scoring_mode !== "id_anchored" ? tag(x.scoring_mode === "unsupervised_em" ? "Scores learned from the data" : "Scores not meaningful", x.scoring_mode === "unsupervised_em" ? "info" : "danger") : ""),
-    el("td", { class: "actions-cell" },
-      x.run_id && x.open ? btn("Start reviewing", () => start(x, "open"), "small primary", "next") : null,
-      x.run_id && x.unsure ? btn("Revisit not sure", () => start(x, "unsure"), "small") : null,
-      x.waiting_for_run && can("runs.start") && x.run_id ? btn("Run again", () => startRun(x.project_id, [], x.run_id, "apply the latest review decisions"), "small", "play") : null)));
-  show(page("Review inbox", "Pairs that need a person, in each project's newest finished run. Older runs' queues are out of date and are not counted here."),
-    el("div", { class: "stats" }, stat("Pairs to review", num(total("open"))), stat("Marked not sure", num(total("unsure"))),
-      stat("Waiting for a second person", num(total("pending_approval")), link("/approvals")), stat("Decisions waiting for the next run", num(total("waiting_for_run")), link("/review/decisions"))),
-    rows.length ? table(["Project", "Newest run", ["To review"], ["Not sure"], ["Second person"], ["Next run"], "Scores", ""], lines)
-      : empty("You are not in any project yet."),
-    el("p", { class: "hint" }, "How it works: open a pair, decide Same person, Different people or Not sure, and the next pair opens. Keys on the compare page: ",
-      el("kbd", {}, "S"), " same, ", el("kbd", {}, "D"), " different, ", el("kbd", {}, "U"), " not sure, ", el("kbd", {}, "N"), " next, ", el("kbd", {}, "P"), " previous. ",
-      "Decisions change the people and golden records at the project's next run."));
+  const usable = rows.filter((x) => x.run_id);
+  const cur = usable.find((x) => x.project_id === pidArg) || [...usable].sort((a, b) => (b.open || 0) - (a.open || 0))[0];
+  here(cur ? "/review/" + cur.project_id + (status === "open" ? "" : "/" + status) : "/review");
+  if (!cur) {
+    show(page("Review inbox", "Pairs that need a person appear here after a project's first finished run."),
+      empty(rows.length ? "No project has a finished run yet." : "You are not in any project yet."));
+    return;
+  }
+  const pid = cur.project_id;
+  const rid = cur.run_id;
+  const ctx = { pid, rid, status, band: "all", offset: 0 };
+  const picker = el("select", { "aria-label": "Project" }, usable.map((x) => el("option", { value: x.project_id, selected: x.project_id === pid },
+    x.project_name + (x.open == null ? "" : " (" + num(x.open) + ")"))));
+  picker.addEventListener("change", () => go(() => viewInbox(picker.value, status)));
+  const actions = [picker,
+    cur.pending_approval ? btn("Waiting for a second person (" + num(cur.pending_approval) + ")", link("/approvals"), "", "check") : null,
+    cur.waiting_for_run ? btn("Decided, next run (" + num(cur.waiting_for_run) + ")", link("/review/decisions"), "", "list") : null,
+    cur.waiting_for_run && can("runs.start") ? btn("Run again", () => startRun(pid, [], rid, "apply the latest review decisions"), "", "play") : null,
+    btn("", () => go(() => viewInbox(pid, status)), "icon", "refresh", { "aria-label": "Refresh", title: "Refresh" })];
+  const count = { open: cur.open, unsure: cur.unsure }[status];
+  const tabList = [["open", "Open" + (cur.open == null ? "" : " (" + num(cur.open) + ")")], ["unsure", "Not sure (" + num(cur.unsure) + ")"], ["all", "All, including decided"]];
+  const listPane = el("section", { class: "pane list-pane", "aria-label": "Pairs to review" });
+  const detail = el("section", { class: "pane detail-pane", "aria-label": "Selected pair", "aria-live": "polite" });
+  const writer = can("judgment.write");
+  const chosen = new Set();
+  let items = [];
+  let at = 0;
+
+  async function loadList(offset, select) {
+    ctx.offset = Math.max(0, offset);
+    items = await api("GET", queueUrl(ctx, QUEUE_PAGE, ctx.offset));
+    chosen.clear();
+    at = Math.min(Math.max(select || 0, 0), Math.max(items.length - 1, 0));
+    drawList();
+    if (items.length) await openPair(at);
+    else detail.replaceChildren(el("div", { class: "pane-empty" }, status === "open" ? "Nothing to review here." + (ctx.band === "all" ? "" : " Try another score.") : "No pairs in this view."));
+  }
+  function drawList() {
+    const selCount = el("span", { class: "sel-count" }, num(chosen.size) + " selected");
+    const band = el("select", { "aria-label": "Match score" }, BANDS.map(([v, t]) => el("option", { value: v, selected: v === ctx.band }, t)));
+    band.addEventListener("change", () => run(async () => { ctx.band = band.value; await loadList(0, 0); }));
+    const bulk = async (decision) => {
+      if (!chosen.size) { say("Tick the pairs first.", "bad"); return; }
+      const what = decision === "approve" ? "Same person" : "Different people";
+      const why = await askReason(what + " for " + plural(chosen.size, "pair", "pairs"), "Why? It is recorded with every one of these decisions", decision === "approve" ? 10 : 0,
+        "Decide " + plural(chosen.size, "pair", "pairs"));
+      if (why === null) return;
+      const out = await api("POST", R(pid, rid) + "/decisions/bulk", { decision, reason: why, items: [...chosen].map((it) => ({ person_l: it.person_l, person_r: it.person_r })) },
+        { "Idempotency-Key": uuid() });
+      await loadList(ctx.offset, at);
+      say(plural(out.done.length, "pair", "pairs") + " decided." + (out.failed.length ? " Not done: " + out.failed.map((f) => f.pair + " (" + f.error + ")").join("; ") : ""), out.failed.length ? "bad" : "good");
+    };
+    const rowsEl = items.map((it, i) => {
+      const cb = writer && it.state !== "decided" ? el("input", { type: "checkbox", "aria-label": "Select " + pairName(it), checked: chosen.has(it) }) : null;
+      if (cb) cb.addEventListener("change", () => { if (cb.checked) chosen.add(it); else chosen.delete(it); selCount.textContent = num(chosen.size) + " selected"; });
+      return el("div", { class: "wl-item" + (i === at ? " on" : "") }, cb || el("span"),
+        el("button", { type: "button", class: "wl-open", "aria-current": i === at ? "true" : null, onclick: () => run(() => openPair(i)) },
+          el("span", { class: "wl-title" }, pairName(it)), el("span", { class: "wl-score" }, pct(it.top_probability)),
+          el("span", { class: "wl-meta" }, it.size_l + " + " + it.size_r + " records", it.city_l ? " · " + it.city_l : "", it.forced ? " · flagged by a rule" : "",
+            it.state !== "open" ? [" · ", statusTag(it.state)] : null)));
+    });
+    const last = ctx.offset + items.length;
+    listPane.replaceChildren(
+      el("div", { class: "pane-tool" }, selCount,
+        writer ? btn("Same person", () => bulk("approve"), "small", null, { title: "Same person for the ticked pairs" }) : null,
+        writer ? btn("Different people", () => bulk("reject"), "small", null, { title: "Different people for the ticked pairs" }) : null,
+        el("span", { class: "grow" }), band),
+      items.length ? el("div", { class: "wl" }, rowsEl) : el("div", { class: "pane-empty" }, "No pairs."),
+      el("div", { class: "pane-foot" },
+        btn("", () => loadList(ctx.offset - QUEUE_PAGE, 0), "small icon", "prev", { "aria-label": "Previous page", disabled: ctx.offset === 0 }),
+        btn("", () => loadList(ctx.offset + QUEUE_PAGE, 0), "small icon", "next", { "aria-label": "Next page", disabled: items.length < QUEUE_PAGE }),
+        el("span", { class: "grow" }),
+        items.length ? (ctx.offset + 1) + " - " + last + (count != null && ctx.band === "all" ? " of " + num(count) : "") : ""));
+  }
+
+  async function openPair(i, reveal) {
+    at = i;
+    for (const [n, row] of [...listPane.querySelectorAll(".wl-item")].entries()) {
+      row.classList.toggle("on", n === i);
+      const b = row.querySelector(".wl-open");
+      if (n === i) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
+    }
+    const it = items[i];
+    const base = R(pid, rid);
+    const c = await api("GET", base + "/people/" + it.person_l + "/compare/" + it.person_r + (reveal ? "?" + unmaskQuery(reveal) : ""));
+    const [A, Bp] = c.persons;
+    const note = el("input", { type: "text", maxlength: "300", placeholder: "Note (optional, kept with the decision)", "aria-label": "Note" });
+    const conflict = c.hard_conflicts.length ? el("input", { type: "checkbox" }) : null;
+    const keys = {};
+    const decide = async (kind) => {
+      if (kind === "approve" && conflict && !conflict.checked) { say("These two people have conflicting identifiers. Tick the confirmation box first, or decide Different people.", "bad"); conflict.focus(); return; }
+      if (kind === "approve" && conflict && note.value.trim().length < 10) { say("Merging people with conflicting identifiers needs a note of at least 10 characters.", "bad"); note.focus(); return; }
+      keys[kind] = keys[kind] || uuid();
+      const body = { person_l: it.person_l, person_r: it.person_r, reason: note.value.trim() };
+      if (kind === "approve" && conflict) body.confirm_id_conflict = true;
+      const out = await api("POST", base + "/decisions/" + kind, body, { "Idempotency-Key": keys[kind] });
+      const words = { approve: "Same person", reject: "Different people", unsure: "Not sure" }[kind];
+      const msg = words + " recorded for " + pairName(it) + (out.pending_approval ? ". It waits for a second person." : ". It applies at the project's next run.");
+      const stays = status === "all" || (status === "unsure" && kind === "unsure");
+      await loadList(ctx.offset, stays ? i + 1 : i);
+      say(msg, "good", { label: "Undo", icon: "undo", fn: async () => {
+        await api("POST", P(pid) + "/decisions/" + out.action_id + "/undo", { reason: "undone right after deciding" });
+        await loadList(ctx.offset, i);
+        say("The decision on " + pairName(it) + " was undone.", "good");
+      } });
+    };
+    const B = {
+      same: writer ? btn("Same person", () => decide("approve"), "primary", "check", { "aria-keyshortcuts": "S", title: "S" }) : null,
+      diff: writer ? btn("Different people", () => decide("reject"), "", "x", { "aria-keyshortcuts": "D", title: "D" }) : null,
+      unsure: writer ? btn("Not sure", () => decide("unsure"), "", null, { "aria-keyshortcuts": "U", title: "U" }) : null,
+      prev: btn("Previous", () => (i > 0 ? openPair(i - 1) : ctx.offset ? loadList(ctx.offset - QUEUE_PAGE, QUEUE_PAGE - 1) : null), "", "prev",
+        { "aria-keyshortcuts": "P", title: "P", disabled: i === 0 && ctx.offset === 0 }),
+      next: btn("Next", () => (i + 1 < items.length ? openPair(i + 1) : loadList(ctx.offset + QUEUE_PAGE, 0)), "", "next",
+        { "aria-keyshortcuts": "N", title: "N", disabled: i + 1 >= items.length && items.length < QUEUE_PAGE }),
+    };
+    pageKeys = (e) => {
+      const k = { s: B.same, d: B.diff, u: B.unsure, n: B.next, j: B.next, p: B.prev, k: B.prev }[e.key.toLowerCase()];
+      if (k && !k.disabled) { e.preventDefault(); k.click(); }
+    };
+    const more = [
+      can("pii.unmask") && !c.unmasked ? btn("Show identifiers", async () => { const why = await revealIdentifiers("Show identifiers"); if (why) await openPair(i, why); }) : null,
+      btn("Open full page", () => { reviewCtx = { ...ctx, index: ctx.offset + i, l: it.person_l, r: it.person_r }; return go(() => viewCompare(pid, rid, it.person_l, it.person_r)); }, "", "external"),
+    ];
+    const both = [A, Bp].flatMap((x) => x.records.map((r) => el("tr", {}, el("td", { class: "mono" }, x.person_id), el("td", {}, r.source_id), el("td", { class: "mono" }, r.source_record_id),
+      el("td", {}, r.name_as_written || ""), el("td", {}, r.dob || ""), el("td", {}, r.mobile || ""), el("td", {}, r.email || ""), el("td", {}, r.city || ""))));
+    const evidence = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, label(x.comparison) + ": " + x.level + " (" + x.bits.toFixed(1) + " bits)")))
+      : el("p", { class: "muted" }, "None."));
+    const panes = {
+      compare: () => [fieldDiff(A.golden, Bp.golden)],
+      records: () => [table(["Person", "Source", "Record", "Name as written", "Date of birth", "Mobile", "Email", "City"], both)],
+      evidence: () => [el("p", { class: "hint" }, "From the best-matching pair of records."),
+        el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the same person"), el("div", { class: "body" }, evidence(c.why_match))),
+          el("div", { class: "panel" }, el("h3", {}, "For different people"), el("div", { class: "body" }, evidence(c.why_not))))],
+      history: () => [c.existing_judgments.length ? table(["Decision", "By", "Status", "Reason"], c.existing_judgments.map((j) => el("tr", {}, el("td", {}, KIND_LABEL[j.kind] || label(j.kind)),
+        el("td", {}, j.actor), el("td", {}, statusTag(j.status === "active" ? "in_force" : j.status === "revoked" ? "undone" : j.status)), el("td", {}, j.reason))))
+        : el("p", { class: "muted" }, "No earlier decisions on these records.")],
+    };
+    const subNames = [["compare", "Comparison"], ["records", "Records (" + (A.record_count + Bp.record_count) + ")"], ["evidence", "Evidence"],
+      ["history", "History" + (c.existing_judgments.length ? " (" + c.existing_judgments.length + ")" : "")]];
+    const subBody = el("div", { class: "pane-body", role: "tabpanel", id: "subpanel" });
+    const subBar = el("div", { class: "subtabs", role: "tablist", "aria-label": "About this pair" });
+    const pick = (key) => {
+      for (const b of subBar.children) b.setAttribute("aria-selected", b.dataset.key === key ? "true" : "false");
+      subBody.setAttribute("aria-labelledby", "sub-" + key);
+      subBody.replaceChildren(...panes[key]().flat().filter(Boolean));
+    };
+    subNames.forEach(([key, text]) => subBar.append(el("button", { type: "button", role: "tab", id: "sub-" + key, "data-key": key, "aria-controls": "subpanel", onclick: () => pick(key) }, text)));
+    const position = "pair " + num(ctx.offset + i + 1) + (count != null && ctx.band === "all" ? " of " + num(count) : "");
+    detail.replaceChildren(...[                                            // filtered: replaceChildren would print an empty slot as "null"
+      el("div", { class: "pane-head" }, el("div", { class: "pane-title" },
+        el("h2", {}, pairName({ ...it, name_l: A.golden.full_name || it.name_l, name_r: Bp.golden.full_name || it.name_r }), el("span", { class: "muted" }, " (" + position + ")")), el("span", { class: "grow" }), B.prev, B.next),
+        el("p", { class: "muted" }, "Score " + pct(c.probability) + " · " + A.person_id + " (" + plural(A.record_count, "record", "records") + ") and " + Bp.person_id + " (" +
+          plural(Bp.record_count, "record", "records") + ") · Run " + rid + (c.decided_by ? " · Rule: " + c.decided_by : it.forced ? " · Flagged by a rule" : ""),
+          c.unmasked ? " · Identifiers shown in full; this view is logged." : " · Identifiers masked.")),
+      c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(label).join(", ") + ". These are probably two different people.",
+        writer ? el("label", { class: "check" }, conflict, el("span", {}, "I confirm they are one person despite the conflicting identifiers (a note is required)")) : null) : null,
+      el("div", { class: "pane-actions" }, writer ? [B.same, B.diff, B.unsure, note] : el("span", { class: "muted" }, "Your role can look but not decide."), el("span", { class: "grow" }), more),
+      subBar, subBody].filter(Boolean));
+    pick("compare");
+  }
+
+  show(page("Review inbox", null, actions, crumbs(crumb(cur.project_name, P(pid)), crumb("Run " + rid, R(pid, rid)))),
+    tabs(tabList, status, (s) => go(() => viewInbox(pid, s))),
+    cur.scoring_mode ? scoringNotice({ scoring: { mode: cur.scoring_mode } }) : null,
+    el("div", { class: "work" }, listPane, detail));
+  await loadList(0, 0);
 }
 
 async function reviewQueue(pid, rid, ctx) {
