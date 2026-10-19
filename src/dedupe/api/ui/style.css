@@ -457,3 +457,12 @@ button.small.icon { width: 22px; }
   .list-pane { border-right: 1px solid var(--border-strong); border-bottom: 0; }
   .wl { max-height: 320px; }
 }
+
+/* project setup, new run, run header */
+.narrow { max-width: 560px; }
+.subtabs.page-sub { padding: 0; margin: 0 0 14px; }
+.guide-nav { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); }
+.run-part { margin-bottom: 18px; }
+.run-part > .muted { margin: 6px 0 0; }
+.run-used { margin: 0 0 12px; padding: 8px 0; border-bottom: 1px solid var(--border); color: var(--muted); }
+.run-used strong { color: var(--text); font-weight: 600; }

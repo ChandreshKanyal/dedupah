@@ -139,3 +139,30 @@ def test_real_runs_over_connections_excel_alone_then_several_then_again(tmp_path
     assert [(i["person_l"], i["person_r"]) for i in ids_1] == [(i["person_l"], i["person_r"]) for i in ids_2]   # person IDs are stable across a project's runs
     home = c.get("/home", headers=admin).json()
     assert home["projects"] == 2 and home["connections"] == len(ids) + 1 and len(home["recent_runs"]) == 3
+
+
+def test_a_run_can_be_started_with_chosen_rule_versions(tmp_path):
+    """The run screen names the rule versions to use; they are checked, written next to the run and handed to the pipeline."""
+    from dedupe.workspace.runs import CONFIG_VERSIONS, pipeline_command
+    c, s, sv, _ = world(tmp_path, fake("pass"))
+    admin = hdr(s, "platform_admin", "u-ops")
+    default = c.get(P + "/config/decision/default", headers=admin).json()["content"]
+    v = c.post(P + "/config/decision/propose", json={"content": {**default, "auto_merge_at": 0.97}, "reason": "stricter merges to try"}, headers=hdr(s, "rule_admin", "u-ops")).json()["version"]
+    run = {"connections": ["crm"]}
+    assert c.post(P + "/runs", json={**run, "rules": {"decision": 99}}, headers=admin).status_code == 422                  # no such version
+    assert c.post(P + "/runs", json={**run, "rules": {"golden": 1}}, headers=admin).status_code == 422                     # no such rule set
+    held = c.post(P + "/runs", json={**run, "rules": {"decision": v}}, headers=admin)                                       # second approval on: a draft never runs
+    assert held.status_code == 422 and "approval" in held.text
+    assert c.post(f"{P}/config/decision/versions/{v}/approve", json={}, headers=hdr(s, "approver", "u-lee")).status_code == 200
+    r = c.post(P + "/runs", json={**run, "rules": {"decision": v}}, headers=admin)                                          # approved, not live: may run
+    assert r.status_code == 202, r.text
+    rid = r.json()["id"]
+    sv.jobs.wait(PROJECT, rid, 30)
+    run_dir = sv.workspace.run_dir(PROJECT, rid)
+    assert json.loads((run_dir / CONFIG_VERSIONS).read_text(encoding="utf-8")) == {"decision": v}
+    assert c.get(f"{P}/runs/{rid}", headers=admin).json()["options"] == {"full": False, "rules": {"decision": v}}
+    cmd = pipeline_command(run_dir, run_dir / "sources.json", tmp_path)
+    assert cmd[cmd.index("--config-versions") + 1] == str(run_dir / CONFIG_VERSIONS)
+    plain = c.post(P + "/runs", json=run, headers=admin).json()["id"]                                                   # nothing chosen: the live versions
+    sv.jobs.wait(PROJECT, plain, 30)
+    assert not (sv.workspace.run_dir(PROJECT, plain) / CONFIG_VERSIONS).exists()

@@ -71,13 +71,15 @@ def _now(precision: str = "seconds") -> str:
 
 
 def pipeline_command(run_dir: Path, sources: Path, registry: Path) -> list[str]:
-    prev = run_dir / PREVIOUS_RUN
+    prev, pinned = run_dir / PREVIOUS_RUN, run_dir / CONFIG_VERSIONS
     return [sys.executable, "-m", "dedupe.pipeline", "--sources", str(sources), "--work", str(run_dir), "--registry-dir", str(registry),
             "--model-path", str(run_dir / "model.json"), "--database-from-env",
+            *(["--config-versions", str(pinned)] if pinned.exists() else []),
             *(["--previous-run", prev.read_text(encoding="utf-8").strip()] if prev.exists() else [])]
 
 
 PREVIOUS_RUN = "previous_run.txt"     # written at launch: the project's latest successful run, whose work an incremental run reuses
+CONFIG_VERSIONS = "config_versions.json"   # written at start when the run was started with chosen rule versions
 
 
 def headline(work: Path) -> dict:
@@ -184,9 +186,10 @@ class RunJobs:
 
     # ---- start -------------------------------------------------------------------------------------------------------
     def start(self, project_id: str, sources: dict, used: list[dict], actor: str, reason: str = "", key: str | None = None,
-              full: bool = False) -> tuple[Run, bool]:
+              full: bool = False, rules: dict | None = None) -> tuple[Run, bool]:
         """`sources` is the ingest configuration assembled from the chosen connections' live versions; `used` records which ones.
         `full`: process every record from scratch instead of reusing the project's latest successful run for unchanged records.
+        `rules`: config name -> version to use (checked by the caller); names left out use the version that is live when the run starts.
         Returns (run, replayed). The run starts at once when there is room, otherwise it waits in the queue. Raises RunError when the queue is full."""
         with self._lock:
             if key is not None:
@@ -200,7 +203,9 @@ class RunJobs:
             run_dir = self.ws.run_dir(project_id, rid)
             run_dir.mkdir(parents=True)
             (run_dir / "sources.json").write_text(json.dumps(sources, indent=2, ensure_ascii=False), encoding="utf-8")
-            (run_dir / "run_options.json").write_text(json.dumps({"full": bool(full)}), encoding="utf-8")
+            (run_dir / "run_options.json").write_text(json.dumps({"full": bool(full), "rules": rules or {}}), encoding="utf-8")
+            if rules:
+                (run_dir / CONFIG_VERSIONS).write_text(json.dumps(rules), encoding="utf-8")
             with self.engine.begin() as c:
                 c.execute(runs.insert().values(id=rid, project_id=project_id, created_at=_now("microseconds"), requested_by=actor, status="queued", idempotency_key=key,
                                                reason=reason, connections=json.dumps(used), summary="{}"))

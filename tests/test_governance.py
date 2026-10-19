@@ -1,5 +1,6 @@
 """Versioned, audited configuration: workflow, four eyes, tamper evidence, rollback, dry run, and use by the pipeline."""
 import json
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -210,3 +211,21 @@ def test_command_line_workflow(tmp_path, capsys):
     assert cli(base + ["list", "decision"]) == 0 and "active" in capsys.readouterr().out
     assert cli(base + ["verify"]) == 0
     assert cli(base + ["impact", "--work", str(tmp_path / "nowhere"), "--version", "2"]) == 2   # no previous run to compare with
+
+
+def test_a_run_uses_the_versions_it_was_started_with(tmp_path):
+    from dedupe.governance.resolve import resolve
+    url = f"sqlite:///{tmp_path / 'cfg.db'}"
+    store = ConfigStore.open(url, solo=True)
+    live = store.propose("decision", _variant(auto_merge_at=0.95), "asha", "live one")
+    store.activate("decision", live, "asha")
+    draft = store.propose("decision", _variant(auto_merge_at=0.99), "asha", "a draft to try")
+    files = (Path("configs/decision_default.json"), Path("configs/survivorship_default.json"))
+    assert resolve(url, *files).decision.auto_merge_at == 0.95
+    chosen = resolve(url, *files, {"decision": draft})
+    assert chosen.decision.auto_merge_at == 0.99 and chosen.used["decision"] == {**chosen.used["decision"], "version": draft, "pinned": True}
+    store.decline("decision", draft, "ravi", "not this one")
+    with pytest.raises(ValueError):
+        resolve(url, *files, {"decision": draft})
+    with pytest.raises(ValueError):
+        resolve(url, *files, {"decision": 42})

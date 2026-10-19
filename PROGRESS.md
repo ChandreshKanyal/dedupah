@@ -1,7 +1,7 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-10-10 (session 4, EC2 server)
+> Last updated: 2026-10-19 (session 4, EC2 server)
 
 ## >>> RESUME HERE (latest state: end of session 2, after review round 2) <<<
 
@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Projects and runs redesigned:** 4 tabs (Setup, Runs, Results, Settings); nothing assumed (rules must be chosen); Save = in use without second approval; guided new project; one-screen New run with rule versions per run (backend `rules`) | 69 |
 | session 4 | **Review filters:** project, run, match score, why it is here, name / person ID / city; backend `forced` and `q` on the queue | 68 |
 | session 4 | **Light only; account menu:** the name in the top bar opens My account, Settings, Sign out (real pages); dark mode removed; nothing kept in browser storage | 67 |
 | session 4 | **Enterprise look, step 2:** Review inbox rebuilt as one work screen (work list left, selected pair right with Same / Different / Not sure, sub-tabs, Undo); queue items carry the people's names | 66 |
@@ -316,6 +317,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-19 (session 4, projects and runs)** — Project and run sections redesigned (Setup tab, guided new project, one-screen New run, runs pin rule versions); checked in a browser. Section 69.
 - **2026-10-10 (session 4, review filters)** — Filter bar on the Review inbox with a backend search; checked in a browser. Section 68.
 - **2026-10-10 (session 4, account menu)** — Dark mode removed; name menu with My account and Settings pages; checked in a browser. Section 67.
 - **2026-10-10 (session 4, review work screen)** — Review inbox as the approved split view; names on queue items; checked with a decide-and-undo round trip in a real browser. Section 66.
@@ -1650,3 +1652,42 @@ The project picker moved from the header into the bar; the score filter moved ou
   (no flagged pair), a person id (its one pair), nothing found ("No pairs match these filters."), switching project. The browser check
   caught two boxes both labelled "Search" (the top bar's and the filter's); the filter's is now "Name, person ID or city".
 - **Not verified:** choosing an older run with real data (both demo projects have one finished run; the first runs failed, section 64).
+
+## 69. Projects and runs redesigned: nothing assumed, everything visible (2026-10-19, session 4)
+The user: creating or using a project was "very inconsistent", options such as rules were "completely skipped or assumed by the platform",
+and they wanted the project and run sections minimal with more control for the user. Problems found before the change: a run silently
+used "the live rules, or built-in defaults when none are live"; a saved connection did nothing until "Make live" was pressed elsewhere;
+ticking "same PAN = same person" while mapping silently proposed a rules version that then had to be found and made live in another tab;
+a project had 10 tabs (Rules had 3 more inside); the New run screen summed up all rules in one grey line and could not choose a version.
+The user said "start all" to the five-step plan; all five are in this commit.
+- **Project: 4 tabs instead of 10.** **Setup** (one table: 1 Data, 2 Matching rules, 3 Golden record, plus optional Technical settings,
+  each with what is chosen in plain words and its status; a line says what is missing before a run can start), **Runs** (runs, then
+  schedules), **Results** (sub-tabs Files and Decisions), **Settings** (sub-tabs General, Members, Activity). Each setup part opens at
+  `#/projects/<id>/setup/data|matching|golden|technical`. Old addresses and links (`/connections`, `/rules`, `/schedules`, `/access`...)
+  open the new place.
+- **Nothing assumed.** Until a project has matching and golden-record rules in use, Setup shows "Not chosen yet" and the rules page offers
+  "Use the standard rules" (saves the standard rules as the project's version 1) or "Change them first". The New run screen refuses to start
+  without them. Existing projects (both demo projects) now show "Not chosen yet" until someone chooses: on purpose.
+- **No hidden "make live" step.** With second approval off, Save means in use (connections, rules, database destinations: propose then
+  activate in one go, still versioned and logged). With it on, the version waits for someone else's approval, as before. "Live" is now
+  called "In use" everywhere ("Put in use" for the button). The identifier choice left the mapping step: it is part of Matching rules.
+- **New project = guided flow**: `#/new-project` (a page, not a dialog), then Data, Matching rules, Golden record, Check and run, with a
+  step bar and Back / Next buttons on each setup part until the project's first run.
+- **New run = one screen** (`#/projects/<id>/new-run`): 1 Data (every connection with a tick box; ones not in use are shown but cannot be
+  chosen; nothing is pre-ticked, "Choose all in use" button), 2 Matching rules, 3 Golden record, 4 Technical settings (a version picker
+  each, the version in use pre-selected, what the chosen version does in words, a warning when it is not the one in use), 5 How to load,
+  reason, Start run.
+- **Backend: runs can use chosen rule versions.** `POST /projects/<id>/runs` takes `rules: {decision|survivorship|settings: version}`.
+  Checked: the version must exist and not be declined; while second approval is on only approved, in-use or earlier versions may run (a
+  draft never produces results there). Written to the run folder (`config_versions.json`) and passed to the pipeline
+  (`--config-versions`); `resolve()` uses those versions as they are and records `pinned: true`. Left out = the version in use at start
+  (schedules, Run again, the API as before). The run detail now returns `options` (load mode and chosen versions).
+- **Run page:** one line under the title says exactly what the run read and used (data versions, matching rules, golden record, technical
+  settings, load). The Log tab is gone: the log is folded at the end of Overview and read only when opened.
+- **Tests:** a run started with chosen versions (unknown version and unknown rule set refused, an unapproved draft refused while second
+  approval is on, an approved one accepted; files and command line checked; no file without a choice); `resolve()` uses a chosen draft
+  and refuses a declined or missing one. Click-through scripts updated to the new labels and addresses (not run: they need the laptop).
+- **Checked in a real browser (preview, port 8001):** every new screen of customer-master, an old address, and a new project set up end to
+  end (create, Data, Use the standard rules twice, Check and run, Start refused with "Choose at least one connection to read."), then
+  deleted again from Settings; no console errors.
+- **Open question for the user:** "Run again" still uses the versions in use now (not the ones the earlier run used).

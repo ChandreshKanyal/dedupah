@@ -1,10 +1,12 @@
 """Home, projects and runs.
 
 A project holds its own decisions, person IDs and rules. A run executes a project over chosen connections (only their live, approved versions)
-and returns 202 at once; its results stay readable afterwards. The caller chooses the project and the connections, nothing else.
+and returns 202 at once; its results stay readable afterwards. The caller chooses the project, the connections, how to load and,
+if it wants, which version of each rule set to use (else the live one).
 """
 import json
 import re
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -72,6 +74,7 @@ class StartIn(Strict):
     from_run: str | None = Field(None, pattern=RUN_ID)
     reason: str = Field("", max_length=300)
     full_rerun: bool = False     # process every record from scratch instead of reusing the latest successful run for unchanged records
+    rules: dict[Literal["decision", "survivorship", "settings"], int] | None = None    # versions to use; left out = the version live at start
 
 
 class RunView(BaseModel):
@@ -208,9 +211,10 @@ def start_run(request: Request, response: Response, body: StartIn, project_id: s
         raise HTTPException(422, "Choose at least one connection.")
     if len(set(ids)) != len(ids) or any(not _valid(c) for c in ids):
         raise HTTPException(422, "Connection ids must be distinct and well formed.")
+    rules = _chosen_rules(sv, project_id, body.rules or {})
     try:
         sources, used = sv.jobs.build_request(project_id, ids)
-        run, replayed = sv.jobs.start(project_id, sources, used, p.sub, body.reason, key, full=body.full_rerun)
+        run, replayed = sv.jobs.start(project_id, sources, used, p.sub, body.reason, key, full=body.full_rerun, rules=rules)
     except RunError as e:
         raise HTTPException(409, str(e)[:300]) from None
     if replayed:
@@ -219,6 +223,21 @@ def start_run(request: Request, response: Response, body: StartIn, project_id: s
         sv.seclog.record("run_started", actor=p.actor, roles=p.roles, status=202, object_ref=f"{project_id}/{run.id}", detail={"action": "start",
                          "connections": ids}, **_context(request))
     return _run_view(run, replayed, sv)
+
+
+def _chosen_rules(sv, project_id: str, chosen: dict) -> dict:
+    """Check the rule versions a run was started with: each must exist and not be declined; while the project requires a second approval, only
+    approved or live versions may run (an unapproved draft never produces results there)."""
+    configs = sv.workspace.stores(project_id)[1]
+    second = sv.workspace.second_approval(project_id)
+    allowed = {"active", "approved", "superseded"} | (set() if second else {"proposed"})
+    for name, version in chosen.items():
+        v = next((x for x in configs.versions(name) if x.version == version), None)
+        if v is None:
+            raise HTTPException(422, f"There is no version {version} of the {name} rules.")
+        if v.status not in allowed:
+            raise HTTPException(422, f"Version {version} of the {name} rules is {v.status}" + (": it needs a second person's approval first." if second and v.status == "proposed" else "."))
+    return dict(chosen)
 
 
 def _valid(cid: str) -> bool:
@@ -235,11 +254,14 @@ def run_detail(request: Request, project_id: str = PID, run_id: str = RID, p: Pr
     out = _run_view(run, sv=sv).model_dump()
     latest = sv.jobs.latest_succeeded(project_id)
     out["latest_run_id"] = latest.id if latest else None            # a newer finished run means this run's review queue is out of date
+    opts = sv.workspace.run_dir(project_id, run_id) / "run_options.json"
+    o = json.loads(opts.read_text(encoding="utf-8")) if opts.exists() else {}
+    out["options"] = {"full": bool(o.get("full")), "rules": o.get("rules") or {}}    # what the run was started with
     summ = sv.workspace.run_dir(project_id, run_id) / "pipeline_summary.json"
     if run.status == "succeeded" and summ.exists():
         s = json.loads(summ.read_text(encoding="utf-8"))
         out["stages"] = [{k: st.get(k) for k in ("stage", "seconds", "peak_memory_mb")} for st in s.get("stages", [])]
-        out["configs"] = {k: {x: v.get(x) for x in ("source", "version", "hash")} for k, v in (s.get("configs") or {}).items() if k != "effective_settings"}
+        out["configs"] = {k: {x: v.get(x) for x in ("source", "version", "hash", "pinned")} for k, v in (s.get("configs") or {}).items() if k != "effective_settings"}
         out["peak_memory_mb"] = s.get("peak_memory_mb")
     return out
 

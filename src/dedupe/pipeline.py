@@ -70,6 +70,7 @@ class PipelineConfig:
     registry_dir: Path | None = None  # person-ID registry kept across runs (None = <work>/identity)
     model_path: Path | None = None  # where the fitted model is saved (None = <work>/../models/fs_model.json)
     previous_run: Path | None = None  # an earlier successful run of the same data: reuse its work for unchanged records (see dedupe.incremental)
+    config_versions: dict | None = None  # name -> version chosen when the run was started (decision, survivorship, settings); else the active ones
 
 
 class _Meter:
@@ -141,7 +142,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     clusters_dir, hh_dir = work / "clusters", work / "households"
     summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources) if cfg.sources else None,
                      "encryption_at_rest": {"enabled": crypto.enabled(), "key_id": crypto.active().key_id if crypto.enabled() else None}}
-    res_cfg = resolve(cfg.config_store_url, cfg.decision_config, cfg.survivorship_config)
+    res_cfg = resolve(cfg.config_store_url, cfg.decision_config, cfg.survivorship_config, cfg.config_versions)
     dcfg, scfg = res_cfg.decision, res_cfg.survivorship
     if res_cfg.settings:   # an active settings version in the store wins over the values passed in
         cfg = dataclasses.replace(cfg, **res_cfg.settings.model_dump())
@@ -326,6 +327,7 @@ def main() -> None:
     ap.add_argument("--household-threshold", type=float, default=5.0)
     ap.add_argument("--keep-raw-aadhaar", action="store_true", help="do NOT erase raw Aadhaar from the canonical file")
     ap.add_argument("--previous-run", type=Path, default=None, help="an earlier successful run of the same project: reuse its work for unchanged records")
+    ap.add_argument("--config-versions", type=Path, default=None, help="JSON file: config name -> version to use instead of the active one")
     a = ap.parse_args()
     if a.database_from_env:
         url = os.environ.get("DEDUPE_DATABASE_URL")
@@ -335,7 +337,8 @@ def main() -> None:
     s = run_pipeline(PipelineConfig(a.sources, a.work, decision_config=a.decision_config, survivorship_config=a.survivorship_config,
                                     judgments_url=a.judgments_url, config_store_url=a.config_store_url, truth=a.truth, blocking_cap=a.cap, household_threshold=a.household_threshold,
                                     redact_aadhaar=not a.keep_raw_aadhaar, registry_dir=a.registry_dir, model_path=a.model_path,
-                                    previous_run=a.previous_run))
+                                    previous_run=a.previous_run,
+                                    config_versions=json.loads(a.config_versions.read_text(encoding="utf-8")) if a.config_versions else None))
     print(_fmt(s))
 
 

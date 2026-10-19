@@ -41,7 +41,7 @@ with sync_playwright() as pw:
     page = browser.new_page(viewport={"width": 1400, "height": 900}, color_scheme="dark")
     page.on("console", lambda m: note("console", m.text + " " + str(m.location)) if m.type == "error" else None)
     page.on("pageerror", lambda e: note("page error", str(e)))
-    page.goto(BASE + "#/projects/customer-master/rules")
+    page.goto(BASE + "#/projects/customer-master/setup/matching")
     page.fill("#username", "admin"); page.fill("#password", "admin"); page.click("#signin")
     page.wait_for_selector("#nav a"); wait(page)
     print("landed on", page.url.split("/ui")[1], "theme", page.evaluate("document.documentElement.dataset.theme"))
@@ -52,7 +52,7 @@ with sync_playwright() as pw:
     view = page.get_by_role("button", name="View")
     if view.count():
         view.first.click(); wait(page); print("viewed a rule version")
-    page.get_by_role("button", name="Change the rules").click(); wait(page)
+    page.get_by_role("button", name=re.compile("^(Change the rules|Change them first)$")).click(); wait(page)
     page.locator("details.advanced summary", has_text="For experts").click(); page.wait_for_timeout(300)
     editor = page.locator("textarea.code").first
     print("rules editor filled:", len(editor.input_value()) > 20)
@@ -63,7 +63,7 @@ with sync_playwright() as pw:
     page.screenshot(path=str(OUT / "10_rules_dark.png"), full_page=True)
 
     # connection page from the Connections tab, keyboard
-    page.goto(BASE + "#/projects/customer-master/connections"); wait(page)
+    page.goto(BASE + "#/projects/customer-master/setup/data"); wait(page)
     page.locator("#view tbody button.link").first.click(); wait(page)
     print("connection:", page.locator("#view h1").inner_text(), page.url.split("/ui")[1]); bad(page, "connection")
     page.screenshot(path=str(OUT / "11_connection_dark.png"), full_page=True)
@@ -103,9 +103,8 @@ with sync_playwright() as pw:
     page.screenshot(path=str(OUT / "13_person_dark.png"), full_page=True)
 
     # approvals and decisions
-    for tab in ("Matching rules", "Golden record", "Run settings"):
-        page.goto(BASE + "#/projects/customer-master/rules"); wait(page)
-        page.get_by_role("tab", name=tab).click(); wait(page); bad(page, "rules/" + tab)
+    for part in ("matching", "golden", "technical"):
+        page.goto(BASE + "#/projects/customer-master/setup/" + part); wait(page); bad(page, "setup/" + part)
     for path in ["#/approvals", "#/review/decisions", "#/projects/insurance-file/results", "#/audit"]:
         page.goto(BASE + path); wait(page); bad(page, path)
         print(path, "->", page.locator("#view h1").inner_text())

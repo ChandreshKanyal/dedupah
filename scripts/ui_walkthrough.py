@@ -137,7 +137,7 @@ with sync_playwright() as pw:
     page.click("#nav a[data-name='Projects']"); wait(page)
     page.get_by_role("button", name="New project").first.click()
     page.get_by_label("Name", exact=True).fill("Walk test project")
-    page.get_by_role("button", name="Create project").click(); wait(page)
+    page.get_by_role("button", name="Create and continue").click(); wait(page)
     check(page, "new project")
     page.get_by_role("tab", name="Settings").click(); wait(page)
     page.get_by_role("button", name="Delete project").click()

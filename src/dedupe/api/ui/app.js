@@ -96,7 +96,7 @@ const num = (n) => (n == null ? "" : Number(n).toLocaleString());
 const label = (s) => String(s).replace(/_/g, " ");
 const plural = (n, one, many) => num(n) + " " + (n === 1 ? one : many);
 // One word for each state, everywhere: what people see never depends on which screen they are on.
-const STATUS_LABEL = { active: "Live", proposed: "Waiting for approval", approved: "Approved, not live", superseded: "Replaced", declined: "Declined",
+const STATUS_LABEL = { active: "In use", proposed: "Waiting for approval", approved: "Approved, not in use", superseded: "Replaced", declined: "Declined",
   succeeded: "Succeeded", failed: "Failed", interrupted: "Interrupted", cancelled: "Cancelled", running: "Running", queued: "Queued", deleted: "Deleted",
   open: "Open", unsure: "Not sure", decided: "Decided", in_force: "In force", waiting_for_run: "Waits for the next run",
   pending_approval: "Waits for a second person", undone: "Undone" };
@@ -222,14 +222,14 @@ function dispatch(path) {
     }
     if (c === "connections" && d) return viewConnection(b, d);
     if (c === "add-data") return addDataPage(b);
-    if (c === "new-run") return newRun(b, 2);
-    return viewProject(b, c);
+    if (c === "new-run") return newRun(b);
+    return viewProject(b, c, d);
   }
-  const top = { runs: viewRuns, "new-run": () => newRun(), review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c, d)), approvals: viewApprovals,
+  const top = { runs: viewRuns, "new-run": () => newRun(), "new-project": newProject, review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c, d)), approvals: viewApprovals,
     audit: () => viewAudit(), users: viewUsers, roles: viewRoles, password: () => viewPassword(false), account: viewAccount, settings: viewSettings }[a];
   return top ? top() : viewHome();
 }
-const SECTIONS = [["/review/decisions", "Decisions"], ["/review", "Review inbox"], ["/runs", "Runs"], ["/new-run", "Runs"], ["/approvals", "Approvals"],
+const SECTIONS = [["/review/decisions", "Decisions"], ["/review", "Review inbox"], ["/runs", "Runs"], ["/new-run", "Runs"], ["/new-project", "Projects"], ["/approvals", "Approvals"],
   ["/audit", "Audit log"], ["/users", "Users"], ["/roles", "Roles"], ["/projects", "Projects"]];
 // Every screen says where it is: the address (so Back works), the highlighted menu item and the window title (set by show()).
 function here(path) {
@@ -419,7 +419,7 @@ const stat = (text, value, onclick) => (onclick ? el("button", { type: "button",
   : el("div", { class: "stat" }, el("span", { class: "label" }, icon(statIcon(text)), text), el("span", { class: "value" }, value)));
 const tile = (ic, title, text, onclick, pressed) => el("button", { type: "button", class: "tile", onclick, "aria-pressed": pressed == null ? null : String(!!pressed) },
   ic instanceof Node ? ic : el("span", { class: "tile-icon" }, icon(ic)), el("span", {}, el("strong", {}, title), el("span", { class: "muted" }, text)));
-const TAB_ICON = { overview: "grid", connections: "plug", runs: "play", schedules: "calendar", results: "download", decisions: "list", rules: "sliders",
+const TAB_ICON = { setup: "layers", overview: "grid", connections: "plug", runs: "play", schedules: "calendar", results: "download", decisions: "list", rules: "sliders",
   activity: "clock", access: "users", settings: "sliders", review: "inbox", people: "users", log: "terminal", decision: "merge", survivorship: "star" };
 // Tabs with the keyboard pattern people expect: Left/Right move between tabs, Home/End jump, the panel is labelled by its tab.
 function tabs(list, current, pick) {
@@ -535,12 +535,15 @@ async function viewProjects() {
     el("td", {}, p.latest_run ? runState(p.latest_run) : el("span", { class: "muted" }, "no runs")),
     el("td", {}, p.latest_run ? when(p.latest_run.started_at || p.latest_run.created_at) : ""), el("td", {}, p.you_own ? tag("You", "info") : p.created_by),
     del ? el("td", { class: "actions-cell" }, btn("Delete", () => deleteProject(p), "small danger", "trash", { "aria-label": "Delete project " + p.name })) : null));
-  const create = can("projects.create") ? btn("New project", () => run(newProject), "primary", "plus") : null;
+  const create = can("projects.create") ? btn("New project", () => go(newProject), "primary", "plus") : null;
   show(page("Projects", "A project is one piece of dedupe work with its own data connections, runs, decisions and rules. You see the projects you created or were added to.", [create]),
     rows.length ? table(["Project", "Description", ["Runs"], "Latest run", "Last activity", "Owner", ...(del ? [""] : [])], rows)
       : empty(create ? "No projects yet. Create the first one." : "You are not in any project yet. Ask an administrator to create one or to add you to one.", create));
 }
+// A new project is set up in five steps and nothing is chosen for the user: name it here, then add its data, choose the matching rules and the
+// golden-record rules (Setup tab), then check and start the first run.
 async function newProject() {
+  here("/new-project");
   const name = el("input", { type: "text", maxlength: "120" });
   const id = el("input", { type: "text", maxlength: "40" });
   const desc = el("textarea", { class: "plain", maxlength: "500" });
@@ -549,14 +552,21 @@ async function newProject() {
   name.addEventListener("input", () => { if (!touched) id.value = name.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40); });
   id.addEventListener("input", () => { touched = true; });
   const err = errBox();
-  const created = await dialog("New project", el("div", {}, field("Name", name), field("Id (used in addresses: lower-case letters, digits and -)", id), field("Description (optional)", desc),
-    el("label", { class: "check" }, second, el("span", {}, "Require a second person to approve changes", el("span", { class: "muted" }, "Leave this off while you work alone. Turn it on in the project's settings once others join."))),
-    err),
-  "Create project", async () => {
-    try { return await api("POST", "/projects", { id: id.value.trim(), name: name.value.trim(), description: desc.value.trim(), second_approval: second.checked }); }
-    catch (e) { fail(err, e.message); return undefined; }
-  });
-  if (created) { await refreshCache(); await go(() => viewProject(created.id)); say("Project created. Start by adding its data.", "good"); }
+  const create = async () => {
+    fail(err, "");
+    let created;
+    try { created = await api("POST", "/projects", { id: id.value.trim(), name: name.value.trim(), description: desc.value.trim(), second_approval: second.checked }); }
+    catch (e) { fail(err, e.message); return; }
+    await refreshCache();
+    await go(() => viewProject(created.id, "setup", "data"));
+    say("Project created. Next: add its data.", "good");
+  };
+  show(page("New project", "Name the project, add its data, choose how records are matched and how golden records are built, then check and run. Nothing is chosen for you.",
+    [btn("Cancel", () => go(viewProjects))], crumbs(crumb("Projects", "/projects"), "New project")),
+  setupSteps(1), el("div", { class: "narrow" }, field("Name", name), field("Id (used in addresses: lower-case letters, digits and -)", id), field("Description (optional)", desc),
+    el("label", { class: "check" }, second, el("span", {}, "Require a second person to approve changes", el("span", { class: "muted" }, "Leave this off while you work alone: then what you save is in use at once. Turn it on in the project's settings once others join."))),
+    err, el("div", { class: "row" }, btn("Create and continue", create, "primary", "next"))));
+  name.focus();
 }
 async function pickProject(title, text, then) {
   await refreshCache();
@@ -566,61 +576,119 @@ async function pickProject(title, text, then) {
   const chosen = await dialog(title, el("div", {}, el("p", { class: "hint" }, text), field("Project", sel)), "Continue", async () => sel.value);
   if (chosen) then(chosen);
 }
-async function viewProject(pid, tab) {
+
+// ---- one project: Setup, Runs, Results, Settings ---------------------------------------------------------------------------
+// Older addresses and links still open the right place.
+const OLD_TAB = { overview: ["setup"], connections: ["setup", "data"], rules: ["setup", "matching"], schedules: ["runs"], decisions: ["results", "decisions"],
+  access: ["settings", "members"], activity: ["settings", "activity"] };
+const SETUP_PARTS = { data: "Data", matching: "Matching rules", golden: "Golden record", technical: "Technical settings" };
+const SETUP_CONFIG = { matching: "decision", golden: "survivorship", technical: "settings" };
+const SETUP_STEP = { data: 2, matching: 3, golden: 4 };
+function setupSteps(on, pid) {
+  const to = [null, ["settings", "general"], ["setup", "data"], ["setup", "matching"], ["setup", "golden"], ["setup"]];
+  return steps(["Project", "Data", "Matching rules", "Golden record", "Check and run"], on, pid ? (n) => go(() => viewProject(pid, ...to[n])) : null);
+}
+// Which parts of a project are chosen: data in use, and a version in use of the matching and golden-record rules (technical settings are optional).
+async function setupState(pid, connections) {
+  const names = ["decision", "survivorship", "settings"];
+  const lists = can("config.read") ? await Promise.all(names.map((n) => api("GET", P(pid) + "/config/" + n))) : names.map(() => []);
+  const cfg = Object.fromEntries(names.map((n, i) => [n, { versions: lists[i], live: lists[i].find((v) => v.status === "active"),
+    waiting: lists[i].filter((v) => v.status === "proposed" || v.status === "approved") }]));
+  const data = connections.filter((c) => c.live_version);
+  return { cfg, data, ready: data.length > 0 && !!cfg.decision.live && !!cfg.survivorship.live };
+}
+const percent = (x) => Math.round(x * 100) + "%";
+function decisionWords(c) {
+  const keys = Object.keys(KEY_RULES).filter((k) => keyOn(c, k)).map((k) => KEY_RULES[k][0]);
+  return "Merged automatically from a score of " + percent(c.auto_merge_at || 0.9) + ", sent to review from " + percent(c.review_at || 0.1) + ". " +
+    (keys.length ? cap(keys.join(" and ")) + (keys.length > 1 ? " decide on their own." : " decides on its own.") : "No identifier decides on its own.");
+}
+const goldenWords = (c) => strategyName(c.default_strategy || "most_recent") + " by default. " +
+  ((c.source_trust || []).length ? "Trust order: " + c.source_trust.join(", ") + "." : "Sources ranked automatically by how complete they are.");
+async function viewProject(pid, tab, sub) {
+  if (OLD_TAB[tab]) [tab, sub] = [OLD_TAB[tab][0], OLD_TAB[tab][1] || sub];
   const [p, runs, connections] = await Promise.all([api("GET", P(pid)), can("runs.read") ? api("GET", P(pid) + "/runs") : [],
     can("config.read") ? api("GET", P(pid) + "/connections") : []]);
   await refreshCache();
   const manage = can("project.access") || p.you_own;
-  const tabList = [["overview", "Overview"], ...(can("config.read") ? [["connections", "Connections"]] : []), ...(can("runs.read") ? [["runs", "Runs"], ["schedules", "Schedules"]] : []),
-    ...(can("results.export") ? [["results", "Results"]] : []), ...(can("queue.read") ? [["decisions", "Decisions"]] : []),
-    ...(can("config.read") ? [["rules", "Rules"]] : []), ...(can("runs.read") ? [["activity", "Activity"]] : []), ...(manage ? [["access", "Access"], ["settings", "Settings"]] : [])];
-  if (!tabList.some(([k]) => k === tab)) tab = "overview";
-  here(P(pid) + (tab === "overview" ? "" : "/" + tab));
-  const actions = can("runs.start") ? [btn("New run", () => go(() => newRun(pid)), "primary", "play")] : [];
+  const subs = {
+    setup: can("config.read") ? Object.keys(SETUP_PARTS) : [],
+    results: [...(can("results.export") ? ["files"] : []), ...(can("queue.read") ? ["decisions"] : [])],
+    settings: [...(manage ? ["general", "members"] : []), ...(can("runs.read") ? ["activity"] : [])],
+  };
+  const tabList = [["setup", "Setup"], ...(can("runs.read") ? [["runs", "Runs"]] : []), ...(subs.results.length ? [["results", "Results"]] : []),
+    ...(subs.settings.length ? [["settings", "Settings"]] : [])];
+  if (!tabList.some(([k]) => k === tab)) tab = "setup";
+  if (tab === "setup" ? !subs.setup.includes(sub) : tab !== "runs" && !subs[tab].includes(sub)) sub = tab === "setup" || tab === "runs" ? null : subs[tab][0];
+  if (tab === "runs") sub = null;
+  here(P(pid) + (tab === "setup" && !sub ? "" : "/" + tab + (sub ? "/" + sub : "")));
+  const guided = !runs.length;                     // until the first run, Setup walks through the steps in order
   let body;
-  if (tab === "overview") body = await projectOverview(p, runs, connections);
-  else if (tab === "connections") body = await projectConnections(p, connections);
-  else if (tab === "runs") body = runsTable(runs, false, pid);
-  else if (tab === "schedules") body = await schedulesPanel(p, connections);
-  else if (tab === "results") body = await resultsPanel(p, runs);
-  else if (tab === "decisions") body = await decisionsPanel([p], { project: true });
-  else if (tab === "rules") body = await rulesPanel(p);
-  else if (tab === "activity") body = await activityPanel(pid);
-  else if (tab === "access") body = await accessPanel(pid);
-  else body = settingsPanel(p);
-  show(page(p.name, p.description || "Project " + p.id, actions, crumbs(crumb("Projects", "/projects"), p.name), p.second_approval ? tag("Second approval on", "info") : null),
-    tabs(tabList, tab, (t) => go(() => viewProject(pid, t))), tabPanel(tab, body));
+  if (tab === "setup") body = sub ? await setupPart(p, sub, connections, guided) : await projectSetup(p, runs, connections, guided);
+  else if (tab === "runs") body = el("div", {}, runsTable(runs, false, pid), await schedulesPanel(p, connections));
+  else if (tab === "results") body = el("div", {}, subTabs(subs.results, { files: "Files", decisions: "Decisions" }, sub, (s) => viewProject(pid, "results", s)),
+    sub === "files" ? await resultsPanel(p, runs) : await decisionsPanel([p], { project: true }));
+  else body = el("div", {}, subTabs(subs.settings, { general: "General", members: "Members", activity: "Activity" }, sub, (s) => viewProject(pid, "settings", s)),
+    sub === "general" ? settingsPanel(p) : sub === "members" ? await accessPanel(pid) : await activityPanel(pid));
+  const actions = can("runs.start") ? [btn("New run", () => go(() => newRun(pid)), "primary", "play")] : [];
+  const trail = tab === "setup" && sub ? crumbs(crumb("Projects", "/projects"), crumb(p.name, P(pid)), SETUP_PARTS[sub]) : crumbs(crumb("Projects", "/projects"), p.name);
+  show(page(sub && tab === "setup" ? SETUP_PARTS[sub] : p.name, sub && tab === "setup" ? "Project " + p.name : p.description || "Project " + p.id, actions, trail,
+    p.second_approval ? tag("Second approval on", "info") : null),
+  tabs(tabList, tab, (t) => go(() => viewProject(pid, t))), tabPanel(tab, body));
 }
-async function projectOverview(p, runs, connections) {
-  const live = connections.filter((c) => c.live_version);
-  const finished = runs.find((r) => r.status === "succeeded");
-  const going = runs.find((r) => r.status === "running" || r.status === "queued");
-  const box = can("queue.read") ? ((await api("GET", "/review/inbox")).find((x) => x.project_id === p.id) || null) : null;
-  const open = box ? box.open : null;
-  const todo = [
-    ["Add your data", "Connect a file, spreadsheet or database, or upload a file, then map its columns.", connections.length > 0, () => viewProject(p.id, "connections"), can("sources.manage")],
-    ["Make the data ready to use", p.second_approval ? "A second person approves each connection, then it is made live." : "Make the connection live so runs can read it.", live.length > 0,
-      () => viewProject(p.id, "connections"), can("config.activate") || can("config.approve")],
-    ["Run the match", "Find the records that are the same person and group households.", !!finished || !!going, () => newRun(p.id), can("runs.start")],
-    ["Review the uncertain matches", open == null ? "Appears after the first run." : open ? plural(open, "pair waits", "pairs wait") + " for a person to decide." : "Nothing waits for a person.",
-      !!finished && open === 0, () => viewRun(p.id, finished.id, "review"), can("queue.read") && !!finished],
-    ["Take the results out", "Download the golden records as Excel, CSV or Parquet, or write them into a database.", false, () => viewRun(p.id, finished.id, "results"), can("results.export") && !!finished],
+function subTabs(keys, names, current, pick) {
+  if (keys.length < 2) return null;
+  return el("div", { class: "subtabs page-sub", role: "tablist" }, keys.map((k) => el("button", { type: "button", role: "tab", "aria-selected": k === current ? "true" : "false",
+    onclick: () => go(() => pick(k)) }, names[k])));
+}
+// The Setup tab: the three things every run needs, each with what is chosen now, and the optional technical settings.
+async function projectSetup(p, runs, connections, guided) {
+  const pid = p.id;
+  if (!can("config.read")) return empty("Your role cannot see this project's setup. Its runs and results are in the other tabs.");
+  const st = await setupState(pid, connections);
+  const { cfg } = st;
+  const content = async (n) => (cfg[n].live ? (await api("GET", P(pid) + "/config/" + n + "/versions/" + cfg[n].live.version)).content : null);
+  const [dec, gold] = await Promise.all([content("decision"), content("survivorship")]);
+  const waiting = (n) => (n ? el("div", { class: "muted" }, plural(n, "version waits", "versions wait") + " for approval") : null);
+  const state = (on, text, n) => el("td", {}, on ? "In use" : tag(text, "warn"), waiting(n));
+  const notInUse = connections.filter((c) => !c.live_version).length;
+  const rows = [
+    linkRow("1. Data", () => viewProject(pid, "setup", "data"), el("td", {}, st.data.length ? st.data.map((c) => c.id + " (version " + c.live_version + ")").join(", ") : "No data in use yet."),
+      el("td", {}, st.data.length ? "In use" : tag("Not added yet", "warn"), notInUse ? el("div", { class: "muted" }, plural(notInUse, "connection is", "connections are") + " not in use yet") : null)),
+    linkRow("2. Matching rules", () => viewProject(pid, "setup", "matching"), el("td", {}, dec ? decisionWords(dec) : "Not chosen yet."),
+      state(!!dec, "Not chosen yet", cfg.decision.waiting.length)),
+    linkRow("3. Golden record", () => viewProject(pid, "setup", "golden"), el("td", {}, gold ? goldenWords(gold) : "Not chosen yet."),
+      state(!!gold, "Not chosen yet", cfg.survivorship.waiting.length)),
+    linkRow("Technical settings", () => viewProject(pid, "setup", "technical"), el("td", {}, cfg.settings.live ? "Version " + cfg.settings.live.version : "Standard values."),
+      el("td", {}, "Optional", waiting(cfg.settings.waiting.length))),
   ];
-  const next = todo.findIndex((t) => !t[2]);
-  const list = el("div", { class: "todo" }, todo.map(([title, text, done, open, allowed], i) => el("div", { class: "todo-row" + (i === next ? " next" : "") },
-    el("span", { class: "todo-mark" }, done ? icon("check") : String(i + 1)), el("div", {}, el("strong", {}, title), el("div", { class: "muted" }, text)),
-    allowed && !done ? btn(i === next ? "Go" : "Open", () => go(open), i === next ? "primary small" : "small") : null)));
-  const waiting = box && box.waiting_for_run ? el("div", { class: "notice", role: "note" }, plural(box.waiting_for_run, "decision waits", "decisions wait") +
-    " for the next run: the people and golden records change only when a run applies them.",
-  can("runs.start") && finished && finished.connections.length ? el("div", { class: "row" }, btn("Run again now", () => startRun(p.id, [], finished.id, "apply the latest review decisions"), "primary small", "play")) : null) : null;
-  return el("div", {}, waiting, el("div", { class: "stats" }, stat("Connections", num(connections.length), () => go(() => viewProject(p.id, "connections"))), stat("Live connections", num(live.length)),
-    stat("Runs", num(runs.length), () => go(() => viewProject(p.id, "runs"))), stat("People found", finished ? num(finished.summary.people) : "-"),
-    stat("Pairs to review", open == null ? "-" : num(open), finished && can("queue.read") ? () => go(() => viewRun(p.id, finished.id, "review")) : null),
-    box && box.pending_approval ? stat("Waiting for a second person", num(box.pending_approval), link("/approvals")) : null),
-  el("h2", { class: "section" }, "Where you are"), list);
+  const missing = [st.data.length ? null : "add data and put it in use", dec ? null : "choose the matching rules", gold ? null : "choose the golden-record rules"].filter(Boolean);
+  const ready = el("div", { class: "notice" + (missing.length ? " warn" : ""), role: "note" }, missing.length
+    ? "Before a run can start: " + missing.join(", ") + "."
+    : guided ? "Everything a run needs is chosen. Start the first run; you choose the data and the rule versions on the next screen." : "Everything a run needs is chosen.",
+  !missing.length && can("runs.start") && guided ? el("div", { class: "row" }, btn("Start the first run", () => go(() => newRun(pid)), "primary", "play")) : null);
+  const latest = runs.find((r) => r.status === "succeeded");
+  const box = latest && can("queue.read") ? ((await api("GET", "/review/inbox")).find((x) => x.project_id === pid) || null) : null;
+  const again = box && box.waiting_for_run ? el("div", { class: "notice", role: "note" }, plural(box.waiting_for_run, "decision waits", "decisions wait") +
+    " for the next run: people and golden records change only when a run applies them.") : null;
+  return el("div", {}, guided ? setupSteps(5, pid) : null,
+    table(["Step", "What is chosen", "Status"], rows), ready, again,
+    latest ? el("h2", { class: "section" }, "Latest finished run") : null,
+    latest ? kv([["Run", el("button", { type: "button", class: "link", onclick: () => go(() => viewRun(pid, latest.id)) }, latest.id)], ["Finished", when(latest.finished_at)],
+      ["People found", num(latest.summary.people)], box ? ["Pairs to review", box.open ? el("button", { type: "button", class: "link", onclick: link("/review/" + pid) }, num(box.open)) : "0"] : null]) : null);
+}
+// One part of the setup on its own page. Until the first run it carries the steps and a Next button, so a new project is set up in order.
+async function setupPart(p, sub, connections, guided) {
+  const order = ["data", "matching", "golden"];
+  const i = order.indexOf(sub);
+  const body = sub === "data" ? await projectConnections(p, connections) : await rulesPanel(p, SETUP_CONFIG[sub]);
+  const nav = guided && i >= 0 ? el("div", { class: "row guide-nav" },
+    btn("Back", () => go(() => (i ? viewProject(p.id, "setup", order[i - 1]) : viewProject(p.id, "settings", "general"))), "", "prev"),
+    btn(i < 2 ? "Next: " + SETUP_PARTS[order[i + 1]] : "Next: check and run", () => go(() => viewProject(p.id, "setup", order[i + 1])), "primary", "next")) : null;
+  return el("div", {}, guided && i >= 0 ? setupSteps(SETUP_STEP[sub], p.id) : null, body, nav);
 }
 async function activityPanel(pid) {
-  const ACTIONS = { propose: "Saved a connection version", activate: "Made a version live", approve: "Approved a version", decline: "Declined a version", copy: "Copied a connection",
+  const ACTIONS = { propose: "Saved a connection version", activate: "Put a version in use", approve: "Approved a version", decline: "Declined a version", copy: "Copied a connection",
     source_inspect: "Looked inside a source", source_preview: "Previewed a mapping", upload: "Uploaded a file", create_project: "Created the project", grant_access: "Added a member",
     revoke_access: "Removed a member", set_second_approval: "Changed the approval setting", rename_project: "Renamed the project", start: "Started a run", cancel: "Cancelled a run",
     delete_run: "Deleted a run", delete_upload: "Deleted an uploaded file", approve_match: "Decided: same person", reject_match: "Decided: different people",
@@ -728,50 +796,109 @@ async function deleteRun(pid, rid) {
   await go(() => viewProject(pid, "runs"));
   say("Run " + rid + " was deleted.", "good");
 }
-async function startRun(pid, connections, fromRun, reason, key, full) {
-  const r = await api("POST", P(pid) + "/runs", { connections, from_run: fromRun || null, reason: reason || "", full_rerun: !!full }, { "Idempotency-Key": key || uuid() });
+async function startRun(pid, connections, fromRun, reason, key, full, rules) {
+  const r = await api("POST", P(pid) + "/runs", { connections, from_run: fromRun || null, reason: reason || "", full_rerun: !!full, rules: rules || null }, { "Idempotency-Key": key || uuid() });
   await go(() => viewRun(pid, r.id));
   say(r.replayed ? "This run was already started." : "Run started. This page updates by itself until it finishes.", "good");
 }
-async function newRun(pid, step, chosen) {
+// Versions a run may use: the one in use, approved ones, earlier ones, and drafts while no second approval is required.
+const VERSION_NOTE = { active: "in use", approved: "approved, not in use", proposed: "draft, not in use", superseded: "used before" };
+// New run: one screen with every choice visible. Nothing is picked for you except the rule versions the project has in use.
+async function newRun(pid) {
   await refreshCache();
-  chosen = chosen || new Set();
-  step = step || (pid ? 2 : 1);
   here(pid ? P(pid) + "/new-run" : "/new-run");
-  const bar = steps(["Project", "Connections", "Start"], step);
-  const to = (s, p) => run(() => newRun(p || pid, s, chosen));
-  const back = pid ? crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), "New run") : null;
-  if (step === 1) {
-    const tiles = cache.projects.map((p) => tile("folder", p.name, p.description || p.id, () => to(2, p.id)));
-    show(page("New run", "Choose the project this run belongs to."), bar,
-      tiles.length ? el("div", { class: "tiles" }, tiles) : empty("Create a project first.", can("projects.create") ? btn("New project", () => run(newProject), "primary", "plus") : null));
-    return;
-  }
-  if (step === 2) {
-    const all = can("config.read") ? await api("GET", P(pid) + "/connections") : [];
-    const live = all.filter((c) => c.live_version);
-    const tiles = live.map((c) => tile(logo(c.type, "big"), c.id, typeTitle(c.type) + ", " + c.fields_mapped + " fields mapped, version " + c.live_version,
-      () => { if (chosen.has(c.id)) chosen.delete(c.id); else chosen.add(c.id); to(2); }, chosen.has(c.id)));
-    show(page("New run", "Project " + projectName(pid) + ". Choose the connections to read; only live connections are listed.",
-      [btn("Back", () => (cache.projects.length > 1 ? to(1) : go(() => viewProject(pid)))), btn("Next", () => (chosen.size ? to(3) : say("Choose at least one connection.", "bad")), "primary")], back), bar,
-    tiles.length ? el("div", { class: "tiles" }, tiles) : empty("This project has no live connections yet." + (all.length ? " Make one live first." : ""),
-      can("sources.manage") || can("config.activate") ? btn("Open connections", () => go(() => viewProject(pid, "connections")), "primary", "database") : null));
-    return;
-  }
+  if (!pid && cache.projects.length === 1) pid = cache.projects[0].id;
+  const trail = pid ? crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), "New run") : crumbs(crumb("Runs", "/runs"), "New run");
+  const projSel = el("select", {}, pid ? null : el("option", { value: "" }, "Choose a project"), cache.projects.map((p) => el("option", { value: p.id, selected: p.id === pid }, p.name)));
+  projSel.addEventListener("change", () => { if (projSel.value) go(() => newRun(projSel.value)); });
+  const top = page("New run", "Choose what this run reads, which rules it uses and how it loads. Each choice is recorded with the run.", [], trail);
+  if (!cache.projects.length) { show(top, empty("Create a project first.", can("projects.create") ? btn("New project", () => go(newProject), "primary", "plus") : null)); return; }
+  if (!pid) { show(top, el("div", { class: "narrow" }, field("Project", projSel))); return; }
+  const p = cache.projects.find((x) => x.id === pid) || await api("GET", P(pid));
+  const all = can("config.read") ? await api("GET", P(pid) + "/connections") : [];
+  const st = await setupState(pid, all);
+  const err = errBox();
+
+  // 1 data: every connection, the ones not in use shown but not choosable
+  const chosen = new Set();
+  const boxes = all.map((c) => {
+    const cb = el("input", { type: "checkbox", disabled: c.live_version ? null : true, "aria-label": "Read " + c.id });
+    cb.addEventListener("change", () => { if (cb.checked) chosen.add(c.id); else chosen.delete(c.id); });
+    return [c, cb];
+  });
+  const usable = boxes.filter(([c]) => c.live_version);
+  const pickAll = usable.length > 1 ? btn("Choose all in use", () => { for (const [c, cb] of usable) { cb.checked = true; chosen.add(c.id); } }, "small") : null;
+  const dataPart = all.length ? table(["", "Connection", "Type", "Version in use", ["Records last read"]], boxes.map(([c, cb]) => el("tr", {}, el("td", {}, cb), el("td", {}, el("strong", {}, c.id)),
+    el("td", {}, typeTitle(c.type)), el("td", {}, c.live_version ? "Version " + c.live_version : tag(c.latest_status === "proposed" || c.latest_status === "approved" ? "Waiting for approval" : "Not in use", "warn")),
+    el("td", { class: "num" }, c.last_check && c.last_check.rows != null ? num(c.last_check.rows) : ""))))
+    : empty("This project has no data yet.", btn("Add data", () => go(() => viewProject(pid, "setup", "data")), "primary", "database"));
+
+  // 2-4 rules: a version of each, with what it does in words
+  const allowed = (v) => ["active", "approved", "superseded"].includes(v.status) || (v.status === "proposed" && !p.second_approval);
+  const contents = {};
+  const words = { decision: decisionWords, survivorship: goldenWords, settings: () => "" };
+  const pickers = {};
+  const rulePart = (n, part, required) => {
+    const vs = st.cfg[n].versions.filter(allowed).reverse();
+    if (!vs.length) {
+      const what = part === "matching" ? "matching rules" : "golden-record rules";
+      return required ? el("div", { class: "notice warn", role: "note" }, "Not chosen yet: this project has no " + what + " in use, so a run cannot start.",
+        el("div", { class: "row" }, btn("Choose the " + what, () => go(() => viewProject(pid, "setup", part)), "primary"))) : el("p", {}, "Standard values.");
+    }
+    const sel = el("select", { "aria-label": SETUP_PARTS[part] }, vs.map((v) => el("option", { value: v.version, selected: v.status === "active" ? true : null },
+      "Version " + v.version + " (" + VERSION_NOTE[v.status] + ")" + (v.reason ? ": " + v.reason.slice(0, 70) : ""))));
+    if (!st.cfg[n].live && !required) sel.prepend(el("option", { value: "", selected: true }, "Standard values"));
+    const about = el("p", { class: "muted" });
+    const note = el("div", { class: "notice warn", role: "note", hidden: true }, "This version is not the one in use. The run's results still become the project's latest results.");
+    const show1 = () => run(async () => {
+      const v = sel.value;
+      note.hidden = !v || (st.cfg[n].live && String(st.cfg[n].live.version) === v);
+      if (!v) { about.textContent = ""; return; }
+      contents[n + v] = contents[n + v] || (await api("GET", P(pid) + "/config/" + n + "/versions/" + v)).content;
+      about.textContent = words[n](contents[n + v]);
+    }, true);
+    sel.addEventListener("change", show1);
+    show1();
+    pickers[n] = sel;
+    return el("div", {}, el("div", { class: "narrow" }, sel), about, note);
+  };
+  const load = choiceCards("load", LOAD_MODES, "incremental");
   const reason = el("textarea", { class: "plain", maxlength: "300" });
   const key = uuid();                              // one key for this form: a second press replays the first start instead of starting twice
-  const load = choiceCards("load", LOAD_MODES, "incremental");
-  show(page("New run", "Check and start.", [btn("Back", () => to(2)), btn("Start run", () => startRun(pid, [...chosen], null, reason.value, key, load.value() === "full"), "primary", "play")], back), bar,
-    kv([["Project", projectName(pid)], ["Connections", [...chosen].join(", ")], ["Rules", "The project's live rules, or the built-in defaults when none are live"]]),
-    el("h3", { class: "section" }, "How to load"), load.node,
-    field("Reason (optional)", reason));
+  const start = () => {
+    fail(err, "");
+    if (!chosen.size) { fail(err, "Choose at least one connection to read."); return; }
+    if (can("config.read") && (!pickers.decision || !pickers.survivorship)) { fail(err, "Choose the matching rules and the golden-record rules first (Setup)."); return; }
+    const rules = Object.fromEntries(Object.entries(pickers).filter(([, s]) => s.value).map(([n, s]) => [n, Number(s.value)]));
+    return startRun(pid, [...chosen], null, reason.value, key, load.value() === "full", can("config.read") ? rules : null);
+  };
+  const section = (n, title, body, extra) => el("section", { class: "run-part" }, el("div", { class: "title-row" }, el("h2", { class: "section" }, n + ". " + title), extra || null), body);
+  show(top, cache.projects.length > 1 ? el("div", { class: "narrow" }, field("Project", projSel)) : null,
+    section(1, "Data", dataPart, pickAll),
+    can("config.read") ? [section(2, "Matching rules", rulePart("decision", "matching", true)), section(3, "Golden record", rulePart("survivorship", "golden", true)),
+      section(4, "Technical settings", rulePart("settings", "technical", false))] : el("p", { class: "hint" }, "The run uses the rule versions the project has in use."),
+    section(can("config.read") ? 5 : 2, "How to load", load.node),
+    el("div", { class: "narrow" }, field("Reason (optional, recorded with the run)", reason)), err,
+    el("div", { class: "row" }, btn("Cancel", () => go(() => viewProject(pid))), can("runs.start") ? btn("Start run", start, "primary", "play") : null));
+}
+// What a run reads and uses, in one line under its title: data versions, rule versions, load.
+function runUsed(r) {
+  const cfg = r.configs || {};
+  const chosen = (r.options || {}).rules || {};
+  const done = r.status === "succeeded";
+  const ver = (n, none) => (cfg[n] ? (cfg[n].source === "store" ? "version " + cfg[n].version : none) : chosen[n] ? "version " + chosen[n] : done ? none : "the version in use when it starts");
+  const part = (k, v) => el("span", {}, el("strong", {}, k + ": "), v);
+  const parts = [part("Data", r.connections.length ? r.connections.map((c) => c.id + " version " + c.version).join(", ") : "imported"),
+    part("Matching rules", ver("decision", "standard (built in)")), part("Golden record", ver("survivorship", "standard (built in)")),
+    part("Technical settings", ver("settings", "standard values")), part("Load", (r.options || {}).full ? "full reload" : "incremental")];
+  return el("p", { class: "run-used" }, parts.flatMap((x, i) => (i ? [" · ", x] : [x])));
 }
 async function viewRun(pid, rid, tab) {
   const [r] = await Promise.all([api("GET", R(pid, rid)), refreshCache()]);
   const going = r.status === "running" || r.status === "queued";
   const okRun = r.status === "succeeded";
   const tabList = okRun ? [["overview", "Overview"], ["results", "Results"], ...(can("queue.read") ? [["review", "Review queue"]] : []),
-    ...(can("person.read") ? [["people", "People"]] : []), ["log", "Log"]] : [];
+    ...(can("person.read") ? [["people", "People"]] : [])] : [];
   if (!tabList.some(([k]) => k === tab)) tab = "overview";
   here(R(pid, rid) + (tab === "overview" ? "" : "/" + tab));
   const again = can("runs.start") && !going && r.connections.length;
@@ -783,19 +910,20 @@ async function viewRun(pid, rid, tab) {
   if (!going && can("data.delete")) actions.push(btn("Delete run", () => deleteRun(pid, rid), "danger", "trash"));
   const top = page("Run " + rid, "Started " + when(r.started_at || r.created_at) + " by " + r.requested_by + (r.finished_at ? ". Finished " + when(r.finished_at) + "." : "."), actions,
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Runs", P(pid) + "/runs"), rid), runState(r));
+  const used = runUsed(r);
   if (going) {
     timer = setInterval(() => run(async () => {
       const now = await api("GET", R(pid, rid));
       if (now.status !== "running" && now.status !== "queued") { stopTimer(); await viewRun(pid, rid); say("The run finished: " + (STATUS_LABEL[now.status] || now.status) + ".", now.status === "succeeded" ? "good" : "bad"); }
     }, true), 4000);
-    show(top, empty(r.status === "queued" ? "This run is waiting its turn" + (r.queue_position > 1 ? " (" + (r.queue_position - 1) + " ahead of it)" : " and starts next") + ". It starts by itself; you can stop it above."
+    show(top, used, empty(r.status === "queued" ? "This run is waiting its turn" + (r.queue_position > 1 ? " (" + (r.queue_position - 1) + " ahead of it)" : " and starts next") + ". It starts by itself; you can stop it above."
       : "This run is in progress. Its results appear here when it finishes (this page checks every few seconds); earlier runs stay readable meanwhile."));
     return;
   }
   const restart = again ? " Start it again with Run again above." : " Someone who can start runs can start it again.";
-  if (r.status === "cancelled") { show(top, empty("This run was stopped before it finished, so it has no results." + restart)); return; }
+  if (r.status === "cancelled") { show(top, used, empty("This run was stopped before it finished, so it has no results." + restart)); return; }
   if (!okRun) {
-    show(top, empty(r.status === "interrupted" ? "This run was interrupted when the server restarted, so it has no results." + restart
+    show(top, used, empty(r.status === "interrupted" ? "This run was interrupted when the server restarted, so it has no results." + restart
       : "This run did not finish successfully (exit code " + r.exit_code + "), so it has no results. The end of its log is below." + restart), await runLogPanel(pid, rid));
     return;
   }
@@ -803,12 +931,11 @@ async function viewRun(pid, rid, tab) {
     el("strong", {}, "A newer run has finished. "), "This run's people, review queue and results are out of date. Decisions made here still count, but review in the newest run.",
     el("div", { class: "row" }, btn("Open the newest run", () => go(() => viewRun(pid, r.latest_run_id, tab)), "small primary"))) : null;
   let body;
-  if (tab === "overview") body = runOverview(r);
+  if (tab === "overview") body = el("div", {}, runOverview(r), runLogDetails(pid, rid));
   else if (tab === "review") body = el("div", {}, scoringNotice(r.summary), await reviewQueue(pid, rid, { status: "open", band: "all", offset: 0 }));
-  else if (tab === "log") body = await runLogPanel(pid, rid);
   else if (tab === "results") body = await runResults(pid, rid);
   else body = peopleLookup(pid, rid);
-  show(top, stale, tabs(tabList, tab, (t) => go(() => viewRun(pid, rid, t))), tabPanel(tab, body));
+  show(top, used, stale, tabs(tabList, tab, (t) => go(() => viewRun(pid, rid, t))), tabPanel(tab, body));
 }
 // The results of one finished run, right on the run page: the three datasets, each as a file or into a database.
 async function runResults(pid, rid) {
@@ -819,6 +946,13 @@ async function runResults(pid, rid) {
   const refresh = () => go(() => viewRun(pid, rid, "results"));
   return el("div", {}, el("p", { class: "hint" }, "Results contain personal data. Every download or database write asks for a reason and is recorded in the project's activity."),
     ...(await datasetCards(p, rid)), await destinationsPanel(p, refresh));
+}
+// The log of a finished run, folded away at the end of its overview and read only when opened.
+function runLogDetails(pid, rid) {
+  const box = el("div");
+  const d = el("details", { class: "advanced" }, el("summary", {}, "Run log"), box);
+  d.addEventListener("toggle", () => { if (d.open && !box.childElementCount) run(async () => fill(box, await runLogPanel(pid, rid)), true); });
+  return d;
 }
 async function runLogPanel(pid, rid) {
   const log = await api("GET", R(pid, rid) + "/log?lines=200");
@@ -896,7 +1030,7 @@ function runOverview(r) {
   if (g && g.trust_order) {
     parts.push(el("h2", { class: "section" }, "How the golden records were chosen"),
       kv([["Source trust order", g.trust_order.join(" > ")],
-        g.auto_ranked_sources && g.auto_ranked_sources.length ? ["Ranked automatically", g.auto_ranked_sources.join(", ") + " (by how complete their records are; set the order in Rules > Golden record)"] : null,
+        g.auto_ranked_sources && g.auto_ranked_sources.length ? ["Ranked automatically", g.auto_ranked_sources.join(", ") + " (by how complete their records are; set the order in Setup, Golden record)"] : null,
         g.sources_without_dates && g.sources_without_dates.length ? ["No record date", el("span", { class: "bad" }, g.sources_without_dates.join(", ") + ": 'newest record' could not use them")] : null,
         ["Fields where sources disagreed", num(g.values_with_source_conflict)],
         g.shared_values_passed_over ? ["Shared phones or emails passed over", num(g.shared_values_passed_over)] : null]));
@@ -904,10 +1038,7 @@ function runOverview(r) {
   const rowsOf = (id) => (s.records_by_source || {})[id];
   const srcRows = r.connections.length ? r.connections.map((c) => el("tr", {}, el("td", {}, c.id), el("td", {}, "Version " + c.version), el("td", { class: "num" }, num(rowsOf(c.id)))))
     : (s.sources || []).map((x) => el("tr", {}, el("td", {}, x), el("td", { class: "muted" }, "imported run"), el("td", { class: "num" }, num(rowsOf(x)))));
-  const cfgRows = Object.entries(r.configs || {}).filter(([k]) => k !== "sources").map(([k, v]) => el("tr", {}, el("td", {}, label(k)),
-    el("td", {}, v.source === "store" ? "Version " + v.version : "Built-in default"), el("td", { class: "mono" }, (v.hash || "").slice(0, 12))));
-  parts.push(el("div", { class: "cols" }, el("div", {}, el("h2", { class: "section" }, "Sources read"), table(["Connection", "Version", ["Records read"]], srcRows)),
-    el("div", {}, el("h2", { class: "section" }, "Rules used"), cfgRows.length ? table(["Configuration", "Version", "Fingerprint"], cfgRows) : empty("Not recorded."))));
+  parts.push(el("h2", { class: "section" }, "Sources read"), table(["Connection", "Version", ["Records read"]], srcRows));
   if (r.stages) {
     parts.push(el("h2", { class: "section" }, "Stages"), table(["Stage", ["Seconds"], ["Peak memory (MB)"]], r.stages.map((st) => el("tr", {}, el("td", {}, label(st.stage)),
       el("td", { class: "num" }, st.seconds), el("td", { class: "num" }, num(st.peak_memory_mb))))));
@@ -924,8 +1055,8 @@ const CONFIG_INTRO = {
   survivorship: "Which value a person's golden record keeps when their records disagree.",
   settings: "Technical settings of a run. Change them together with your administrator.",
 };
-const CONFIG_HEAD = { decision: ["What the live matching rules do", "Change the matching rules"], survivorship: ["What the live golden-record rules do", "Change the golden-record rules"],
-  settings: ["The live run settings", "Change the run settings"] };
+const CONFIG_HEAD = { decision: ["What the matching rules in use do", "Change the matching rules"], survivorship: ["What the golden-record rules in use do", "Change the golden-record rules"],
+  settings: ["The technical settings in use", "Change the technical settings"] };
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 async function rulesPanel(p, name, editing) {
   name = name || "decision";
@@ -978,42 +1109,50 @@ async function rulesPanel(p, name, editing) {
     btn(live ? "What changes" : "View", () => view(v), "small", "list"),
     name === "decision" && can("config.propose") ? btn("Try it on the latest run", () => dry(v), "small", "play") : null,
     second && can("config.approve") && v.status === "proposed" && !mine(v) ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small", "check") : null,
-    can("config.activate") && (!second || v.approved_by.length) ? btn("Make live", () => act(v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary", "zap") : null,
+    can("config.activate") && (!second || v.approved_by.length) ? btn("Put in use", () => act(v, "activate", "Put version " + v.version + " in use", 0, "Note"), "small primary", "zap") : null,
     can("config.approve") ? btn("Decline", () => act(v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger", "x") : null,
     second && v.status === "proposed" && mine(v) ? tag("Yours: someone else approves it", "warn") : null,
   ];
 
-  // ---- what is live, and what waits
-  const status = el("div", { class: "rules-status" },
-    live ? el("div", { class: "live-line on" }, icon("check"), el("strong", {}, "Live: version " + live.version),
-      el("span", { class: "muted" }, (live.activated_by ? "made live by " + live.activated_by + ", " : "") + when(live.activated_at)))
-      : el("div", { class: "live-line" }, icon("info"), el("strong", {}, "Built-in defaults in use"),
-        el("span", { class: "muted" }, "this project has not made a version of its own live yet")),
-    pending.map((v) => el("div", { class: "pending-card" }, icon("clock"),
-      el("div", { class: "grow" }, el("strong", {}, "Version " + v.version + (v.status === "approved" ? " is approved and waits to be made live" : second ? " waits for a second person to approve it" : " waits to be made live")),
-        el("div", { class: "muted" }, "Proposed by " + v.proposed_by + ", " + when(v.proposed_at) + (v.reason ? ": “" + v.reason + "”" : ""))),
-      el("div", { class: "row" }, decide(v)))),
-    el("ol", { class: "flow-steps", "aria-label": "How a change goes live" }, withArrows([el("li", {}, icon("edit"), "Propose a change"),
-      second ? el("li", {}, icon("users"), "A second person approves") : null, el("li", {}, icon("zap"), "Make it live"), el("li", {}, icon("play"), "The next run uses it")])));
-
-  // ---- the body: a plain summary of the live rules, or the editor
+  // ---- what is in use, and what waits. Matching and golden-record rules are never assumed: until a version is in use, runs cannot start.
   const canEdit = can("config.propose");
-  const start = async () => (latest ? api("GET", base + "/versions/" + latest.version) : api("GET", base + "/default"));
-  const shown = live ? api("GET", base + "/versions/" + live.version) : api("GET", base + "/default");
+  const optional = name === "settings";
+  const now = !second && can("config.activate");          // one-person project: what is saved is in use at once
   const proposed = async (content, reason) => {
     const out = await api("POST", base + "/propose", { content, reason });
+    if (now) await api("POST", base + "/versions/" + out.version + "/activate", { reason });
     await again(false);
-    say("Saved as version " + out.version + ". " + (second ? "Another person approves it, then it can be made live." : "Make it live when you are ready; the project's next run uses it."), "good");
+    say("Saved as version " + out.version + (now ? " and in use: the project's next run uses it." : second ? ". Another person approves it, then it can be put in use."
+      : ". Someone who can put rules in use does that next."), "good");
   };
+  const standard = async () => proposed((await api("GET", base + "/default")).content, "Chose the standard " + (optional ? "settings" : "rules"));
+  const status = el("div", { class: "rules-status" },
+    live ? el("div", { class: "live-line on" }, el("strong", {}, "In use: version " + live.version),
+      el("span", { class: "muted" }, (live.activated_by ? "put in use by " + live.activated_by + ", " : "") + when(live.activated_at)))
+      : optional ? el("div", { class: "live-line" }, el("strong", {}, "Standard values"), el("span", { class: "muted" }, "nothing to choose unless your administrator asks"))
+        : el("div", { class: "notice warn", role: "note" }, el("strong", {}, "Not chosen yet. "),
+          "Runs of this project cannot start until it has " + (name === "decision" ? "matching" : "golden-record") + " rules in use. Use the standard rules below as they are, or change them first.",
+          canEdit && !pending.length ? el("div", { class: "row" }, btn("Use the standard rules", standard, "primary", "check"), btn("Change them first", () => run(() => again(true)), "", "edit")) : null),
+    pending.map((v) => el("div", { class: "pending-card" },
+      el("div", { class: "grow" }, el("strong", {}, "Version " + v.version + (v.status === "approved" ? " is approved and waits to be put in use" : second ? " waits for a second person to approve it" : " waits to be put in use")),
+        el("div", { class: "muted" }, "Proposed by " + v.proposed_by + ", " + when(v.proposed_at) + (v.reason ? ": “" + v.reason + "”" : ""))),
+      el("div", { class: "row" }, decide(v)))),
+    second ? el("p", { class: "hint" }, "Second approval is on: a saved change waits until someone else approves it, then it is put in use and the next run uses it.") : null);
+
+  // ---- the body: a plain summary of the rules in use (or of the standard ones), or the editor
+  const start = async () => (latest ? api("GET", base + "/versions/" + latest.version) : api("GET", base + "/default"));
+  const shown = live ? api("GET", base + "/versions/" + live.version) : api("GET", base + "/default");
   const cancel = () => run(() => again(false));
-  const head = el("div", { class: "rules-head" }, el("div", {}, el("h2", { class: "section" }, CONFIG_HEAD[name][editing ? 1 : 0]), el("p", { class: "hint" }, CONFIG_INTRO[name])),
-    !editing && canEdit ? btn(name === "settings" ? "Change the settings" : "Change the rules", () => run(() => again(true)), "primary", "edit") : null);
+  const headText = editing ? CONFIG_HEAD[name][1] : live ? CONFIG_HEAD[name][0] : optional ? "The standard values" : "What the standard rules would do";
+  const head = el("div", { class: "rules-head" }, el("div", {}, el("h2", { class: "section" }, headText), el("p", { class: "hint" }, CONFIG_INTRO[name])),
+    !editing && canEdit && (live || optional) ? btn(optional ? "Change the settings" : "Change the rules", () => run(() => again(true)), "primary", "edit") : null);
   let body;
   if (editing && canEdit) {
     const startFrom = await start();
-    const note = latest ? el("div", { class: "notice", role: "note" }, icon("info"), " You are editing a copy of version " + latest.version +
-      (latest.status === "active" ? " (live)" : waiting(latest) ? " (waiting, not live yet)" : "") + ". Nothing changes until the new version is made live.")
-      : el("div", { class: "notice", role: "note" }, icon("info"), " You are starting from the built-in defaults. Nothing changes until the new version is made live.");
+    const after = now ? " Saving puts the new version in use." : " Nothing changes until the new version is approved and put in use.";
+    const note = latest ? el("div", { class: "notice", role: "note" }, "You are editing a copy of version " + latest.version +
+      (latest.status === "active" ? " (in use)" : waiting(latest) ? " (waiting, not in use yet)" : "") + "." + after)
+      : el("div", { class: "notice", role: "note" }, "You are starting from the standard " + (optional ? "values" : "rules") + "." + after);
     if (name === "decision") {
       const [cat, defaults] = await Promise.all([api("GET", "/rules-catalogue"), api("GET", base + "/default")]);
       body = [note, matchingEditor(startFrom.content, defaults.content, cat, proposed, cancel)];
@@ -1036,7 +1175,7 @@ async function rulesPanel(p, name, editing) {
   const history = versions.length ? el("details", { class: "history" }, el("summary", {}, icon("clock"), "Version history (" + versions.length + ")"),
     table(["Version", "Status", "Proposed by", "When", "Reason", "Approved by", ""], rows)) : null;
 
-  wrap.append(tabs(CONFIGS, name, async (n) => wrap.replaceWith(await rulesPanel(p, n))), status, result, head, el("div", { class: "rules-body" }, body), history);
+  wrap.append(status, result, head, el("div", { class: "rules-body" }, body), history);
   return wrap;
 }
 
@@ -1479,8 +1618,8 @@ async function addDataPage(pid) {
   const legend = el("div", { class: "legend" }, Object.values(TESTED).map(([text, kind, help]) => el("span", {}, tag(text, kind), " ", el("span", { class: "muted" }, help))));
   show(page("Add data", "Choose where the data comes from. " + cat.catalogue.length + " kinds of source: files, databases, warehouses, cloud storage and applications. "
     + "Every source is read-only, and passwords are never typed here: they stay in environment variables on the server.",
-  [btn("Back to connections", () => go(() => viewProject(pid, "connections")), "", "prev")],
-  crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), "Add data")),
+  [btn("Back to data", () => go(() => viewProject(pid, "setup", "data")), "", "prev")],
+  crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), "Add data")),
   el("div", { class: "row" }, icon("search"), q), legend, none, sections);
   q.focus();
 }
@@ -1490,7 +1629,7 @@ async function projectConnections(p, connections) {
   const manage = can("sources.manage");
   const cat = manage ? await catalogue() : null;
   const rows = connections.map((c) => linkRow(c.id, () => viewConnection(pid, c.id), el("td", {}, typeCell(c.type)),
-    el("td", { class: "num" }, c.fields_mapped), el("td", {}, c.live_version ? "Version " + c.live_version : el("span", { class: "muted" }, "Not live")),
+    el("td", { class: "num" }, c.fields_mapped), el("td", {}, c.live_version ? "Version " + c.live_version : el("span", { class: "muted" }, "Not in use")),
     el("td", {}, c.latest_status === "active" ? "" : statusTag(c.latest_status)),
     el("td", {}, c.last_check ? tag(c.last_check.ok ? "OK" : "Failed", c.last_check.ok ? "success" : "danger") : el("span", { class: "muted" }, "never")), el("td", {}, when(c.updated_at)),
     manage ? el("td", { class: "actions-cell" }, btn("Edit", () => run(() => editConnection(pid, c.id)), "small", "edit", { "aria-label": "Edit connection " + c.id })) : null));
@@ -1507,7 +1646,7 @@ async function projectConnections(p, connections) {
     manage ? el("div", { class: "tiles" }, POPULAR.map((t) => cat.catalogue.find((c) => c.type === t)).filter(Boolean)
       .map((c) => sourceTile(c, () => run(() => connectionWizard(pid, c.type))))) : null,
     el("div", { class: "title-row" }, el("h2", { class: "section" }, "This project's connections"), copy),
-    rows.length ? table(["Connection", "Type", ["Fields"], "Live", "Pending", "Last check", "Updated", ...(manage ? [""] : [])], rows)
+    rows.length ? table(["Connection", "Type", ["Fields"], "In use", "Waiting", "Last check", "Updated", ...(manage ? [""] : [])], rows)
       : empty(can("sources.manage") ? "No connections yet. Add your first data source above; it belongs to this project only." : "No connections yet. Someone who manages data sources adds them."),
     connections.length ? coverage(connections) : null,
     uploads.length ? el("h2", { class: "section" }, "Uploaded files") : null,
@@ -1538,7 +1677,7 @@ async function copyDialog(pid) {
       return await api("POST", P(pid) + "/connections/copy", { from_project: from.value, connection_id: which.value, new_id: newId.value.trim() || null });
     } catch (e) { fail(err, e.message); return undefined; }
   });
-  if (done) { await go(() => viewConnection(pid, done.id)); say("Copied as version " + done.version + ". Check the mapping, then make it live.", "good"); }
+  if (done) { await go(() => viewConnection(pid, done.id)); say("Copied as version " + done.version + ". Check the mapping, then put it in use.", "good"); }
 }
 // Which of our fields each connection fills, and from which of its columns: the whole project's data at a glance.
 const CANON_ORDER = ["full_name", "father_name", "dob", "age", "gender", "marital_status", "mobile", "mobile_alt", "email", "address", "address_alt", "city", "state", "pincode",
@@ -1585,23 +1724,23 @@ async function viewConnection(pid, cid) {
   const buttons = (v) => [
     second && can("config.approve") && v.status === "proposed" && !mine(v) ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small") : null,
     can("config.approve") && (v.status === "proposed" || v.status === "approved") ? btn("Decline", () => act(v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger") : null,
-    can("config.activate") && (v.status === "proposed" || v.status === "approved") && (!second || v.approved_by.length) ? btn("Make live", () => act(v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary") : null,
+    can("config.activate") && (v.status === "proposed" || v.status === "approved") && (!second || v.approved_by.length) ? btn("Put in use", () => act(v, "activate", "Put version " + v.version + " in use", 0, "Note"), "small primary") : null,
     second && v.status === "proposed" && mine(v) ? tag("Yours: someone else approves it", "warn") : null,
   ].filter(Boolean);
   const changes = pending && live ? await api("GET", base + "/diff?old=" + live.version + "&new=" + latest.version) : null;
   const shown = c.live || c.latest;
-  show(page(cid, typeTitle(shown.connector.type) + " connection. " + (live ? "Live version " + live.version + "." : "Not live yet."),
+  show(page(cid, typeTitle(shown.connector.type) + " connection. " + (live ? "Version " + live.version + " in use." : "Not in use yet."),
     can("sources.manage") ? [btn("Edit", () => run(() => editConnection(pid, cid)), "", "edit")] : [],
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), cid), statusTag(latest.status),
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), cid), statusTag(latest.status),
     logo(shown.connector.type, "big")),
-  pending ? el("div", { class: "notice", role: "note" }, el("strong", {}, "Version " + latest.version + " waits to be made live. "),
-    live ? (changes && changes.length ? "Compared with live version " + live.version + ": " + changes.join("; ") + "." : "It reads the same as the live version.") : "There is no live version yet.") : null,
+  pending ? el("div", { class: "notice", role: "note" }, el("strong", {}, "Version " + latest.version + " waits to be put in use. "),
+    live ? (changes && changes.length ? "Compared with version " + live.version + " in use" + ": " + changes.join("; ") + "." : "It reads the same as the version in use.") : "No version is in use yet.") : null,
   el("h2", { class: "section" }, "Versions"),
   table(["Version", "Status", "Proposed by", "Reason", "Approved by", ""], c.versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version),
     el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")), el("td", { class: "actions-cell" }, buttons(v))))),
   pending ? el("h2", { class: "section" }, "Version " + latest.version + " (waiting)") : null,
   pending ? mappingTables(c.latest, "") : null,
-  live ? el("h2", { class: "section" }, "Live version " + live.version) : null,
+  live ? el("h2", { class: "section" }, "Version " + live.version + " (in use)") : null,
   live ? mappingTables(c.live, "") : null,
   el("div", { class: "title-row" }, el("h2", { class: "section" }, "Health"), can("sources.manage") ? btn("Test now", async () => {
     const t = await api("POST", base + "/test");
@@ -1644,24 +1783,7 @@ const KEY_RULES = {
   customer_number: ["customer number", "auto_same_customer_number", "veto_customer_number_conflict"],
 };
 const KEY_FIELDS = { pan: ["pan"], aadhaar: ["aadhaar", "aadhaar_reference_key"], customer_number: ["customer_number"] };
-async function decisionStart(pid) {
-  if (!can("config.read") || !can("config.propose")) return { rules: [] };      // cannot change the project's rules: the choice is not offered
-  const [vs, defaults] = await Promise.all([api("GET", P(pid) + "/config/decision"), api("GET", P(pid) + "/config/decision/default")]);
-  const content = vs.length ? (await api("GET", P(pid) + "/config/decision/versions/" + vs[vs.length - 1].version)).content : defaults.content;
-  return { ...content, _defaults: defaults.content.rules };
-}
 const keyOn = (content, k) => (content.rules || []).some((r) => r.id === KEY_RULES[k][1] && r.enabled !== false);
-function withKeys(content, keys) {
-  const { _defaults, ...out } = JSON.parse(JSON.stringify(content));
-  for (const [k, on] of Object.entries(keys)) {
-    for (const id of [KEY_RULES[k][1], KEY_RULES[k][2]]) {
-      let r = out.rules.find((x) => x.id === id);
-      if (!r && on) { r = (_defaults || []).find((x) => x.id === id); if (r) out.rules.push(r); }
-      if (r) r.enabled = on;
-    }
-  }
-  return out;
-}
 // A connector's settings form, built from the catalogue: the right control for each setting, help under it, settings that only apply to another
 // choice hidden (show_if), rarely needed ones under "More settings", secrets only as the NAME of an environment variable.
 function settingsForm(spec, conn, changed, rerender) {
@@ -1714,7 +1836,7 @@ async function connectionWizard(pid, type, preset, startStep) {
   const spec = opts.catalogue.find((c) => c.type === type || c.aliases.includes(type));
   const root = P(pid);
   const state = { source: preset || { source_id: "", connector: { type }, record_id: null, fields: {}, attributes: [] }, info: null, step: 1, uploadName: null,
-    sample: null, reason: null, decision: null, keys: null };
+    sample: null, reason: null };
   const out = el("div");
   const kind = () => state.source.connector.type;
   focusNext = true;
@@ -1727,7 +1849,7 @@ async function connectionWizard(pid, type, preset, startStep) {
     const bar = steps(["Connect", "Map columns", "Preview and save"], state.step, (n) => run(() => goStep(n)));
     const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (spec ? spec.title : typeTitle(type)),
       spec ? spec.summary : "", [btn("Cancel", () => go(() => (preset ? viewConnection(pid, state.source.source_id) : addDataPage(pid))))],
-      crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Connections", P(pid) + "/connections"), preset ? state.source.source_id : "Add data"),
+      crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), preset ? state.source.source_id : "Add data"),
       null, logo(kind(), "big"));
     if (state.step === 1) show(header, bar, connectStep());
     else if (state.step === 2) show(header, bar, mapStep());
@@ -1742,10 +1864,7 @@ async function connectionWizard(pid, type, preset, startStep) {
   const openSource = async (target) => {
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(state.source.source_id)) throw new Error("Give the connection an id of letters, digits, _ or -.");
     if (kind() === "upload" && !state.source.connector.upload_id) throw new Error("Upload a file first.");
-    const [info, decision] = await Promise.all([api("POST", inspectUrl(), { connector: state.source.connector }), state.decision ? state.decision : decisionStart(pid)]);
-    state.info = info;
-    state.decision = decision;
-    if (!state.keys) state.keys = Object.fromEntries(Object.keys(KEY_RULES).map((k) => [k, keyOn(decision, k)]));
+    state.info = await api("POST", inspectUrl(), { connector: state.source.connector });
     if (!Object.keys(state.source.fields).length) {
       for (const s of state.info.suggestions) state.source.fields[s.field] = s.column;
       if (!state.source.record_id && state.info.record_id) state.source.record_id = state.info.record_id;
@@ -1856,14 +1975,6 @@ async function connectionWizard(pid, type, preset, startStep) {
           "\"Different values\" near 100% means almost every row has its own value (an id); a low share means a short list of options."),
         table(["Your column", "Values look like", ["Rows filled"], ["Different values"], "Used as"], rows));
     }
-    // which identifiers decide on their own: the project's matching rules, proposed together with the connection
-    const present = can("config.propose") ? Object.keys(KEY_RULES).filter((k) => KEY_FIELDS[k].some((f) => state.source.fields[f])) : [];
-    const keyBoxes = present.map((k) => {
-      const cb = el("input", { type: "checkbox", checked: state.keys[k] });
-      cb.addEventListener("change", () => { state.keys[k] = cb.checked; });
-      return el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, "Records with the same " + KEY_RULES[k][0] + " are the same person"),
-        el("span", { class: "muted" }, "Merged automatically when the names are compatible; two different " + KEY_RULES[k][0] + "s are never merged. Applies to the whole project.")));
-    });
     return el("div", {},
       el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your data (" + (state.info.unmasked ? "actual values" : "values shortened") + ")"),
         revealButton(async () => { state.info = { ...state.info, ...(await api("POST", inspectUrl(), { connector: state.source.connector })) }; render(); })),
@@ -1872,11 +1983,7 @@ async function connectionWizard(pid, type, preset, startStep) {
       el("p", { class: "hint" }, "For each of our fields, pick the column of your data that holds it. Leave a field as 'Not in this source' when your data does not have it: " +
         "every field is optional, but the more of them a source fills, the more duplicates it finds."),
       groups,
-      el("h3", { class: "section" }, "Which columns identify the same person?"),
-      el("p", { class: "hint" }, "Names, birth dates, phones, emails and addresses are always compared together and weighed by how well they tell people apart in your data. " +
-        "An identifier can also decide on its own:"),
-      keyBoxes.length ? el("div", { class: "checks" }, keyBoxes) : el("p", { class: "muted" }, can("config.propose") ? "Map a PAN, Aadhaar or customer number column above to choose it here."
-        : "Someone who manages the project's rules chooses this in the Rules tab."),
+      el("p", { class: "hint" }, "Whether an identifier such as PAN decides on its own (same PAN, same person) is part of the project's matching rules: Setup, Matching rules."),
       el("div", { class: "cols" },
         el("div", {}, el("h3", { class: "section" }, "Each row's own id"), el("p", { class: "hint" }, "The column that identifies a row in this source, used to trace a golden record back to its rows. It is not used to match. Without one, rows are numbered."),
           pick(state.source.record_id || "", (v) => { state.source.record_id = v || null; }, "Each row's own id")),
@@ -1893,20 +2000,18 @@ async function connectionWizard(pid, type, preset, startStep) {
           revealButton(async () => doPreview())) : null,
         r.rows.length ? wide(cols, r.rows.map((row) => el("tr", {}, cols.map((c) => el("td", {}, row[c] == null ? "" : row[c]))))) : null);
     });
-    const keysChanged = () => state.decision && Object.keys(state.keys || {}).some((k) => state.keys[k] !== keyOn(state.decision, k));
     const save = async () => {
       const why = await askReason("Save connection " + state.source.source_id, "Why add or change it?", 10, "Save connection");
       if (why === null) return;
       const res = await api("POST", root + "/connections", { connection: state.source, reason: why });
-      let rules = null;
-      if (keysChanged()) rules = await api("POST", root + "/config/decision/propose", { content: withKeys(state.decision, state.keys), reason: why + " (identifiers chosen while mapping " + state.source.source_id + ")" });
+      const now = !res.second_approval && can("config.activate");          // one-person project: saved means in use
+      if (now) await api("POST", root + "/connections/" + res.id + "/versions/" + res.version + "/activate", { reason: why });
       await go(() => viewConnection(pid, res.id));
-      say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it and makes it live; then runs can use it." : "Make it live when you are ready; then runs can use it.") +
-        (rules ? " Your choice of identifiers was proposed as version " + rules.version + " of the project's matching rules (Rules tab): make that live too." : ""), "good");
+      say("Saved as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
+        : ". Someone who can put connections in use does that next."), "good");
     };
     setTimeout(doPreview, 0);
-    return el("div", {}, keysChanged() ? el("div", { class: "notice", role: "note" }, "Saving also proposes a change to the project's matching rules: " +
-      Object.keys(state.keys).filter((k) => state.keys[k] !== keyOn(state.decision, k)).map((k) => (state.keys[k] ? "the same " : "no longer the same ") + KEY_RULES[k][0] + " decides").join("; ") + ".") : null,
+    return el("div", {},
     el("div", { class: "row" }, btn("Back", () => goStep(2), "", "prev"), btn("Preview again", doPreview, "", "refresh"), btn("Save connection", save, "primary", "check")));
   }
   render();
@@ -1990,7 +2095,7 @@ async function downloadResults(pid, rid, dataset, format) {
 }
 async function databaseDialog(p, rid, dataset) {
   const dests = (await api("GET", P(p.id) + "/destinations")).filter((d) => d.live_version);
-  if (!dests.length) { say("This project has no live database destination yet. Add one under Database destinations on this page, then make it live.", "bad"); return; }
+  if (!dests.length) { say("This project has no database destination in use yet. Add one under Database destinations on this page.", "bad"); return; }
   const dest = el("select", {}, dests.map((d) => el("option", { value: d.id }, d.id + (d.schema_name ? " (schema " + d.schema_name + ")" : ""))));
   const tableName = el("input", { type: "text", maxlength: "63", placeholder: "for example dedupe_" + dataset.name });
   const mode = el("select", {}, [["create", "Create a new table"], ["append", "Add rows to an existing table"], ["replace", "Replace the rows of an existing table"]]
@@ -2027,10 +2132,10 @@ async function destinationsPanel(p, refresh) {
     const buttons = v ? [
       second && can("config.approve") && v.status === "proposed" && !mine ? btn("Approve", () => act(d, v, "approve", "Approve version " + v.version, 0, "Note"), "small") : null,
       can("config.approve") ? btn("Decline", () => act(d, v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger") : null,
-      can("config.activate") && (!second || v.approved_by.length) ? btn("Make live", () => act(d, v, "activate", "Make version " + v.version + " live", 0, "Note"), "small primary") : null,
+      can("config.activate") && (!second || v.approved_by.length) ? btn("Put in use", () => act(d, v, "activate", "Put version " + v.version + " in use", 0, "Note"), "small primary") : null,
       second && mine && v.status === "proposed" ? tag("Yours: someone else approves it", "warn") : null,
     ].filter(Boolean) : [];
-    return el("tr", {}, el("td", {}, d.id), el("td", { class: "mono" }, d.url_env), el("td", {}, d.schema_name || ""), el("td", {}, d.live_version ? "Version " + d.live_version : el("span", { class: "muted" }, "Not live")),
+    return el("tr", {}, el("td", {}, d.id), el("td", { class: "mono" }, d.url_env), el("td", {}, d.schema_name || ""), el("td", {}, d.live_version ? "Version " + d.live_version : el("span", { class: "muted" }, "Not in use")),
       el("td", {}, d.latest_status === "active" ? "" : statusTag(d.latest_status)), el("td", { class: "actions-cell" }, buttons,
         can("sources.manage") ? btn("Test", async () => {
           const t = await api("POST", P(p.id) + "/destinations/" + d.id + "/test");
@@ -2040,7 +2145,7 @@ async function destinationsPanel(p, refresh) {
   return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Database destinations"),
     can("sources.manage") ? btn("Add a destination", () => destinationDialog(p, refresh), "", "plus") : null),
   el("p", { class: "hint" }, "A destination is the name of an environment variable (starting with DEDUPE_DST_) that holds a database address. The address and password are set on the server by whoever runs it, never typed here."),
-  rows.length ? table(["Destination", "Environment variable", "Schema", "Live", "Pending", ""], rows) : empty("No destinations yet. Add one to write results into a database."));
+  rows.length ? table(["Destination", "Environment variable", "Schema", "In use", "Waiting", ""], rows) : empty("No destinations yet. Add one to write results into a database."));
 }
 async function destinationDialog(p, refresh) {
   const id = el("input", { type: "text", maxlength: "40", placeholder: "for example warehouse" });
@@ -2054,7 +2159,11 @@ async function destinationDialog(p, refresh) {
       return await api("POST", P(p.id) + "/destinations", { destination: { destination_id: id.value.trim(), url_env: env.value.trim().toUpperCase(), schema_name: schema.value.trim() || null }, reason: why.value.trim() });
     } catch (e) { fail(err, e.message); return undefined; }
   });
-  if (res) { await refresh(); say("Saved as version " + res.version + ". " + (res.second_approval ? "Another person approves it, then it can be made live." : "Make it live to use it."), "good"); }
+  if (!res) return;
+  const now = !res.second_approval && can("config.activate");           // one-person project: saved means in use
+  if (now) await api("POST", P(p.id) + "/destinations/" + res.id + "/versions/" + res.version + "/activate", { reason: why.value.trim() });
+  await refresh();
+  say("Saved as version " + res.version + (now ? " and in use." : res.second_approval ? ". Another person approves it, then it can be put in use." : ". Someone who can put it in use does that next."), "good");
 }
 
 // Radio buttons drawn as cards: [value, title, icon, explanation]. Returns { node, value() }.
@@ -2101,7 +2210,7 @@ async function schedulesPanel(p, connections) {
       btn("Delete", () => remove(s), "small danger")] : null)));
   const create = manage ? btn("New schedule", () => scheduleDialog(p, connections), "primary", "plus") : null;
   return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Scheduled runs"), create),
-    el("p", { class: "hint" }, "A schedule starts an ordinary run of the chosen connections at the times you set, using each connection's live version at that moment: an incremental load (only new and changed records are processed again) or a full reload. It never starts a new run while its last one is still going, runs once (not once per missed slot) after the server was off, and pauses itself after three failed runs in a row."),
+    el("p", { class: "hint" }, "A schedule starts an ordinary run of the chosen connections at the times you set, using the versions in use at that moment: an incremental load (only new and changed records are processed again) or a full reload. It never starts a new run while its last one is still going, runs once (not once per missed slot) after the server was off, and pauses itself after three failed runs in a row."),
     rows.length ? table(["Name", "Connections", "When", "Load", "Next run", "Last run", "State", ""], rows) : empty("No schedules yet." + (manage ? "" : " Someone who can start runs creates them."), create));
 }
 async function scheduleDialog(p, connections, existing) {
