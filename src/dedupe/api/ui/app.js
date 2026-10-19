@@ -1831,12 +1831,20 @@ function settingsForm(spec, conn, changed, rerender) {
     more.length ? el("details", { class: "advanced" }, el("summary", {}, "More settings (" + more.length + ")"), el("div", { class: "fields settings" }, more.map(control))) : null,
   ];
 }
-async function connectionWizard(pid, type, preset, startStep) {
+// `batch`: several files uploaded at once ({ files: [{ upload_id, id, label }], index }); each becomes its own connection, mapped one after another.
+async function connectionWizard(pid, type, preset, startStep, batch) {
   const opts = await catalogue();
   const spec = opts.catalogue.find((c) => c.type === type || c.aliases.includes(type));
   const root = P(pid);
   const state = { source: preset || { source_id: "", connector: { type }, record_id: null, fields: {}, attributes: [] }, info: null, step: 1, uploadName: null,
     sample: null, reason: null };
+  if (batch) {
+    const f = batch.files[batch.index];
+    state.source = { source_id: f.id, connector: { type: "upload", upload_id: f.upload_id }, record_id: null, fields: {}, attributes: [] };
+    state.uploadName = f.label;
+  }
+  const ofBatch = batch && batch.files.length > 1 ? " (file " + (batch.index + 1) + " of " + batch.files.length + ")" : "";
+  const leftOver = () => (batch ? batch.files.length - batch.index - 1 : 0);
   const out = el("div");
   const kind = () => state.source.connector.type;
   focusNext = true;
@@ -1847,8 +1855,11 @@ async function connectionWizard(pid, type, preset, startStep) {
   };
   const render = () => {
     const bar = steps(["Connect", "Map columns", "Preview and save"], state.step, (n) => run(() => goStep(n)));
-    const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (spec ? spec.title : typeTitle(type)),
-      spec ? spec.summary : "", [btn("Cancel", () => go(() => (preset ? viewConnection(pid, state.source.source_id) : addDataPage(pid))))],
+    const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (batch ? state.source.source_id : spec ? spec.title : typeTitle(type)) + ofBatch,
+      spec ? spec.summary : "", [btn("Cancel", () => go(async () => {
+        await (preset ? viewConnection(pid, state.source.source_id) : batch ? viewProject(pid, "setup", "data") : addDataPage(pid));
+        if (leftOver() + (batch ? 1 : 0) > 1) say("The files not mapped yet stay under Uploaded files on this page; delete them there if they are not needed.", "good");
+      }))],
       crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), preset ? state.source.source_id : "Add data"),
       null, logo(kind(), "big"));
     if (state.step === 1) show(header, bar, connectStep());
@@ -1882,23 +1893,33 @@ async function connectionWizard(pid, type, preset, startStep) {
   function connectStep() {
     const parts = [el("div", { class: "fields" }, idField())];
     if (kind() === "upload") {
-      const input = el("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx,.json,.jsonl,.ndjson,.parquet", hidden: true });
+      const input = el("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx,.json,.jsonl,.ndjson,.parquet", multiple: true, hidden: true });
       const status = el("div", { role: "status" }, state.source.connector.upload_id ? "Uploaded " + (state.uploadName || state.source.connector.upload_id) + "."
-        : "CSV, TSV, Excel (.xlsx), JSON, JSON Lines or Parquet. A text or Excel file's first row must hold the column names.");
-      const zone = el("div", { class: "dropzone" }, icon("upload"), el("strong", {}, "Drop a file here"), btn("Choose a file", () => input.click(), "small"), status);
-      const send = (f) => run(async () => {
-        status.textContent = "Uploading and checking " + f.name + "...";
-        const r = await api("POST", root + "/uploads?filename=" + encodeURIComponent(f.name), f, { "Content-Type": "application/octet-stream" }, true);
-        state.source.connector = { type: "upload", upload_id: r.upload_id };
-        state.info = null;
-        state.uploadName = r.filename + " (" + num(r.rows) + " rows, " + r.columns.length + " columns, stored encrypted)";
-        if (!state.source.source_id) state.source.source_id = r.filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "_").slice(0, 40);
-        render();
+        : "One file or several at once: CSV, TSV, Excel (.xlsx), JSON, JSON Lines or Parquet. A text or Excel file's first row must hold the column names. " +
+          "Each file becomes its own connection; with several, you map them one after another.");
+      const zone = el("div", { class: "dropzone" }, icon("upload"), el("strong", {}, "Drop files here"), btn("Choose files", () => input.click(), "small"), status);
+      // every file is uploaded first; each gets a connection id from its name, never one this project already uses
+      const send = (list) => run(async () => {
+        const files = [...list];
+        const taken = new Set((await api("GET", root + "/connections")).map((c) => c.id));
+        const done = [];
+        for (const [i, f] of files.entries()) {
+          status.textContent = "Uploading and checking " + f.name + (files.length > 1 ? " (" + (i + 1) + " of " + files.length + ")" : "") + "...";
+          const r = await api("POST", root + "/uploads?filename=" + encodeURIComponent(f.name), f, { "Content-Type": "application/octet-stream" }, true);
+          const base = r.filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 36) || "upload";
+          let id = base;
+          for (let n = 2; taken.has(id); n++) id = base + "_" + n;
+          taken.add(id);
+          done.push({ upload_id: r.upload_id, id, label: r.filename + " (" + num(r.rows) + " rows, " + r.columns.length + " columns, stored encrypted)" });
+        }
+        if (done.length === 1 && state.source.source_id) done[0].id = state.source.source_id;      // an id typed before the upload is kept
+        await connectionWizard(pid, "upload", null, 2, { files: done, index: 0 });
+        if (done.length > 1) say(num(done.length) + " files uploaded. Map them one at a time: this is the first.", "good");
       });
-      input.addEventListener("change", () => { if (input.files[0]) send(input.files[0]); });
+      input.addEventListener("change", () => { if (input.files.length) send(input.files); });
       zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
       zone.addEventListener("dragleave", () => zone.classList.remove("over"));
-      zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("over"); if (e.dataTransfer.files[0]) send(e.dataTransfer.files[0]); });
+      zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("over"); if (e.dataTransfer.files.length) send(e.dataTransfer.files); });
       parts.push(zone, input);
     } else if (spec) {
       parts.push(...settingsForm(spec, state.source.connector, () => { state.info = null; }, () => render()));
@@ -2006,16 +2027,22 @@ async function connectionWizard(pid, type, preset, startStep) {
       const res = await api("POST", root + "/connections", { connection: state.source, reason: why });
       const now = !res.second_approval && can("config.activate");          // one-person project: saved means in use
       if (now) await api("POST", root + "/connections/" + res.id + "/versions/" + res.version + "/activate", { reason: why });
+      const saved = "Saved " + res.id + " as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
+        : ". Someone who can put connections in use does that next.");
+      if (leftOver()) {                                                   // the next file of the batch
+        await go(() => connectionWizard(pid, "upload", null, 2, { ...batch, index: batch.index + 1 }));
+        say(saved + " Next: file " + (batch.index + 2) + " of " + batch.files.length + ".", "good");
+        return;
+      }
       await go(() => viewConnection(pid, res.id));
-      say("Saved as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
-        : ". Someone who can put connections in use does that next."), "good");
+      say(saved, "good");
     };
     setTimeout(doPreview, 0);
     return el("div", {},
     el("div", { class: "row" }, btn("Back", () => goStep(2), "", "prev"), btn("Preview again", doPreview, "", "refresh"), btn("Save connection", save, "primary", "check")));
   }
   render();
-  if (preset && startStep && startStep > 1) await goStep(startStep);
+  if ((preset || batch) && startStep && startStep > 1) await goStep(startStep);
 }
 
 // ---- results: take a run's output out as a file or into a database ------------------------------------------------------------

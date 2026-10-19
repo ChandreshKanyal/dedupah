@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Several files in one upload:** each becomes its own connection, mapped one after another; ids never collide | 70 |
 | session 4 | **Projects and runs redesigned:** 4 tabs (Setup, Runs, Results, Settings); nothing assumed (rules must be chosen); Save = in use without second approval; guided new project; one-screen New run with rule versions per run (backend `rules`) | 69 |
 | session 4 | **Review filters:** project, run, match score, why it is here, name / person ID / city; backend `forced` and `q` on the queue | 68 |
 | session 4 | **Light only; account menu:** the name in the top bar opens My account, Settings, Sign out (real pages); dark mode removed; nothing kept in browser storage | 67 |
@@ -317,6 +318,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-19 (session 4, multi-file upload)** — Several files per upload, mapped in turn; checked in a browser. Section 70.
 - **2026-10-19 (session 4, projects and runs)** — Project and run sections redesigned (Setup tab, guided new project, one-screen New run, runs pin rule versions); checked in a browser. Section 69.
 - **2026-10-10 (session 4, review filters)** — Filter bar on the Review inbox with a backend search; checked in a browser. Section 68.
 - **2026-10-10 (session 4, account menu)** — Dark mode removed; name menu with My account and Settings pages; checked in a browser. Section 67.
@@ -1691,3 +1693,12 @@ The user said "start all" to the five-step plan; all five are in this commit.
   end (create, Data, Use the standard rules twice, Check and run, Start refused with "Choose at least one connection to read."), then
   deleted again from Settings; no console errors.
 - **Open question for the user:** "Run again" still uses the versions in use now (not the ones the earlier run used).
+
+## 70. Several files in one upload (2026-10-19, session 4)
+The user asked to select several files at once when uploading from their computer. The upload step's file picker and drop zone now take
+several files; all are uploaded first (progress "2 of 3"), each becomes its own connection named after its file (an id the project already
+uses gets `_2`, `_3`..., so an upload never overwrites an existing connection), and the wizard opens each file's mapping in turn ("Add
+data: loans (file 1 of 2)"); saving one moves on to the next. Cancel leaves the files not mapped yet under Uploaded files (deletable
+there). A single file now goes straight to the mapping step. UI only, no backend change. **Checked in a real browser:** two synthetic
+files uploaded together into a temporary project, both mapped and saved (both in use), the same file uploaded again got `loans_2`;
+project deleted afterwards; no console errors.
