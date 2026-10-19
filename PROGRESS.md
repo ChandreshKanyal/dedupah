@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Matching and golden-record rules as one short pre-filled form each**, one button (Use these rules / Save changes / Send for approval) | 73 |
 | session 4 | **File bar between uploaded files; no reason asked in one-person projects** (once per upload otherwise) | 72 |
 | session 4 | **Column mapping as one short table:** one row per source column with a single Use as dropdown; sample rows folded | 71 |
 | session 4 | **Several files in one upload:** each becomes its own connection, mapped one after another; ids never collide | 70 |
@@ -320,6 +321,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-19 (session 4, rules forms)** — Matching and golden-record pages reduced to one pre-filled form each; checked in a browser. Section 73.
 - **2026-10-19 (session 4, file bar)** — Move between uploaded files; reasons recorded automatically without second approval. Section 72.
 - **2026-10-19 (session 4, mapping table)** — Mapping step reduced to one row per source column; checked in a browser. Section 71.
 - **2026-10-19 (session 4, multi-file upload)** — Several files per upload, mapped in turn; checked in a browser. Section 70.
@@ -1731,3 +1733,21 @@ The user, mapping 4 uploaded files: there was no way back to a previous file, an
   on, the reason is asked once per upload ("Why add these 4 files?"), not once per file.
 - **Checked in a real browser:** two files, no dialog at any save, back to file 1 from the bar, unchanged save moves on, both saved, the
   activity log shows the saves; temporary project deleted; no console errors.
+
+## 73. Matching and golden-record rules as one short form each (2026-10-19, session 4)
+The user (screenshot of Matching rules): "very confusing stage still". The page showed a warning with two buttons, a five-box flow diagram,
+a score bar, identifier cards and a long rule list, and "Change them first" switched to a second editing page with the same content again.
+- **Now one form, pre-filled with the standard rules (or the version in use), and one button.** Matching rules: 1 "How sure must it be?"
+  (Merge automatically from %, Ask a person from %, the bar), 2 "Identifiers you trust" (three ticks: same PAN / Aadhaar / customer number
+  means the same person; marked "no effect for now" when no data of the project has that column), 3 "Safety rules" (one line: "n of m are on,
+  for example ...", the full list, Add your own rule and the JSON for experts folded under "Show and change"). Golden record: 1 "When one
+  person's records disagree, keep" (one choice for all fields, with its meaning), 2 "Which source to trust most" (automatic, or an order),
+  and everything else (per field, record dates, own columns, shared phones and emails) folded under "More choices"; per-field choices
+  default to "As chosen above".
+- **The button says what happens:** "Use these rules" (nothing in use yet), "Save changes" (one-person project), "Send for approval" (second
+  approval on, with the reason box). One-person projects are not asked for a reason (recorded automatically). Saving unchanged content says
+  "Nothing changed" instead of creating a version (compared key-order-independently before sending). The flow diagram stays only on the
+  read-only view for people who cannot change rules. Technical settings keep their view / change pages.
+- **Checked in a real browser:** temporary project with one uploaded file: Use these rules (version 1 in use), Save unchanged ("Nothing
+  changed"), 90 -> 95% (version 2), golden record Use these rules, More choices opens, Setup lists all three in use; project deleted;
+  no console errors.
