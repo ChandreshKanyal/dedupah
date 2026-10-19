@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **File bar between uploaded files; no reason asked in one-person projects** (once per upload otherwise) | 72 |
 | session 4 | **Column mapping as one short table:** one row per source column with a single Use as dropdown; sample rows folded | 71 |
 | session 4 | **Several files in one upload:** each becomes its own connection, mapped one after another; ids never collide | 70 |
 | session 4 | **Projects and runs redesigned:** 4 tabs (Setup, Runs, Results, Settings); nothing assumed (rules must be chosen); Save = in use without second approval; guided new project; one-screen New run with rule versions per run (backend `rules`) | 69 |
@@ -319,6 +320,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-19 (session 4, file bar)** — Move between uploaded files; reasons recorded automatically without second approval. Section 72.
 - **2026-10-19 (session 4, mapping table)** — Mapping step reduced to one row per source column; checked in a browser. Section 71.
 - **2026-10-19 (session 4, multi-file upload)** — Several files per upload, mapped in turn; checked in a browser. Section 70.
 - **2026-10-19 (session 4, projects and runs)** — Project and run sections redesigned (Setup tab, guided new project, one-screen New run, runs pin rule versions); checked in a browser. Section 69.
@@ -1717,3 +1719,15 @@ the table: one line listing the useful fields this file does not have; a warning
 - **Checked in a real browser:** a 14-column synthetic file, suggestions pre-filled (row id, full name, mobile, email, city, age, gender,
   record date), moving Full name to another column releases the old one, Next to preview works; temporary projects deleted; no console
   errors. (A first try showed only three options per dropdown: an array handed to `replaceChildren`, the known pitfall; fixed with `fill`.)
+
+## 72. Moving between uploaded files; no reason asked in one-person projects (2026-10-19, session 4)
+The user, mapping 4 uploaded files: there was no way back to a previous file, and the "Why add or change it?" box on every save was too much.
+- **File bar** above the wizard steps when several files were uploaded together: "1. approval_stages (saved) · 2. leads · 3. ... (not saved
+  yet)". Any file can be opened; a saved one opens with its saved mapping. Save moves on to the next file not saved yet (wrapping around),
+  and after the last one returns to Data with "All n files are saved". A saved file opened again and left unchanged is not saved again
+  ("No change to ..."). Cancel became "Stop here" and says how many files are not saved yet (they stay under Uploaded files).
+- **Reasons:** in a project without second approval nobody else reads the reason, so saving a connection no longer asks: a reason is
+  recorded automatically ("Added from uploaded file loans", "Changed the mapping of ..."), still in the activity log. With second approval
+  on, the reason is asked once per upload ("Why add these 4 files?"), not once per file.
+- **Checked in a real browser:** two files, no dialog at any save, back to file 1 from the bar, unchanged save moves on, both saved, the
+  activity log shows the saves; temporary project deleted; no console errors.

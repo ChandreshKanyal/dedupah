@@ -1829,20 +1829,32 @@ function settingsForm(spec, conn, changed, rerender) {
     more.length ? el("details", { class: "advanced" }, el("summary", {}, "More settings (" + more.length + ")"), el("div", { class: "fields settings" }, more.map(control))) : null,
   ];
 }
-// `batch`: several files uploaded at once ({ files: [{ upload_id, id, label }], index }); each becomes its own connection, mapped one after another.
+// `batch`: several files uploaded at once ({ files: [{ upload_id, id, label, saved }], index, memo: { reason } }); each becomes its own connection.
+// A bar lists the files: any can be opened (a saved one with its saved mapping); Save moves on to the next file not saved yet. The reason is
+// asked once for the whole upload.
 async function connectionWizard(pid, type, preset, startStep, batch) {
   const opts = await catalogue();
   const spec = opts.catalogue.find((c) => c.type === type || c.aliases.includes(type));
   const root = P(pid);
   const state = { source: preset || { source_id: "", connector: { type }, record_id: null, fields: {}, attributes: [] }, info: null, step: 1, uploadName: null,
     sample: null, reason: null };
-  if (batch) {
+  if (batch && !preset) {
     const f = batch.files[batch.index];
     state.source = { source_id: f.id, connector: { type: "upload", upload_id: f.upload_id }, record_id: null, fields: {}, attributes: [] };
     state.uploadName = f.label;
   }
+  if (preset) preset.attributes = preset.attributes || [];
+  const original = preset ? JSON.stringify(preset) : null;            // opened again unchanged: Save only moves on
   const ofBatch = batch && batch.files.length > 1 ? " (file " + (batch.index + 1) + " of " + batch.files.length + ")" : "";
-  const leftOver = () => (batch ? batch.files.length - batch.index - 1 : 0);
+  const unsaved = () => (batch ? batch.files.filter((f) => !f.saved).length : 0);
+  const openFile = (i) => go(async () => {
+    const f = batch.files[i];
+    const preset2 = f.saved ? JSON.parse(JSON.stringify((await api("GET", root + "/connections/" + f.id)).latest)) : null;
+    await connectionWizard(pid, "upload", preset2, 2, { ...batch, index: i });
+  });
+  const fileBar = () => (batch && batch.files.length > 1 ? el("nav", { class: "subtabs page-sub", "aria-label": "Uploaded files" },
+    batch.files.map((f, i) => el("button", { type: "button", "aria-current": i === batch.index ? "true" : null, "aria-selected": i === batch.index ? "true" : "false",
+      onclick: () => (i === batch.index ? null : openFile(i)) }, (i + 1) + ". " + f.id + (f.saved ? " (saved)" : i === batch.index ? "" : " (not saved yet)")))) : null);
   const out = el("div");
   const kind = () => state.source.connector.type;
   focusNext = true;
@@ -1853,16 +1865,16 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
   };
   const render = () => {
     const bar = steps(["Connect", "Map columns", "Preview and save"], state.step, (n) => run(() => goStep(n)));
-    const header = page(preset ? "Edit connection " + state.source.source_id : "Add data: " + (batch ? state.source.source_id : spec ? spec.title : typeTitle(type)) + ofBatch,
-      spec ? spec.summary : "", [btn("Cancel", () => go(async () => {
-        await (preset ? viewConnection(pid, state.source.source_id) : batch ? viewProject(pid, "setup", "data") : addDataPage(pid));
-        if (leftOver() + (batch ? 1 : 0) > 1) say("The files not mapped yet stay under Uploaded files on this page; delete them there if they are not needed.", "good");
+    const header = page(batch ? "Add data: " + state.source.source_id + ofBatch : preset ? "Edit connection " + state.source.source_id : "Add data: " + (spec ? spec.title : typeTitle(type)),
+      spec ? spec.summary : "", [btn(batch && batch.files.length > 1 ? "Stop here" : "Cancel", () => go(async () => {
+        await (batch ? viewProject(pid, "setup", "data") : preset ? viewConnection(pid, state.source.source_id) : addDataPage(pid));
+        if (unsaved()) say(plural(unsaved(), "file is", "files are") + " not saved yet. They stay under Uploaded files on this page: delete them there if they are not needed.", "good");
       }))],
       crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), preset ? state.source.source_id : "Add data"),
       null, logo(kind(), "big"));
-    if (state.step === 1) show(header, bar, connectStep());
-    else if (state.step === 2) show(header, bar, mapStep());
-    else show(header, bar, previewStep(), out);
+    if (state.step === 1) show(header, fileBar(), bar, connectStep());
+    else if (state.step === 2) show(header, fileBar(), bar, mapStep());
+    else show(header, fileBar(), bar, previewStep(), out);
   };
   const idField = () => {
     const i = el("input", { type: "text", value: state.source.source_id, maxlength: "40", placeholder: "For example bank_crm", disabled: preset ? true : null });
@@ -1911,7 +1923,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
           done.push({ upload_id: r.upload_id, id, label: r.filename + " (" + num(r.rows) + " rows, " + r.columns.length + " columns, stored encrypted)" });
         }
         if (done.length === 1 && state.source.source_id) done[0].id = state.source.source_id;      // an id typed before the upload is kept
-        await connectionWizard(pid, "upload", null, 2, { files: done, index: 0 });
+        await connectionWizard(pid, "upload", null, 2, { files: done, index: 0, memo: { reason: null } });
         if (done.length > 1) say(num(done.length) + " files uploaded. Map them one at a time: this is the first.", "good");
       });
       input.addEventListener("change", () => { if (input.files.length) send(input.files); });
@@ -2014,19 +2026,45 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
         r.rows.length ? wide(cols, r.rows.map((row) => el("tr", {}, cols.map((c) => el("td", {}, row[c] == null ? "" : row[c]))))) : null);
     });
     const save = async () => {
-      const why = await askReason("Save connection " + state.source.source_id, "Why add or change it?", 10, "Save connection");
-      if (why === null) return;
-      const res = await api("POST", root + "/connections", { connection: state.source, reason: why });
-      const now = !res.second_approval && can("config.activate");          // one-person project: saved means in use
-      if (now) await api("POST", root + "/connections/" + res.id + "/versions/" + res.version + "/activate", { reason: why });
-      const saved = "Saved " + res.id + " as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
-        : ". Someone who can put connections in use does that next.");
-      if (leftOver()) {                                                   // the next file of the batch
-        await go(() => connectionWizard(pid, "upload", null, 2, { ...batch, index: batch.index + 1 }));
-        say(saved + " Next: file " + (batch.index + 2) + " of " + batch.files.length + ".", "good");
+      const many = batch && batch.files.length > 1;
+      const proj = cache.projects.find((x) => x.id === pid);
+      const solo = proj && !proj.second_approval;          // nobody else approves: the reason is recorded without asking
+      const again = preset || (batch && batch.files[batch.index].saved);
+      let why = solo ? (again ? "Changed the mapping of " : "Added from ") + (kind() === "upload" ? "uploaded file " : "source ") + state.source.source_id
+        : batch ? batch.memo.reason : null;
+      if (!why) {
+        why = await askReason(many ? "Save the uploaded files" : "Save connection " + state.source.source_id,
+          many ? "Why add these " + batch.files.length + " files? (asked once for all of them)" : "Why add or change it?", 10, "Save connection");
+        if (why === null) return;
+        if (batch) batch.memo.reason = why;
+      }
+      const me1 = batch ? batch.files[batch.index] : null;
+      let res = null;
+      if (!(me1 && me1.saved && JSON.stringify(state.source) === original)) {
+        try { res = await api("POST", root + "/connections", { connection: state.source, reason: why }); }
+        catch (e) { if (!(me1 && me1.saved && /identical/i.test(e.message))) throw e; }    // the same content in another key order
+      }
+      let saved = "No change to " + state.source.source_id + ".";
+      if (res) {
+        const now = !res.second_approval && can("config.activate");          // one-person project: saved means in use
+        if (now) await api("POST", root + "/connections/" + res.id + "/versions/" + res.version + "/activate", { reason: why });
+        if (me1) me1.saved = true;
+        saved = "Saved " + res.id + " as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
+          : ". Someone who can put connections in use does that next.");
+      }
+      if (many) {
+        const n = batch.files.length;
+        const next = [...Array(n).keys()].map((k) => (batch.index + 1 + k) % n).find((i) => !batch.files[i].saved);
+        if (next !== undefined) {
+          await openFile(next);
+          say(saved + " Next: file " + (next + 1) + " of " + n + ".", "good");
+          return;
+        }
+        await go(() => viewProject(pid, "setup", "data"));
+        say(saved + " All " + n + " files are saved.", "good");
         return;
       }
-      await go(() => viewConnection(pid, res.id));
+      await go(() => viewConnection(pid, state.source.source_id));
       say(saved, "good");
     };
     setTimeout(doPreview, 0);
