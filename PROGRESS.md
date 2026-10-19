@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Column mapping as one short table:** one row per source column with a single Use as dropdown; sample rows folded | 71 |
 | session 4 | **Several files in one upload:** each becomes its own connection, mapped one after another; ids never collide | 70 |
 | session 4 | **Projects and runs redesigned:** 4 tabs (Setup, Runs, Results, Settings); nothing assumed (rules must be chosen); Save = in use without second approval; guided new project; one-screen New run with rule versions per run (backend `rules`) | 69 |
 | session 4 | **Review filters:** project, run, match score, why it is here, name / person ID / city; backend `forced` and `q` on the queue | 68 |
@@ -318,6 +319,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-19 (session 4, mapping table)** — Mapping step reduced to one row per source column; checked in a browser. Section 71.
 - **2026-10-19 (session 4, multi-file upload)** — Several files per upload, mapped in turn; checked in a browser. Section 70.
 - **2026-10-19 (session 4, projects and runs)** — Project and run sections redesigned (Setup tab, guided new project, one-screen New run, runs pin rule versions); checked in a browser. Section 69.
 - **2026-10-10 (session 4, review filters)** — Filter bar on the Review inbox with a backend search; checked in a browser. Section 68.
@@ -1702,3 +1704,16 @@ data: loans (file 1 of 2)"); saving one moves on to the next. Cancel leaves the 
 there). A single file now goes straight to the mapping step. UI only, no backend change. **Checked in a real browser:** two synthetic
 files uploaded together into a temporary project, both mapped and saved (both in use), the same file uploaded again got `loans_2`;
 project deleted afterwards; no console errors.
+
+## 71. Column mapping as one short table (2026-10-19, session 4)
+The user (screenshot of a 5-file upload): the mapping step was "still very very long and confusing". It stacked the sample rows, a
+"what we found in your columns" table, one table per group of our 28 fields (mostly "Not in this source"), a row-id picker and extra-column
+ticks: the same column appeared in three places. **Now one table, one row per column of the source** (Your column, Examples, Values look
+like with % filled, Use as). "Use as" is one dropdown: Don't use, Each row's own id, Keep as an extra column, or one of our fields
+(grouped; a field already taken shows "(now from <column>)", and choosing it moves it: a field comes from one column). Under each choice
+one muted line says what it is used for, or warns when the values do not look like the chosen field, or hints "Could be <field>". Below
+the table: one line listing the useful fields this file does not have; a warning when no column is Full name; the sample rows folded away
+(with Show actual values inside). Mappings made of several combined columns are kept and named. UI only.
+- **Checked in a real browser:** a 14-column synthetic file, suggestions pre-filled (row id, full name, mobile, email, city, age, gender,
+  record date), moving Full name to another column releases the old one, Next to preview works; temporary projects deleted; no console
+  errors. (A first try showed only three options per dropdown: an array handed to `replaceChildren`, the known pitfall; fixed with `fill`.)

@@ -466,3 +466,5 @@ button.small.icon { width: 22px; }
 .run-part > .muted { margin: 6px 0 0; }
 .run-used { margin: 0 0 12px; padding: 8px 0; border-bottom: 1px solid var(--border); color: var(--muted); }
 .run-used strong { color: var(--text); font-weight: 600; }
+.map-table select { min-width: 220px; }
+.map-table td { vertical-align: top; }

@@ -1774,8 +1774,6 @@ const FIELD_ROLE = {
   voter_id: ["Identifier", "strong evidence"], record_date: ["Newest value", "decides which value is the most recent"], occupation: ["Golden record", ""],
   annual_income: ["Golden record", ""], related_name: ["Households", "links family members"], party_role: ["Households", ""], relation_to_proposer: ["Households", ""],
 };
-const ROLE_KIND = { Matching: "info", Identifier: "success", "Newest value": "warn" };
-const SUGGESTED_BY = { name: "Suggested from the column name", values: "Suggested from the values", "name and values": "Suggested: name and values agree" };
 // Identifiers a project can let decide on their own: the matching rules they switch on (same value -> same person; different -> never).
 const KEY_RULES = {
   pan: ["PAN", "auto_same_pan_compatible_name", "veto_pan_conflict"],
@@ -1935,80 +1933,74 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     parts.push(el("div", { class: "row" }, btn(state.info ? "Next: map columns" : "Open the source and suggest a mapping", () => goStep(2), "primary", "next")));
     return el("div", {}, parts);
   }
+  // One row per column of the source: what its values look like and what it is used as (one of our fields, the row's own id, an extra
+  // column kept in the golden record, or nothing). Suggestions from the values are filled in already; the sample rows are folded away.
   function mapStep() {
     const cols = state.info.columns;
     const sample = state.info.sample;
-    const suggested = Object.fromEntries(state.info.suggestions.map((x) => [x.field, x]));
     const types = state.info.types || {};
-    const examples = (c) => (c ? [...new Set(sample.map((r) => r[c]).filter((v) => v != null && v !== ""))].slice(0, 3) : []);
-    // what the values look like (detected from the whole sample, not from the column's name); a warning when they clearly hold something else
-    const looksLike = (c, f) => {
-      const t = c && types[c];
-      if (!t || !t.type) return null;
-      return f && (t.contradicts || []).includes(f) ? el("div", {}, tag("Values look like: " + t.description, "warn"))
-        : el("div", { class: "muted small" }, "Values look like: " + t.description + " (" + Math.round(t.share * 100) + "%)");
+    const src = state.source;
+    src.attributes = src.attributes || [];
+    const examples = (c) => [...new Set(sample.map((r) => r[c]).filter((v) => v != null && v !== ""))].slice(0, 3);
+    const fieldOf = (c) => Object.keys(src.fields).find((f) => src.fields[f] === c);
+    const useOf = (c) => (fieldOf(c) ? "f:" + fieldOf(c) : src.record_id === c ? "id" : src.attributes.includes(c) ? "keep" : "");
+    const combined = Object.keys(src.fields).filter((f) => typeof src.fields[f] !== "string");
+    const setUse = (c, use) => {
+      for (const f of Object.keys(src.fields)) if (src.fields[f] === c) delete src.fields[f];
+      if (src.record_id === c) src.record_id = null;
+      src.attributes = src.attributes.filter((x) => x !== c);
+      if (use.startsWith("f:")) src.fields[use.slice(2)] = c;            // a field comes from one column: another column using it lets go
+      else if (use === "id") src.record_id = c;
+      else if (use === "keep") src.attributes.push(c);
+      refresh.forEach((r) => r());
     };
-    const exampleCell = (c, f) => el("span", {}, el("span", { class: "examples" }, examples(c).map((v) => el("span", { class: "ex" }, String(v)))), looksLike(c, f));
-    const pick = (value, onchange, text) => {
-      const s = el("select", { "aria-label": text }, el("option", { value: "" }, "Not in this source"), cols.map((c) => el("option", { value: c, selected: c === value }, c)));
-      s.addEventListener("change", () => onchange(s.value));
-      return s;
-    };
-    const groups = opts.field_groups.map((g) => {
-      const rows = g.fields.map((f) => {
-        const cur = state.source.fields[f];
-        const simple = typeof cur === "string" || cur === undefined;
-        const ex = el("td", {}, simple ? exampleCell(cur, f) : "");
-        const role = FIELD_ROLE[f] || ["Golden record", ""];
-        const sel = simple ? pick(cur || "", (v) => { if (v) state.source.fields[f] = v; else delete state.source.fields[f]; ex.replaceChildren(exampleCell(v, f)); }, fieldTitle(f) + ": your column")
-          : el("span", { class: "muted" }, "Several columns combined (kept as is)");
-        const sug = suggested[f] && suggested[f].column === cur ? suggested[f] : null;
-        return el("tr", {}, el("td", {}, el("strong", {}, fieldTitle(f)), el("div", { class: "muted small" }, opts.field_help[f] || "")),
-          el("td", {}, sel, sug ? el("div", {}, tag(SUGGESTED_BY[sug.why] || "Suggested", "info")) : null), ex,
-          el("td", {}, tag(role[0], ROLE_KIND[role[0]]), role[1] ? el("div", { class: "muted small" }, role[1]) : null));
-      });
-      return el("div", {}, el("h3", { class: "section" }, g.title), table(["Our field", "Your column", "Examples from your data", "Used for"], rows));
-    });
-    const mappedCols = new Set(Object.values(state.source.fields).filter((c) => typeof c === "string"));
-    const attrs = el("div", { class: "checks" }, cols.filter((c) => !mappedCols.has(c)).map((c) => {
-      const cb = el("input", { type: "checkbox", checked: (state.source.attributes || []).includes(c) });
-      cb.addEventListener("change", () => { const set = new Set(state.source.attributes || []); if (cb.checked) set.add(c); else set.delete(c); state.source.attributes = [...set]; });
-      return el("label", { class: "check" }, cb, el("span", {}, el("strong", {}, c), el("span", { class: "muted" }, examples(c).join(", "))));
-    }));
-    // every column of the source: what its values look like and what it is used as now
-    function columnTypes() {
-      if (!Object.keys(types).length) return null;
-      const usedAs = (c) => {
-        const fs = Object.entries(state.source.fields).filter(([, col]) => col === c).map(([f]) => fieldTitle(f));
-        if (fs.length) return fs.join(", ");
-        if (c === state.source.record_id) return "Each row's own id";
-        if ((state.source.attributes || []).includes(c)) return "Kept as an extra column";
-        const f = (types[c] || {}).field;
-        return f && !state.source.fields[f] ? el("span", {}, "Not used. ", tag("Could fill: " + fieldTitle(f), "info")) : "Not used";
+    const refresh = [];
+    const rows = cols.map((c) => {
+      const t = types[c] || {};
+      const sel = el("select", { "aria-label": "Use " + c + " as" });
+      const note = el("div", { class: "muted small" });
+      const draw = () => {
+        const cur = useOf(c);
+        const taken = (f) => (typeof src.fields[f] === "string" && src.fields[f] !== c ? " (now from " + src.fields[f] + ")" : combined.includes(f) ? " (now several columns combined)" : "");
+        fill(sel, el("option", { value: "", selected: cur === "" }, "Don't use"),
+          el("option", { value: "id", selected: cur === "id" }, "Each row's own id" + (src.record_id && src.record_id !== c ? " (now " + src.record_id + ")" : "")),
+          el("option", { value: "keep", selected: cur === "keep" }, "Keep as an extra column"),
+          opts.field_groups.map((g) => el("optgroup", { label: g.title }, g.fields.map((f) => el("option", { value: "f:" + f, selected: cur === "f:" + f }, fieldTitle(f) + taken(f))))));
+        const f = fieldOf(c);
+        const role = f ? FIELD_ROLE[f] || ["Golden record", ""] : null;
+        const wrong = f && (t.contradicts || []).includes(f);
+        fill(note, wrong ? tag("The values do not look like " + fieldTitle(f).toLowerCase(), "warn")
+          : role ? role[0] + (role[1] ? ": " + role[1] : "") : cur === "id" ? "Traces a golden record back to this row; not used to match"
+            : cur === "keep" ? "Carried into the golden record as it is" : t.field && !src.fields[t.field] ? "Could be " + fieldTitle(t.field).toLowerCase() : "");
       };
-      const rows = cols.map((c) => {
-        const t = types[c] || {};
-        return el("tr", {}, el("td", {}, el("strong", {}, c)), el("td", {}, t.type ? t.description : el("span", { class: "muted" }, "Not recognised")),
-          el("td", { class: "num" }, Math.round((t.filled || 0) * 100) + "%"), el("td", { class: "num" }, Math.round((t.distinct || 0) * 100) + "%"), el("td", {}, usedAs(c)));
-      });
-      return el("details", { class: "advanced", open: true }, el("summary", {}, "What we found in your columns (from the values, not the names)"),
-        el("p", { class: "hint" }, "Each column is checked value by value: PAN and GST structure, Aadhaar checksum, Indian mobile rules, dates, names, places. " +
-          "\"Different values\" near 100% means almost every row has its own value (an id); a low share means a short list of options."),
-        table(["Your column", "Values look like", ["Rows filled"], ["Different values"], "Used as"], rows));
-    }
+      sel.addEventListener("change", () => setUse(c, sel.value));
+      refresh.push(draw);
+      draw();
+      return el("tr", {}, el("td", {}, el("strong", {}, c)),
+        el("td", {}, el("span", { class: "examples" }, examples(c).map((v) => el("span", { class: "ex" }, String(v))))),
+        el("td", {}, t.type ? t.description : el("span", { class: "muted" }, "Not recognised"), t.filled != null ? el("div", { class: "muted small" }, Math.round(t.filled * 100) + "% of rows filled") : null),
+        el("td", {}, sel, note));
+    });
+    const KEY = ["full_name", "dob", "mobile", "email", "address", "pincode", "pan", "aadhaar", "customer_number"];
+    const missing = el("p", { class: "hint" });
+    const warnName = el("div", { class: "notice warn", role: "note" }, "No column is used as Full name: without names, records of this source are hard to match.");
+    const drawMissing = () => {
+      const gone = KEY.filter((f) => !src.fields[f]);
+      missing.textContent = gone.length ? "Not in this file: " + gone.map(fieldTitle).join(", ") + ". Every field is optional; the more a source has, the more duplicates are found." : "";
+      warnName.hidden = !!src.fields.full_name;
+    };
+    refresh.push(drawMissing);
+    drawMissing();
     return el("div", {},
-      el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your data (" + (state.info.unmasked ? "actual values" : "values shortened") + ")"),
-        revealButton(async () => { state.info = { ...state.info, ...(await api("POST", inspectUrl(), { connector: state.source.connector })) }; render(); })),
-      wide(cols, sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c]))))),
-      columnTypes(),
-      el("p", { class: "hint" }, "For each of our fields, pick the column of your data that holds it. Leave a field as 'Not in this source' when your data does not have it: " +
-        "every field is optional, but the more of them a source fills, the more duplicates it finds."),
-      groups,
-      el("p", { class: "hint" }, "Whether an identifier such as PAN decides on its own (same PAN, same person) is part of the project's matching rules: Setup, Matching rules."),
-      el("div", { class: "cols" },
-        el("div", {}, el("h3", { class: "section" }, "Each row's own id"), el("p", { class: "hint" }, "The column that identifies a row in this source, used to trace a golden record back to its rows. It is not used to match. Without one, rows are numbered."),
-          pick(state.source.record_id || "", (v) => { state.source.record_id = v || null; }, "Each row's own id")),
-        el("div", {}, el("h3", { class: "section" }, "Other columns to keep"), el("p", { class: "hint" }, "Ticked columns are carried into the golden record as extra columns."), attrs)),
+      el("p", { class: "hint" }, "Choose what each column of your file holds. Suggestions from the values are already filled in: check them and change any that are wrong. " +
+        "Whether an identifier such as PAN decides on its own is set in Setup, Matching rules."),
+      warnName,
+      table(["Your column", "Examples", "Values look like", "Use as"], rows, "map-table"),
+      missing,
+      combined.length ? el("p", { class: "hint" }, "Kept as set before (several columns combined): " + combined.map(fieldTitle).join(", ") + ".") : null,
+      el("details", { class: "advanced" }, el("summary", {}, "Sample rows (" + sample.length + ", " + (state.info.unmasked ? "actual values" : "values shortened") + ")"),
+        el("div", { class: "row" }, revealButton(async () => { state.info = { ...state.info, ...(await api("POST", inspectUrl(), { connector: state.source.connector })) }; render(); })),
+        wide(cols, sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c])))))),
       el("div", { class: "row" }, btn("Back", () => goStep(1), "", "prev"), btn("Next: preview", () => goStep(3), "primary", "next")));
   }
   function previewStep() {
