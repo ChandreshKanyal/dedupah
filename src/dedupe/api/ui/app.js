@@ -1414,16 +1414,14 @@ function matchingEditor(content, defaults, cat, propose, cancel, opts) {
   };
   const others = state.rules.filter((r) => !owned.has(r.id));
   const on = others.filter((r) => r.enabled !== false);
-  const sample = on.slice(0, 2).map((r) => (RULE_KIND[r.type] || [label(r.type)])[0] + " when " + ruleTitle(r).charAt(0).toLowerCase() + ruleTitle(r).slice(1));
   return el("div", { class: "matching-view editing" },
     step(1, "How sure must it be?", "Every pair of records gets a match score from the fields they share.",
       el("div", { class: "fields" }, field("Merge automatically from (%)", autoAt), field("Ask a person from (%)", reviewAt)),
       el("p", { class: "muted" }, "Below 'ask a person', the two records stay apart."), scale.node),
     step(2, "Identifiers you trust", "Tick one only when it is reliable in your data: one per person and rarely mistyped.", el("div", { class: "checks" }, ids)),
-    step(3, "Safety rules", on.length + " of " + others.length + " are on" + (sample.length ? ", for example: " + sample.join("; ") + "." : "."),
-      el("details", { class: "advanced" }, el("summary", {}, "Show and change the safety rules"),
-        el("p", { class: "hint" }, "Untick a rule to stop it; your own rules can be removed."), list,
-        el("div", { class: "row" }, btn("Add your own rule", addRule, "", "plus")), json)),
+    step(3, "Safety rules", "Checked before the score, in this order. Untick a rule to stop it; your own rules can be removed.",
+      el("div", { class: "row" }, btn("Add your own rule", addRule, "", "plus"), el("span", { class: "muted" }, on.length + " of " + others.length + " rules are on")),
+      list, json),
     saveBar(why, err, save, cancel, opts));
 }
 // "Add your own rule" in a dialog: what happens, when (one or more conditions), a name people will read.

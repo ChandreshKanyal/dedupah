@@ -1740,7 +1740,9 @@ a score bar, identifier cards and a long rule list, and "Change them first" swit
 - **Now one form, pre-filled with the standard rules (or the version in use), and one button.** Matching rules: 1 "How sure must it be?"
   (Merge automatically from %, Ask a person from %, the bar), 2 "Identifiers you trust" (three ticks: same PAN / Aadhaar / customer number
   means the same person; marked "no effect for now" when no data of the project has that column), 3 "Safety rules" (one line: "n of m are on,
-  for example ...", the full list, Add your own rule and the JSON for experts folded under "Show and change"). Golden record: 1 "When one
+  for example ...", the full list, Add your own rule and the JSON for experts folded under "Show and change"). **Changed the same day:** the
+  user could not find where to see and add rules (folded at the bottom), so step 3 now lists the rules openly with an "Add your own rule"
+  button and "n of m rules are on" at its top; only the JSON stays folded. Golden record: 1 "When one
   person's records disagree, keep" (one choice for all fields, with its meaning), 2 "Which source to trust most" (automatic, or an order),
   and everything else (per field, record dates, own columns, shared phones and emails) folded under "More choices"; per-field choices
   default to "As chosen above".
