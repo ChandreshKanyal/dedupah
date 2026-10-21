@@ -84,6 +84,19 @@ def test_disabled_rule_is_ignored_and_thresholds_are_used(tmp_path):
     assert [g[0] for g in _decide(cases, cfg, tmp_path)] == ["auto_merge", "review", "reject"]
 
 
+def test_with_the_score_off_only_the_rules_decide(tmp_path):
+    """use_score False: a pair no rule catches stays apart whatever its score; the rules still merge and ask."""
+    cfg = DecisionConfig(use_score=False, rules=[
+        Rule(id="match_email", type="auto_merge", when={"all": [{"comparison": "email", "is": "same email"}, {"comparison": "name", "is": "identical cleaned name"}]}),
+        Rule(id="match_email_any_name", type="auto_merge", when={"comparison": "email", "is": "same email"}),
+        Rule(id="ask_email_name", type="force_review", when={"all": [{"comparison": "email", "is": "same email"}, {"comparison": "name", "is": "different"}]})])
+    cases = [(dict(RS), dict(RS), 0.05),                                                       # rule: merged even at a low score
+             (dict(RS), {**RS, "full_name": "Anita Verma"}, 0.99),                                 # ask wins over merge
+             ({"full_name": "Raj Shah", "city": "Pune"}, {"full_name": "Raj Shah", "city": "Pune"}, 0.99)]           # no rule: apart
+    assert [g[0] for g in _decide(cases, cfg, tmp_path)] == ["auto_merge", "review", "reject"]
+    assert DecisionConfig().use_score and not DecisionConfig.model_validate({"use_score": False}).use_score
+
+
 def test_condition_compiler_forms_and_errors():
     assert compile_condition({"comparison": "pan", "is": "same PAN"}) == "(lv_pan = 1)"
     assert compile_condition({"comparison": "pan", "missing": True}) == "(lv_pan = -1)"

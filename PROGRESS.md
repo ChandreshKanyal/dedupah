@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Matching rules as columns that must agree** (the same when / ask a person when / never the same when / everything else, with the score optional and off for new projects); **golden record as one choice per column** | 74 |
 | session 4 | **Matching and golden-record rules as one short pre-filled form each**, one button (Use these rules / Save changes / Send for approval) | 73 |
 | session 4 | **File bar between uploaded files; no reason asked in one-person projects** (once per upload otherwise) | 72 |
 | session 4 | **Column mapping as one short table:** one row per source column with a single Use as dropdown; sample rows folded | 71 |
@@ -321,6 +322,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-21 (session 4, rules by columns)** — Matching rules rebuilt around the columns that must agree, score optional (`use_score`, off for new projects); golden record one choice per column; checked in a browser. Section 74.
 - **2026-10-19 (session 4, rules forms)** — Matching and golden-record pages reduced to one pre-filled form each; checked in a browser. Section 73.
 - **2026-10-19 (session 4, file bar)** — Move between uploaded files; reasons recorded automatically without second approval. Section 72.
 - **2026-10-19 (session 4, mapping table)** — Mapping step reduced to one row per source column; checked in a browser. Section 71.
@@ -1753,3 +1755,34 @@ a score bar, identifier cards and a long rule list, and "Change them first" swit
 - **Checked in a real browser:** temporary project with one uploaded file: Use these rules (version 1 in use), Save unchanged ("Nothing
   changed"), 90 -> 95% (version 2), golden record Use these rules, More choices opens, Setup lists all three in use; project deleted;
   no console errors.
+
+## 74. Matching rules as columns that must agree; golden record per column (2026-10-21, session 4)
+The user: "we still need a redesign for the business logic and rules part where the user simply chooses that the dedupe should take place
+based on the columns they use and the rules they set, a very simple view". Proposed with a text mock-up, the user said "do it then" (my
+suggestions: pairs no rule catches stay apart by default; both pages).
+- **Engine: `use_score` in the decision rules** (`decision/config.py`, `decision/apply.py`). True (the default, so every existing version and
+  the shipped `configs/decision_default.json` behave as before): the score zones decide what no rule catches. False: only the rules decide;
+  a pair no rule catches is rejected with the reason "no matching rule applies, so the records stay apart (the score is not used)". The
+  score is still computed and shown. The version diff names the change.
+- **A new project starts with the score off** (`GET .../config/decision/default`, `routes_read.PROJECT_MATCHES`): the shipped rules plus
+  three column matches so that records without a PAN or Aadhaar can match: similar name + same birth date + (any shared phone | same email |
+  same house). Nothing is assumed: runs still cannot start until the project has put rules in use, and the form shows all of it.
+- **Matching rules page, four steps:** 1 "The same when" (any one rule is enough; each rule is one line of column + how it must agree, "and"
+  between them, + Column, Remove, on/off), 2 "Ask a person when" (wins over 1), 3 "Never the same when" (wins over everything; add
+  "never the same when <PAN | Aadhaar | ID | customer number | gender> differs"), 4 "Everything else": Keep them apart, or Let the match
+  score decide (then the two percentages, the bar and the "too little evidence" rule). The ways to agree are sets of the engine's own
+  comparison levels (`MATCH_COLUMNS` in app.js: name exactly / sounds the same / similar; birth date exactly / same allowing 1 January
+  defaults and swapped day-month / same year; phone main number / any number; address same house / PIN and street / PIN / city; ...), so
+  a rule made here is an ordinary rule. Only the columns in the project's data are offered. Built-in rules with exceptions (vetoes with
+  "unless an identifier agrees", twins, namesakes) stay as named rows with Details; experts keep "other conditions" and the JSON.
+- **Guard against rules that find nothing:** records are only compared when blocking puts them together (an identifier, phone or email, or
+  two of name, birth date and address). A rule without one of these shows an amber line and cannot be saved.
+- **Golden record page:** 1 "For each column, keep the value from" (a table of the project's columns, each with its own explicit choice and
+  preferred source; "Set every column to ... Apply"), 2 "Which source to trust most"; record dates, own columns and shared phones folded.
+  This also removes the review finding that the one main choice had no effect (most fields had their own entry).
+- **Known limits:** precedence is fixed (never, then ask, then same): an ask rule that overlaps a same rule always wins, as the step hints
+  say. With the score off, a duplicate no rule describes is missed (said on the page). Rules-only results on the synthetic benchmark were
+  not measured yet.
+- **Checked in a real browser (sandbox, two uploaded files):** Use these rules (version 1), unchanged save says "Nothing changed", a
+  gender-only rule is refused with the reason, + Column email then saves (version 2), score option shows the percentages; golden record
+  Use these rules, Set every column + one change (version 2); Setup summaries in words; no console errors.

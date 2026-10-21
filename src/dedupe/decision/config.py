@@ -40,6 +40,7 @@ class Rule(BaseModel):
 class DecisionConfig(BaseModel):
     auto_merge_at: float = 0.9
     review_at: float = 0.1
+    use_score: bool = True   # False: only the rules decide; a pair no rule catches stays apart (the score is still computed and shown)
     rules: list[Rule] = []
 
     @model_validator(mode="after")

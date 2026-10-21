@@ -309,6 +309,15 @@ ol.decision-flow li.warn svg { color: var(--warn); }
 ol.decision-flow li.success svg { color: var(--success); }
 ol.decision-flow li.info svg { color: var(--link); }
 
+/* a matching rule as one line: the columns that must agree, "and" between them */
+.match-card { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 12px; border: 1px solid var(--border); background: var(--bg); }
+.match-name { display: inline-flex; align-items: center; gap: 6px; min-width: 96px; }
+.match-card.off .match-name strong { color: var(--muted); }
+.match-conds { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; flex: 1; }
+.match-cond { display: inline-flex; align-items: center; gap: 4px; }
+.match-cond .and { width: 24px; }
+.warn-line { flex-basis: 100%; margin: 0; color: var(--warn); }
+.score-box { margin-top: 10px; }
 .rule-step { margin: 0 0 22px; padding: 16px; border: 1px solid var(--border); border-radius: 0; background: var(--bg-panel); }
 .step-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
 .step-head h3 { margin: 2px 0 0; font-size: 14px; }

@@ -80,6 +80,8 @@ def describe_changes(name: str, old: dict | None, new: dict) -> list[str]:
         return ["first version"]
     if name == "decision":
         out = [f"{k} {old[k]} -> {new[k]}" for k in ("auto_merge_at", "review_at") if old[k] != new[k]]
+        if old.get("use_score", True) != new.get("use_score", True):
+            out.append("pairs no rule catches: " + ("decided by the score" if new.get("use_score", True) else "kept apart"))
         return out + _rules(old, new)
     if name == "sources":
         return _sources(old, new)

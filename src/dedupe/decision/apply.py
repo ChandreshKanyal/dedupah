@@ -11,6 +11,7 @@ from .config import PRECEDENCE, DecisionConfig
 
 ZONE_REASON = {"auto_merge": "score at or above the auto-merge threshold", "review": "score between the review and auto-merge thresholds",
                "reject": "score below the review threshold"}
+NO_RULE_REASON = "no matching rule applies, so the records stay apart (the score is not used)"
 
 
 def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, out: Path) -> dict:
@@ -31,7 +32,8 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
             whens.append(f"WHEN f_{r.id} THEN '{zone[rtype]}'")
             by.append(f"WHEN f_{r.id} THEN '{r.id}'")
     t_auto, t_rev = cfg.auto_merge_at, cfg.review_at
-    dec = f"CASE {' '.join(whens)} WHEN probability >= {t_auto} THEN 'auto_merge' WHEN probability >= {t_rev} THEN 'review' ELSE 'reject' END"
+    zones = f"WHEN probability >= {t_auto} THEN 'auto_merge' WHEN probability >= {t_rev} THEN 'review' " if cfg.use_score else ""
+    dec = f"CASE {' '.join(whens)} {zones}ELSE 'reject' END"
     who = f"CASE {' '.join(by)} ELSE 'score' END" if by else "'score'"
     fired = "list_filter([" + ", ".join(f"CASE WHEN f_{rid} THEN '{rid}' END" for rid in fire) + "], x -> x IS NOT NULL)" if fire else "[]::VARCHAR[]"
     reasons = " ".join(f"WHEN decided_by = '{r.id}' THEN {_q(r.reason or r.id)}" for r in rules)
@@ -40,7 +42,7 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
     con.execute(f"""CREATE OR REPLACE TABLE decisions AS
         SELECT l_rid, r_rid, probability, decision, decided_by, ({offset_sql})::FLOAT AS rank_offset,
                CASE {reasons} WHEN decision = 'auto_merge' THEN {_q(ZONE_REASON['auto_merge'])}
-                    WHEN decision = 'review' THEN {_q(ZONE_REASON['review'])} ELSE {_q(ZONE_REASON['reject'])} END AS reason, fired
+                    WHEN decision = 'review' THEN {_q(ZONE_REASON['review'])} ELSE {_q(ZONE_REASON['reject'] if cfg.use_score else NO_RULE_REASON)} END AS reason, fired
         FROM (SELECT *, {dec} AS decision, {who} AS decided_by, {fired} AS fired FROM flagged)""")
     out.parent.mkdir(parents=True, exist_ok=True)
     con.execute(f"COPY decisions TO '{out}' ({crypto.fmt()})")
