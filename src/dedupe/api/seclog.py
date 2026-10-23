@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, create_engine, event, select, text
+from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, create_engine, event, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -157,6 +157,11 @@ class SecurityLog:
         if before_id:
             q = q.where(security_log.c.id < before_id)
         with self.engine.connect() as conn:
+            # a deleted project's id can be reused: its feed starts at the newest creation, so a new owner never sees the old project's events
+            born = conn.execute(select(func.max(security_log.c.id)).where(security_log.c.project_id == project_id,
+                                                                          security_log.c.detail.like('%"action":"create_project"%'))).scalar()
+            if born:
+                q = q.where(security_log.c.id >= born)
             return [{k: getattr(r, k) for k in _HASHED} | {"detail": json.loads(r.detail), "project_id": r.project_id or ""} for r in conn.execute(q)]
 
     def verify(self) -> dict:

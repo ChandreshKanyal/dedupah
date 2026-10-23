@@ -29,6 +29,12 @@ def check_path(path: str | Path) -> Path:
     """The resolved path, or an error when it is outside the allowed folders (symbolic links and `..` are resolved first)."""
     if "\x00" in str(path):
         raise ConnectorConfigError("invalid path")
+    work = os.environ.get("DEDUPE_WORK_DIR", "").strip()
+    if work:                                   # the workspace holds every project's uploads and results: never a place a connection may read
+        real = Path(path).resolve()
+        w = Path(work).resolve()
+        if real == w or w in real.parents:
+            raise ConnectorConfigError("this file is outside the folders sources may be read from")
     roots = data_roots()
     if not roots:
         if _production():

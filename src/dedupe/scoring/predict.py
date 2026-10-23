@@ -17,6 +17,11 @@ def score(con: duckdb.DuckDBPyConnection, model: Model, out_path: Path) -> dict:
     and per-comparison levels (lv_*) and contributions in bits (w_*) so every decision can be explained."""
     L, TF = level_matrix(con, "cand_levels"), tf_matrix(con, "cand_levels")
     ids = con.execute("SELECT l_rid, r_rid, rules FROM cand_levels").to_arrow_table()
+    if model.meta.get("scoring_mode") == "insufficient":
+        # Nothing could be learned (all learned weights are 0): a term-frequency adjustment on top of zero would only add noise that pushes
+        # exact duplicates below the review line. Identifier evidence still counts; every other pair sits at 50%, in the review band, and the
+        # decision rules ('not enough evidence' and the others) separate what is worth a person's time.
+        TF = np.full_like(TF, np.nan)
     W = adjusted_weights(model.weights, model.u_random, L, TF) / np.log(2)  # bits
     prior_bits = model.bias / np.log(2)
     weight = W.sum(axis=1) + prior_bits

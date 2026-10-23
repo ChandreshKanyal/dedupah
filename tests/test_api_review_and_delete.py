@@ -160,3 +160,14 @@ def test_run_summary_profiles_each_source_without_personal_data(api):
     assert crm["records"] > 0 and set(crm["filled"]) == {"name", "birth_date", "birth_year_or_age", "phone", "email", "address_pin", "identifier", "record_date"}
     assert crm["filled"]["name"] <= crm["records"] and leads["filled"]["birth_date"] < leads["records"]    # leads carry an age, rarely a date
     assert all(isinstance(n, int) for x in q.values() for n in x["invalid"].values())                     # counts only, never values
+
+
+def test_a_reused_project_id_does_not_show_the_deleted_projects_activity(api):
+    """Deleting a project and creating the same id again starts an empty activity feed."""
+    c, s, _, _ = api
+    sv = c.app.state.services
+    for who, what in (("alice", "create_project"), ("alice", "grant_access"), ("alice", "delete_project"), ("mallory", "create_project")):
+        sv.seclog.record("data_deleted" if what == "delete_project" else "config_change", actor=who,
+                         object_ref="reused", detail={"action": what}, project_id="reused")
+    seen = [e["detail"]["action"] for e in sv.seclog.activity("reused")]
+    assert seen == ["create_project"] and sv.seclog.activity("reused")[0]["actor"] == "mallory"

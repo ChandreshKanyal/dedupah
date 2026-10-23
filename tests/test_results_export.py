@@ -127,6 +127,16 @@ def test_values_that_a_spreadsheet_would_run_as_a_formula_are_made_safe(tmp_path
     assert cell.data_type == "s" and cell.value.startswith("=HYPERLINK")                                            # stored as text, never evaluated
 
 
+def test_an_excel_export_survives_control_characters_in_the_data(tmp_path):
+    """A stray control character (a NUL or a bell from a bad source file) is dropped from the sheet instead of failing the whole export."""
+    run_dir = tmp_path / "run"
+    (run_dir / "golden").mkdir(parents=True)
+    pq.write_table(pa.table({"cluster_id": ["P000000001"], "record_count": [1], "sources": [["a"]], "full_name": ["Asha\x00 Rao\x07"],
+                             "mobile": ["9876543210"], "conflict_fields": [[]]}), run_dir / "golden" / "golden_records.parquet")
+    assert write_file(run_dir, "golden_records", "xlsx", tmp_path / "o.xlsx") == 1
+    assert next(iter(load_workbook(tmp_path / "o.xlsx").active.iter_rows(min_row=2, max_row=2)))[3].value == "Asha Rao"
+
+
 def test_a_database_destination_is_saved_checked_and_approved_like_a_connection(world, monkeypatch):
     c, s, sv, run, tmp = world
     ops = hdr(s, "platform_admin", "u-ops")

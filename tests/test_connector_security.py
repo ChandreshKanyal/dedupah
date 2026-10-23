@@ -40,6 +40,22 @@ def test_files_must_be_inside_the_allowed_folders(tmp_path, monkeypatch):
         create({"type": "csv", "path": str(link)})                  # a link inside the folder pointing outside it
 
 
+def test_the_workspace_is_never_readable_by_a_file_source(tmp_path, monkeypatch):
+    """With the data folders covering the whole machine (the laptop setup), another project's uploads and results stay out of reach."""
+    work = tmp_path / "ws"
+    (work / "uploads").mkdir(parents=True)
+    (work / "uploads" / "U1.csv").write_text("name\nX\n", encoding="utf-8")
+    monkeypatch.setenv("DEDUPE_DATA_ROOTS", str(tmp_path))
+    monkeypatch.setenv("DEDUPE_WORK_DIR", str(work))
+    with pytest.raises(ConnectorConfigError, match="outside"):
+        check_path(work / "uploads" / "U1.csv")
+    with pytest.raises(ConnectorConfigError, match="outside"):
+        check_path(work)
+    ok = tmp_path / "data.csv"
+    ok.write_text("name\nY\n", encoding="utf-8")
+    assert check_path(ok) == ok.resolve()
+
+
 def test_production_refuses_file_sources_without_listed_folders(monkeypatch, tmp_path):
     monkeypatch.delenv("DEDUPE_DATA_ROOTS", raising=False)
     (tmp_path / "a.csv").write_text("n\n1\n", encoding="utf-8")
@@ -126,3 +142,17 @@ def test_redirects_only_go_to_google_and_the_token_goes_only_to_docs_google_com(
     assert same.get_header("Authorization") == "Bearer secret-token"
     cdn = h.redirect_request(req, None, 302, "Found", {}, "https://doc-0c-1k-sheets.googleusercontent.com/export/abc")
     assert cdn.get_header("Authorization") is None and "Authorization" not in cdn.headers          # the token does not travel to the CDN host
+
+
+def test_a_csv_with_short_rows_is_padded_and_one_with_extra_values_is_refused_without_quoting_it(tmp_path, monkeypatch):
+    """Trailing empty cells left off by an exporting system must not crash a run; extra values would be lost, so they stop it. Neither message quotes a row."""
+    monkeypatch.delenv("DEDUPE_DATA_ROOTS", raising=False)
+    short = tmp_path / "short.csv"
+    short.write_text("id,name,dob,phone,city\n1,Rahul Sharma,01-01-1990,9000036247,Pune\n2,Sunita Yadav,14-09-1985\n3,Anita Rao,02-02-1992,9000036248,Delhi\n", encoding="utf-8")
+    rows = {r["id"]: r for t in create({"type": "csv", "path": str(short)}).read_batches() for r in t.to_pylist()}
+    assert set(rows) == {"1", "2", "3"} and rows["2"]["phone"] == "" and rows["2"]["city"] == "" and rows["3"]["city"] == "Delhi"
+    wide = tmp_path / "wide.csv"
+    wide.write_text("id,name\n1,Rahul Sharma\n2,Sunita Yadav,14-09-1985,SECRET-VALUE\n", encoding="utf-8")
+    with pytest.raises(Exception, match="more values") as e:
+        list(create({"type": "csv", "path": str(wide)}).read_batches())
+    assert "Sunita" not in str(e.value) and "SECRET" not in str(e.value)

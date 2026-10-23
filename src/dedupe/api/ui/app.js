@@ -205,9 +205,17 @@ async function run(fn, quiet) {
 
 // ---- addresses: Back, Forward, reload and shared links open the same screen -------------------------------------------------
 let quietAddress = null;
+let arrivedAt = null;           // the address a person arrived by (Back, a link, a reload): a screen that shows another address replaces it instead of adding a step to Back
 const PART = /^[A-Za-z0-9_.-]{1,64}$/;
 function readAddress() { return window.location.hash.replace(/^#/, ""); }
-function writeAddress(path) { if (readAddress() !== path) { quietAddress = path; window.location.hash = path; } }
+function writeAddress(path) {
+  const arrived = arrivedAt;
+  arrivedAt = null;
+  if (readAddress() === path) return;
+  if (arrived !== null && arrived !== path) { window.history.replaceState(null, "", "#" + path); return; }      // the portal rewrote the address it was given (an old link, a shortcut)
+  quietAddress = path;
+  window.location.hash = path;
+}
 function dispatch(path) {
   const parts = (path || "/").split("/").filter(Boolean);
   if (!parts.every((x) => PART.test(x))) return viewHome();
@@ -296,7 +304,8 @@ async function signIn(ev) {
   $("menu-who").replaceChildren(el("strong", {}, me.username), me.roles.map(label).join(", "));
   if (mustChange) { $("nav").replaceChildren(); await run(() => viewPassword(true)); return; }       // nothing else works until the password is changed
   buildNav();
-  go(() => dispatch(readAddress() || "/"));                 // back to the screen that was open (the address survives a reload; the sign-in does not)
+  arrivedAt = readAddress() || "/";
+  go(() => dispatch(readAddress() || "/")).finally(() => { arrivedAt = null; });                 // back to the screen that was open (the address survives a reload; the sign-in does not)
 }
 function signOut(msg) {
   token = null; me = null;
@@ -694,8 +703,19 @@ async function activityPanel(pid) {
     delete_run: "Deleted a run", delete_upload: "Deleted an uploaded file", approve_match: "Decided: same person", reject_match: "Decided: different people",
     mark_unsure: "Marked a pair not sure", undo: "Undid a decision", split_person: "Split a person", override_field: "Corrected a field", approve_pending: "Gave a second approval",
     decline_pending: "Declined a decision" };
-  const what = (e) => (e.detail && ACTIONS[e.detail.action]) || (label(e.event) + (e.detail && e.detail.action ? ": " + label(e.detail.action) : ""));
-  const target = (e) => (e.object_ref || "").replace(pid + "/", "").replace(/^connection\//, "");
+  const RULES_OF = { decision: "the matching rules", survivorship: "the golden-record rules", settings: "the technical settings" };
+  const RULE_ACTIONS = { propose: "Saved a version of ", activate: "Put a version in use: ", approve: "Approved a version of ", decline: "Declined a version of ", rollback: "Went back to an earlier version of " };
+  const configOf = (e) => (/(?:^|\/)(decision|survivorship|settings):/.exec(e.object_ref || "") || [])[1];
+  const what = (e) => {
+    const rules = configOf(e);
+    if (rules && e.detail && RULE_ACTIONS[e.detail.action]) return RULE_ACTIONS[e.detail.action] + RULES_OF[rules];
+    return (e.detail && ACTIONS[e.detail.action]) || (label(e.event) + (e.detail && e.detail.action ? ": " + label(e.detail.action) : ""));
+  };
+  const target = (e) => {
+    const ref = (e.object_ref || "").replace(pid + "/", "").replace(/^connection\//, "");
+    const rules = configOf(e);
+    return rules ? ref.replace(/^[^:]+:/, "version ") : ref;
+  };
   const rowOf = (e) => el("tr", {}, el("td", {}, when(e.created_at)), el("td", {}, e.actor), el("td", {}, what(e)), el("td", { class: "mono" }, target(e)),
     el("td", { class: "num" }, e.status == null ? "" : e.status));
   const first = await api("GET", P(pid) + "/activity?limit=50");
@@ -894,6 +914,7 @@ function runUsed(r) {
   return el("p", { class: "run-used" }, parts.flatMap((x, i) => (i ? [" · ", x] : [x])));
 }
 async function viewRun(pid, rid, tab) {
+  stopTimer();                                                 // never two polls: a leftover one would put this run back on screen after the person has left
   const [r] = await Promise.all([api("GET", R(pid, rid)), refreshCache()]);
   const going = r.status === "running" || r.status === "queued";
   const okRun = r.status === "succeeded";
@@ -904,7 +925,7 @@ async function viewRun(pid, rid, tab) {
   const again = can("runs.start") && !going && r.connections.length;
   const actions = [];
   if (okRun && can("results.export") && tab !== "results") actions.push(btn("Get the results", () => go(() => viewRun(pid, rid, "results")), "primary", "download"));
-  if (going) actions.push(btn("Refresh", () => run(() => viewRun(pid, rid, tab)), "", "refresh"));
+  if (going) actions.push(btn("Refresh", () => go(() => viewRun(pid, rid, tab)), "", "refresh"));
   if (going && can("runs.start")) actions.push(btn("Stop run", () => cancelRun(pid, rid), "danger"));
   if (again) actions.push(btn("Run again", () => startRun(pid, [], rid), "", "play"));
   if (!going && can("data.delete")) actions.push(btn("Delete run", () => deleteRun(pid, rid), "danger", "trash"));
@@ -913,6 +934,7 @@ async function viewRun(pid, rid, tab) {
   const used = runUsed(r);
   if (going) {
     timer = setInterval(() => run(async () => {
+      if (!readAddress().startsWith(R(pid, rid))) { stopTimer(); return; }      // the person went elsewhere
       const now = await api("GET", R(pid, rid));
       if (now.status !== "running" && now.status !== "queued") { stopTimer(); await viewRun(pid, rid); say("The run finished: " + (STATUS_LABEL[now.status] || now.status) + ".", now.status === "succeeded" ? "good" : "bad"); }
     }, true), 4000);
@@ -1049,7 +1071,7 @@ function runOverview(r) {
 // ---- rules of a project --------------------------------------------------------------------------------------------------
 // One page per kind of rule. It reads top to bottom: what is live now (in plain words), changes waiting to be made live, and the version
 // history folded away. The editor opens only when someone presses "Change the rules".
-const CONFIGS = [["decision", "Matching rules"], ["survivorship", "Golden record"], ["settings", "Run settings"]];
+const CONFIGS = [["decision", "Matching rules"], ["survivorship", "Golden record"], ["settings", "Technical settings"]];
 const CONFIG_INTRO = {
   decision: "How the engine decides whether two records belong to the same person.",
   survivorship: "Which value a person's golden record keeps when their records disagree.",
@@ -2018,6 +2040,9 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
   const openSource = async (target) => {
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(state.source.source_id)) throw new Error("Give the connection an id of letters, digits, _ or -.");
     if (kind() === "upload" && !state.source.connector.upload_id) throw new Error("Upload a file first.");
+    if (!preset && !batch && (await api("GET", root + "/connections")).some((c) => c.id === state.source.source_id)) {
+      throw new Error("This project already has a connection called " + state.source.source_id + ". Choose another id, or open that connection to change it.");
+    }
     state.info = await api("POST", inspectUrl(), { connector: state.source.connector });
     if (!Object.keys(state.source.fields).length) {
       for (const s of state.info.suggestions) state.source.fields[s.field] = s.column;
@@ -2044,7 +2069,11 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       // every file is uploaded first; each gets a connection id from its name, never one this project already uses
       const send = (list) => run(async () => {
         const files = [...list];
-        const taken = new Set((await api("GET", root + "/connections")).map((c) => c.id));
+        const existing = new Set((await api("GET", root + "/connections")).map((c) => c.id));
+        const taken = new Set(existing);
+        if (files.length === 1 && state.source.source_id && existing.has(state.source.source_id)) {
+          throw new Error("This project already has a connection called " + state.source.source_id + ". Choose another id, or open that connection to change it.");
+        }
         const done = [];
         for (const [i, f] of files.entries()) {
           status.textContent = "Uploading and checking " + f.name + (files.length > 1 ? " (" + (i + 1) + " of " + files.length + ")" : "") + "...";
@@ -2945,7 +2974,7 @@ async function viewApprovals() {
   const rules = per.flatMap(({ p, rules: rs }) => rs.map((v) => ({ p, v })));
   if (rules.length) {
     sections.push(el("h2", { class: "section" }, "Rule changes"), table(["Rules", "Project", "Version", "Status", "Proposed by", "Reason"], rules.map(({ p, v }) =>
-      linkRow(v.title, () => viewProject(p.id, "rules"), el("td", {}, p.name), el("td", {}, "Version " + v.version), el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by), el("td", {}, v.reason)))));
+      linkRow(v.title, () => viewProject(p.id, "setup", Object.keys(SETUP_CONFIG).find((k) => SETUP_CONFIG[k] === v.name) || "matching"), el("td", {}, p.name), el("td", {}, "Version " + v.version), el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by), el("td", {}, v.reason)))));
   }
   const dests = per.flatMap(({ p, dests: ds }) => ds.map((d) => ({ p, d })));
   if (dests.length) {
@@ -3172,7 +3201,7 @@ $("skip").addEventListener("click", (e) => { e.preventDefault(); $("content").fo
 window.addEventListener("hashchange", () => {
   const p = readAddress();
   if (p === quietAddress) { quietAddress = null; return; }
-  if (me && p.startsWith("/")) go(() => dispatch(p));
+  if (me && p.startsWith("/")) { arrivedAt = p; go(() => dispatch(p)).finally(() => { arrivedAt = null; }); }
 });
 // Single-key shortcuts of the current screen; never while typing, never with a dialog open, never with Ctrl/Alt/Cmd.
 document.addEventListener("keydown", (e) => {

@@ -75,6 +75,18 @@ def test_the_same_idempotency_key_never_starts_two_runs_and_a_rerun_reuses_conne
     assert rerun.status_code == 202 and rerun.json()["connections"] == first.json()["connections"]
 
 
+def test_an_idempotency_key_only_replays_inside_its_own_project(tmp_path):
+    """The same key in another project is another request, never a replay of the first project's run."""
+    c, s, sv, _ = world(tmp_path, fake("pass"))
+    sv.workspace.create("other", "Other", "", "setup")
+    first, replayed = sv.jobs.start(PROJECT, {"sources": []}, [], "u-ops", key="weekly-2026-10-06")
+    sv.jobs.wait(PROJECT, first.id, 30)
+    other, other_replayed = sv.jobs.start("other", {"sources": []}, [], "u-ops", key="weekly-2026-10-06")
+    assert not replayed and not other_replayed and other.id != first.id and other.project_id == "other"
+    again, again_replayed = sv.jobs.start("other", {"sources": []}, [], "u-ops", key="weekly-2026-10-06")
+    assert again_replayed and again.id == other.id
+
+
 def test_a_failing_run_is_reported_as_failed_without_its_output(tmp_path):
     c, s, sv, _ = world(tmp_path, fake("import sys; print('Aadhaar 1234 5678 9012 broke'); sys.exit(3)"))
     r = c.post(P + "/runs", json={"connections": ["crm"]}, headers=hdr(s, "platform_admin"))

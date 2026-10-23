@@ -39,6 +39,22 @@ def test_pairs_are_unique_ordered_and_union_rules(tmp_path):
     assert p[(0, 1)] == ["pan", "phone"] and p[(0, 3)] == ["phone"]
     assert all(l < r for l, r in p) and stats["candidate_pairs"] == 3
 
+def test_one_person_with_many_records_stays_connected_beyond_the_cap_but_a_generic_phone_does_not(tmp_path):
+    """12 records with one PAN (a customer's loans and policies) and 12 sharing one phone (an agent), with a cap of 5: the PAN block is linked with
+    a star and a chain, the phone block is skipped as generic."""
+    std = _std(tmp_path, [{"pan": "ABCPD1234E"} for _ in range(12)] + [{"mobile": "9000000009"} for _ in range(12)])
+    out = tmp_path / "c.parquet"
+    stats = generate(std, out, rules=[r for r in DEFAULT_RULES if r.name in ("pan", "phone")], cap=5)
+    p = _pairs(out)
+    assert all(rules == ["pan"] for rules in p.values()) and all(r < 12 for _, r in p)           # nothing from the phone block, no pairs across the groups
+    assert len(p) < 66 and len(p) == 11 + 10                                                     # a star (11) and a chain (10 more), not all 66 pairs
+    seen = {0}
+    for _ in range(12):
+        seen |= {x for pair in p for x in pair if pair[0] in seen or pair[1] in seen}
+    assert seen == set(range(12))                                                                # all twelve are one connected group
+    assert stats["rules"]["phone"]["capped_blocks"] == 1
+
+
 
 def test_frequency_cap_skips_generic_keys(tmp_path):
     rows = [{"mobile": "9111111111"} for _ in range(60)] + [{"mobile": "9222222222"}, {"mobile": "9222222222"}]

@@ -44,7 +44,13 @@ _TOKEN = re.compile(r"^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$|^[A-Za-z0-9+/
 _PINCODE = re.compile(r"^[1-9]\d{5}$")
 _NUMBER = re.compile(r"^-?\d{1,3}(,\d{2,3})*(\.\d+)?$|^-?\d+(\.\d+)?$")
 _NAME = re.compile(r"^[A-Za-z][A-Za-z.' -]*$")
-_HAS_TIME = re.compile(r"\d{1,2}:\d{2}")
+_TIME = re.compile(r"\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?")
+_MIDNIGHT = re.compile(r"0{1,2}:00(?::00(?:\.0+)?)?")
+
+
+def _has_time(v: str) -> bool:
+    """A real time of day. Midnight (00:00:00) is what Excel and databases append to a date that has no time, so it does not count."""
+    return any(not _MIDNIGHT.fullmatch(t) for t in _TIME.findall(v))
 
 # type -> (canonical field or None, short plain description shown on screen)
 TYPES: dict[str, tuple[str | None, str]] = {
@@ -185,7 +191,7 @@ def _dates(vals: list[str]) -> tuple[str, float] | None:
     if share < MIN_SHARE:
         return None
     ages = [(today - d).days / 365.25 for _, d in hits]
-    timed = sum(bool(_HAS_TIME.search(v)) for v, _ in hits) / len(hits)
+    timed = sum(_has_time(v) for v, _ in hits) / len(hits)
     old = sum(a >= 15 for a in ages) / len(ages)
     recent = sum(a < 15 for a in ages) / len(ages)
     if timed < 0.2 and old >= 0.9:

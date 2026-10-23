@@ -6,6 +6,7 @@ the order they were asked for and start by themselves when one finishes, also af
 else: the command is a fixed argument list (no shell), the project's database URL travels in the child's environment (never on the command line),
 the child does not receive the API's login secret, and the child's output goes to a log file the API never serves.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -193,6 +194,7 @@ class RunJobs:
         Returns (run, replayed). The run starts at once when there is room, otherwise it waits in the queue. Raises RunError when the queue is full."""
         with self._lock:
             if key is not None:
+                key = hashlib.sha256(f"{project_id}|{key}".encode()).hexdigest()[:40]      # the same key in another project is another request
                 with self.engine.connect() as c:
                     old = c.execute(select(runs).where(runs.c.requested_by == actor, runs.c.idempotency_key == key)).first()
                 if old:

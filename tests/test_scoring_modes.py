@@ -70,6 +70,19 @@ def test_tiny_file_says_scores_are_not_meaningful_and_sends_everything_to_review
     s = _csv_run(tmp_path, rows, FULL, COLS)
     assert s["scoring"]["mode"] == "insufficient" and "too small" in s["scoring"]["mode_reason"]
     assert s["decisions"]["auto_merge"] == 0                                     # nothing is merged on scores that mean nothing
+    assert s["decisions"]["review"] == 1                                         # the exact duplicate pair is asked about, not silently rejected
+
+
+def test_a_small_file_sends_its_exact_duplicates_to_review_instead_of_rejecting_them(tmp_path):
+    """Too little to learn from: the score is 50% for every pair that has some evidence, so an exact duplicate reaches a person.
+    (A term-frequency term added on top of all-zero weights used to push every such pair below the review line.)"""
+    first = ["Rahul", "Anita", "Vikram", "Priya", "Arjun", "Meena", "Suresh", "Kavita", "Deepak", "Pooja"]
+    last = ["Sharma", "Verma", "Gupta", "Patel", "Iyer", "Reddy", "Nair", "Das", "Khan", "Singh", "Joshi", "Mehta"]
+    rows = [(i, f"{first[i % 10]} {last[i % 12]}", f"98{i:08d}", f"p{i}@example.com", "Pune") for i in range(60)]
+    rows += [(1000 + i, *rows[i][1:]) for i in range(0, 60, 6)]                   # ten exact duplicates
+    s = _csv_run(tmp_path, rows, FULL, COLS)
+    assert s["scoring"]["mode"] == "insufficient" and s["decisions"]["auto_merge"] == 0
+    assert s["decisions"]["review"] >= 10
 
 
 @pytest.mark.parametrize("rows", [[], [(1, "Only One", "9876543210", "o@x.com", "Pune")], [(1, "", "", "", ""), (2, "", "", "", "")]])

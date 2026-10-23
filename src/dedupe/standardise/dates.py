@@ -4,6 +4,9 @@ from datetime import date, datetime
 
 _MON = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
 MAX_AGE = 110
+# 1 January of these years is what core systems and spreadsheets store for "unknown" (1900 and 1901 for a missing date, 1970 for the Unix
+# epoch): shared by unrelated people, so it is no date at all rather than evidence that two records are the same person.
+SYSTEM_DEFAULT_YEARS = (1900, 1901, 1970)
 # An age without a record date may have been stated years ago (old leads are rarely re-dated): allow this many extra years on the
 # early side of the birth-year range so a stale age is not scored as a contradiction.
 UNDATED_AGE_SLACK = 3
@@ -82,14 +85,24 @@ def parse_dob(raw: str | None, today: date | None = None):
         y = int(s)
         return (None, y, None, None, "year", False) if 1900 <= y <= today.year else none
     d = None
-    if m := re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", s):
+    s = re.sub(r"(?<=\d)(st|nd|rd|th)\b", "", s, flags=re.I)                 # 14th Sep 1985
+    if m := re.fullmatch(r"(?:[A-Za-z]{3})[A-Za-z]*\.?[\s\-/,]*(\d{1,2})[\s\-/,]+(\d{4})", s):             # Sep 14, 1985
+        if s[:3].lower() in _MON:
+            d = _ok(int(m[2]), _MON[s[:3].lower()], int(m[1]), today)
+    elif m := re.fullmatch(r"([A-Za-z]{3})[A-Za-z]*\.?[\s\-/,]+(\d{4})", s):                                # Sep 1985: only the year is known
+        if m[1].lower() in _MON and 1900 <= int(m[2]) <= today.year:
+            return (None, int(m[2]), None, None, "year", False)
+    elif m := re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s):
         d = _ok(int(m[1]), int(m[2]), int(m[3]), today)
+    elif m := re.fullmatch(r"(\d{8})", s):                                                                 # 19850914 or 14091985
+        v = m[1]
+        d = (_ok(int(v[:4]), int(v[4:6]), int(v[6:]), today) if v[:2] in ("19", "20") else None) or _ok(int(v[4:]), int(v[2:4]), int(v[:2]), today)
     elif m := re.fullmatch(r"(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})", s):
         a, b, y = int(m[1]), int(m[2]), int(m[3])
         d = _ok(y, b, a, today) if b <= 12 else _ok(y, a, b, today)  # second part >12 means month-first
     elif m := re.fullmatch(r"(\d{1,2})[\s\-/]([A-Za-z]{3})[A-Za-z]*[\s\-/,]*(\d{4})", s):
         if m[2].lower() in _MON:
             d = _ok(int(m[3]), _MON[m[2].lower()], int(m[1]), today)
-    if d is None:
+    if d is None or (d.month == 1 and d.day == 1 and d.year in SYSTEM_DEFAULT_YEARS):
         return none
     return d.isoformat(), d.year, d.month, d.day, "full", (d.month == 1 and d.day == 1)

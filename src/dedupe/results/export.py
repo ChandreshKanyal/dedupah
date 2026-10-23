@@ -162,6 +162,7 @@ def write_parquet(run_dir: Path, name: str, out: Path) -> int:
 def write_xlsx(run_dir: Path, name: str, out: Path) -> int:
     from openpyxl import Workbook
     from openpyxl.cell import WriteOnlyCell
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
     schema, batches = _batches(run_dir, name)
     wb = Workbook(write_only=True)
     ws = wb.create_sheet(DATASETS[name]["title"][:31])
@@ -175,6 +176,8 @@ def write_xlsx(run_dir: Path, name: str, out: Path) -> int:
         for r in zip(*cols, strict=True):
             row = []
             for v in r:
+                if isinstance(v, str):
+                    v = ILLEGAL_CHARACTERS_RE.sub("", v)                         # control characters cannot be stored in a sheet: dropped, not a crash
                 if isinstance(v, str) and v.startswith(TRIGGERS):
                     c = WriteOnlyCell(ws, value=v)
                     c.data_type = "s"                                            # stored as text: never evaluated as a formula

@@ -87,6 +87,13 @@ def test_dob_formats_and_edge_cases():
         assert dates.parse_dob(s) == full, s
     assert dates.parse_dob("1985") == (None, 1985, None, None, "year", False)
     assert dates.parse_dob("01/01/1990")[5] is True  # default-date suspicion
+    for text, iso in (("1985/09/14", "1985-09-14"), ("1985.09.14", "1985-09-14"), ("19850914", "1985-09-14"), ("14091985", "1985-09-14"),
+                      ("14th Sep 1985", "1985-09-14"), ("14 September 1985", "1985-09-14"), ("Sep 14, 1985", "1985-09-14"), ("September 14 1985", "1985-09-14")):
+        assert dates.parse_dob(text)[:5] == (iso, 1985, 9, 14, "full"), text
+    assert dates.parse_dob("Sep 1985") == (None, 1985, None, None, "year", False) and dates.parse_dob("14-09-85")[0] is None   # a 2-digit year is ambiguous: no date
+    for system_default in ("01-01-1900", "1900-01-01", "01/01/1901", "1970-01-01"):   # what systems store for "unknown": no date, not evidence
+        assert dates.parse_dob(system_default) == (None, None, None, None, None, False), system_default
+    assert dates.parse_dob("02/01/1900")[0] == "1900-01-02" and dates.parse_dob("01/01/1971")[5] is True   # other dates are untouched
     for bad in ["31/02/1990", "1850", "", None, "garbage", "14/03/2999"]:
         assert dates.parse_dob(bad)[0] is None
 

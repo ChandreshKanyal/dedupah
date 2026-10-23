@@ -72,6 +72,44 @@ def _header(cols) -> list[str]:
     return names
 
 
+def _filled(row) -> int:
+    return sum(1 for v in row if v is not None and str(v).strip() != "")
+
+
+def _after_title_rows(it):
+    """Rows of a sheet or text file from its header row on. Lines above the header that are blank or hold one value in the first column (a report title, a
+    title padded with commas by Excel) are skipped, but only when a real row with several values follows within the first ten lines."""
+    head = []
+    for row in it:
+        head.append(row)
+        if len(head) == 10:
+            break
+    start = 0
+    def title_like(row) -> bool:                       # blank, or one value in the first column (a header with a blank name is not a title: it is refused later)
+        return _filled(row) == 0 or (_filled(row) == 1 and row and row[0] is not None and str(row[0]).strip() != "")
+    while start < len(head) and title_like(head[start]) and any(_filled(r) >= 2 for r in head[start + 1:]):
+        start += 1
+    yield from head[start:]
+    yield from it
+
+
+def _check_width(row, names, line) -> None:
+    """A value beyond the last named column is data that would be dropped silently: refuse and say where."""
+    if _filled(row[len(names):]):
+        raise UploadError(f"row {line} has more values than the header has columns ({len(names)}): name every column in the header row, or remove the extra values")
+
+
+def _delimiter(path: Path, kind: str) -> str:
+    """Tab for .tsv; for .csv the separator the file really uses (Excel in many regions writes ';', some exports use '|' or a tab)."""
+    if kind == "tsv":
+        return "\t"
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        sample = "".join(line for _, line in zip(range(20), f, strict=False))
+    counts = {d: sample.count(d) for d in ",;\t|"}
+    best = max(counts, key=lambda d: counts[d])
+    return best if counts[best] else ","
+
+
 def _check_zip(path: Path) -> None:
     try:
         with zipfile.ZipFile(path) as z:
@@ -117,18 +155,19 @@ def _sniff(path: Path, filename: str) -> str:
 
 
 def _text_batches(path: Path, kind: str):
-    delim = "\t" if kind == "tsv" else ","
+    delim = _delimiter(path, kind)
     with open(path, encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f, delimiter=delim)
+        reader = _after_title_rows(csv.reader(f, delimiter=delim))
         try:
             names = _header(next(reader))
         except StopIteration:
             raise UploadError("the file is empty") from None
         yield names
         rows = []
-        for r in reader:
+        for line, r in enumerate(reader, start=2):
             if not any(v.strip() for v in r):
                 continue
+            _check_width(r, names, line)
             rows.append([(v if v != "" else None) for v in (r + [None] * len(names))[:len(names)]])
             if len(rows) >= BATCH:
                 yield to_string_table(names, rows)
@@ -137,23 +176,37 @@ def _text_batches(path: Path, kind: str):
             yield to_string_table(names, rows)
 
 
+def _has_data(sheet) -> bool:
+    """A sheet with at least two rows that hold a value (a header and a record): the first rows are enough to tell."""
+    n = 0
+    for row in sheet.iter_rows(values_only=True, max_row=200):
+        n += 1 if _filled(row) else 0
+        if n >= 2:
+            return True
+    return False
+
+
 def _excel_batches(path: Path):
     _check_zip(path)
     from openpyxl import load_workbook
     fh = open(path, "rb")                       # a handle, not a name: the stored file has no .xlsx extension
     wb = load_workbook(fh, read_only=True, data_only=True)
     try:
-        it = wb.active.iter_rows(values_only=True)
+        sheet = wb.active
+        if sheet is None or not _has_data(sheet):               # a cover sheet comes first: read the first sheet that holds data
+            sheet = next((w for w in wb.worksheets if _has_data(w)), sheet)
+        it = _after_title_rows(sheet.iter_rows(values_only=True))
         try:
             names = _header(next(it))
         except StopIteration:
             raise UploadError("the sheet is empty") from None
         yield names
         rows = []
-        for r in it:
+        for line, r in enumerate(it, start=2):
             vals = list(r[:len(names)]) + [None] * max(0, len(names) - len(r))
             if all(v is None or str(v).strip() == "" for v in vals):
                 continue
+            _check_width(r, names, line)
             rows.append(vals)
             if len(rows) >= BATCH:
                 yield to_string_table(names, rows)

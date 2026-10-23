@@ -10,6 +10,7 @@
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Review fixes, round 1:** engine (insufficient-mode scores, default birth dates, big identifier blocks, more date formats), uploads (separators, title rows, sheets, short and wide rows, midnight dates), platform (idempotency per project, reused project id, workspace reads, Excel control characters), portal (Back, refresh timer, taken connection id, approvals link, activity wording), duckdb pinned below 2 | 75 |
 | session 4 | **Matching rules as columns that must agree** (the same when / ask a person when / never the same when / everything else, with the score optional and off for new projects); **golden record as one choice per column** | 74 |
 | session 4 | **Matching and golden-record rules as one short pre-filled form each**, one button (Use these rules / Save changes / Send for approval) | 73 |
 | session 4 | **File bar between uploaded files; no reason asked in one-person projects** (once per upload otherwise) | 72 |
@@ -322,6 +323,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-10-23 (session 4, review fixes)** — First batch of the findings from the agent review fixed, each with a test. Section 75.
 - **2026-10-21 (session 4, rules by columns)** — Matching rules rebuilt around the columns that must agree, score optional (`use_score`, off for new projects); golden record one choice per column; checked in a browser. Section 74.
 - **2026-10-19 (session 4, rules forms)** — Matching and golden-record pages reduced to one pre-filled form each; checked in a browser. Section 73.
 - **2026-10-19 (session 4, file bar)** — Move between uploaded files; reasons recorded automatically without second approval. Section 72.
@@ -1786,3 +1788,26 @@ suggestions: pairs no rule catches stay apart by default; both pages).
 - **Checked in a real browser (sandbox, two uploaded files):** Use these rules (version 1), unchanged save says "Nothing changed", a
   gender-only rule is refused with the reason, + Column email then saves (version 2), score option shows the percentages; golden record
   Use these rules, Set every column + one change (version 2); Setup summaries in words; no console errors.
+
+## 75. Review fixes, round 1 (2026-10-23, session 4)
+The user: "please start the fixing". Findings are in `~/agent-review/*/report-summary.txt`. Fixed so far (each has a test that fails on the old code unless noted):
+- **E1-01 critical, scores of a file too small to learn from** (`scoring/predict.py`): a term-frequency term was added on top of all-zero weights, so exact duplicates
+  scored near 0 and were rejected (agent's file: all 79 pairs rejected). In `insufficient` mode the term is skipped: such pairs sit at 50% and go to review (40 of 79 reviewed).
+- **E1-02 in part, default birth dates** (`standardise/dates.py`): 1 January 1900, 1901 and 1970 are no date at all (agent's file: 249 of 624 auto-merges wrong, now 0 of 375).
+  **Not fixed:** namesakes with different phone and email but a same-year birth date still auto-merge on a learned score (28 of 238 in the agent's file): the scoring model
+  needs a rebuild (see open items). New projects start with the score off, so this does not apply to them.
+- **E1-04, one person with many records** (`blocking/`): a PAN, Aadhaar, passport, licence, voter ID or customer number held by more than 50 records (up to 1,000) is linked
+  with a star and a chain (about 2n pairs) instead of being skipped. Phone and email keep the cap (a shared agent phone is common).
+- **E1-05 and E1-06, uploads** (`workspace/uploads.py`, `mapping/detect.py`): the real separator (; | tab) is used, lines above the header with at most one value are skipped,
+  the first sheet that holds data is read when a cover sheet comes first, a value beyond the header is refused with its row number instead of dropped, midnight (00:00:00)
+  on every date no longer turns birth dates into record dates.
+- **E1-14, folder CSV with a short row** (`connectors/files.py`): short rows are padded; rows with extra values stop the read with a message that does not quote the row.
+- **E1-08, birth date formats**: 1985/09/14, 1985.09.14, 19850914, 14091985, 14th Sep 1985, Sep 14, 1985; "Sep 1985" gives the year; 2-digit years stay refused (ambiguous).
+- **P1-14 idempotency key** is scoped to the project (hashed with its id). **P1-09** a reused project id starts an empty activity feed (from the newest creation event).
+  **P1-06** a file connection can never read the workspace folder (DEDUPE_WORK_DIR), even when DEDUPE_DATA_ROOTS covers it. **P1-07** control characters no longer crash the Excel export.
+- **Portal:** U2-01 Back is no longer trapped on addresses the portal rewrites (replaceState); U1-01 a run page keeps one poll only and stops when the person leaves
+  (Refresh goes through navigation); U1-02 a typed connection id that exists is refused; U1-03 Approvals opens the right Setup page; U1-05 Activity names rule saves as rules;
+  "Run settings" renamed "Technical settings" on Approvals.
+- **Build:** `duckdb>=1.4,<2` in pyproject. A rebuilt image had pulled duckdb 2.0, which refuses the `x -> ...` lambda syntax used in the engine's SQL (migrate before allowing 2).
+- **Open, for the user's decision:** member role of a project grant is ignored (P1-02), cross-project DEDUPE_SRC/DST variables (P1-01), steward bulk unmask (P1-03),
+  scoring-model rebuild (E1-02/03), second-approval gaps (P1-04/05/08), plus the medium and low findings not listed above.

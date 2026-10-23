@@ -10,6 +10,9 @@ class Rule:
     description: str = ""
     # optional SQL condition on `records`: a pair is kept only when at least one of its two records satisfies it
     one_side: str = ""
+    # a key that is one person's own identifier (PAN, Aadhaar, passport...) is never "generic": a block bigger than the cap is that one person with
+    # many records (loans, policies), so it is linked with a star and a chain (about 2n pairs) instead of being skipped or paired in full (n^2)
+    one_person_key: bool = False
 
 
 def _simple(col: str) -> str:
@@ -22,12 +25,12 @@ def _combo(expr: str, *required: str) -> str:
 
 
 DEFAULT_RULES = [
-    Rule("pan", _simple("pan"), "same PAN"),
-    Rule("customer_number", _simple("customer_number"), "same customer number (CIF / UCIC shared across systems)"),
-    Rule("aadhaar", _simple("aadhaar_token"), "same Aadhaar token"),
-    Rule("passport", _simple("passport_no"), "same passport number"),
-    Rule("driving_licence", _simple("dl_no"), "same driving licence"),
-    Rule("voter_id", _simple("voter_id"), "same voter ID"),
+    Rule("pan", _simple("pan"), "same PAN", one_person_key=True),
+    Rule("customer_number", _simple("customer_number"), "same customer number (CIF / UCIC shared across systems)", one_person_key=True),
+    Rule("aadhaar", _simple("aadhaar_token"), "same Aadhaar token", one_person_key=True),
+    Rule("passport", _simple("passport_no"), "same passport number", one_person_key=True),
+    Rule("driving_licence", _simple("dl_no"), "same driving licence", one_person_key=True),
+    Rule("voter_id", _simple("voter_id"), "same voter ID", one_person_key=True),
     Rule("phone", "SELECT rid, key FROM (SELECT rid, unnest([mobile, mobile_alt]) AS key FROM records) WHERE key IS NOT NULL",
          "same number in either phone field"),
     Rule("email", _simple("email_key"), "same email (alias-normalised)"),

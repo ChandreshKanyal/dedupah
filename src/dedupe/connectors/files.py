@@ -39,14 +39,35 @@ class CsvConnector(_FileConnector):
 
     def read_batches(self, batch_size: int = 50_000) -> Iterator[pa.Table]:
         cols = self.columns()
-        reader = pacsv.open_csv(
-            self.path,
-            read_options=pacsv.ReadOptions(encoding=self.config.get("encoding", "utf-8-sig"), block_size=8 << 20),
-            parse_options=pacsv.ParseOptions(delimiter=self._delimiter),
-            convert_options=pacsv.ConvertOptions(column_types={c: pa.string() for c in cols}, strings_can_be_null=False),
-        )
-        for batch in reader:
-            yield pa.Table.from_batches([batch])
+        repaired: list[list[str]] = []
+        refused: list[str] = []
+        n = len(cols)
+
+        def short_or_long(row) -> str:
+            """A row with fewer values than the header (trailing empty cells left off by the exporting system) is padded; a row with more
+            values than the header would lose data, so it stops the read. Neither message nor error quotes the row: it is personal data."""
+            values = next(csv.reader([row.text], delimiter=self._delimiter), [])
+            if len(values) > n and any(v.strip() for v in values[n:]):
+                refused.append(f"a row of {self.path.name} has more values ({len(values)}) than the header has columns ({n}): "
+                               f"name every column in the header or remove the extra values")
+                return "error"
+            repaired.append((values + [""] * n)[:n])
+            return "skip"
+
+        try:
+            reader = pacsv.open_csv(                   # the first block is parsed here, so the whole read is guarded
+                self.path,
+                read_options=pacsv.ReadOptions(encoding=self.config.get("encoding", "utf-8-sig"), block_size=8 << 20),
+                parse_options=pacsv.ParseOptions(delimiter=self._delimiter, invalid_row_handler=short_or_long),
+                convert_options=pacsv.ConvertOptions(column_types={c: pa.string() for c in cols}, strings_can_be_null=False),
+            )
+            for batch in reader:
+                yield pa.Table.from_batches([batch])
+        except pa.ArrowInvalid:                       # the parser's own message quotes the row: say only what is wrong
+            raise ConnectorConfigError(refused[0] if refused else f"{self.path.name} could not be read as a CSV file: a row is malformed") from None
+        for i in range(0, len(repaired), batch_size):                       # the padded rows come last: the pipeline sorts by record id
+            part = repaired[i:i + batch_size]
+            yield pa.table({c: pa.array([r[j] for r in part], type=pa.string()) for j, c in enumerate(cols)})
 
 
 @register
