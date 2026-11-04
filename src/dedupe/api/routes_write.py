@@ -249,7 +249,8 @@ def bulk(request: Request, body: BulkIn, project_id: str = PID, run_id: str = RI
 def undo(request: Request, body: UndoIn, project_id: str = PID, action_id: str = Path(pattern=r"^[0-9a-f]{12}$"), p: Principal = WRITE):
     ps = project_scope(request, project_id)
     try:
-        out = ReviewService(_services(request).workspace.project_dir(project_id), ps.judgments).undo_action(action_id, p.actor, body.reason)
+        out = ReviewService(_services(request).workspace.project_dir(project_id), ps.judgments).undo_action(action_id, p.actor, body.reason,
+                                                                                                              others="judgment.approve" in p.permissions)
     except (ReviewError, JudgmentError) as e:
         raise _conflict(e) from None
     _log(request, p, "judgment_change", "undo", f"{project_id}/{action_id}", judgments=len(out["revoked"]))

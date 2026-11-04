@@ -81,7 +81,8 @@ def run_scope(request: Request, project_id: str, run_id: str) -> RunScope:
         if key not in reviews:
             # a one-person project cannot give a decision "a second look": the sensitive-decision approvals are off until the project asks for them
             policy = ReviewPolicy(reveal_sensitive=reveal) if second else ReviewPolicy(
-                reveal_sensitive=reveal, four_eyes_id_conflict=False, four_eyes_override_fields=(), four_eyes_split=False, four_eyes_merge_min_records=None)
+                reveal_sensitive=reveal, four_eyes_id_conflict=False, four_eyes_override_fields=(), four_eyes_split=False, four_eyes_merge_min_records=None,
+                four_eyes_change_approved=False)
             reviews[key] = ReviewService(work, ps.judgments, policy)
         pair.append(reviews[key])
     return RunScope(ps.project, ps.judgments, ps.configs, run, pair[0], pair[1])

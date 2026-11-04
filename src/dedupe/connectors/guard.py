@@ -78,8 +78,9 @@ def check_select_only(query: str) -> str:
 
 # ---- network hosts (databases, SFTP, REST APIs, object storage endpoints) ----------------------------------------------
 _HOST = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$")
-# Cloud instance metadata services hand out the server's own credentials: no source may ever point there.
-_METADATA = ("169.254.", "fd00:ec2::254", "metadata.google.internal", "metadata.azure.com", "100.100.100.200")
+# Cloud instance metadata services hand out the server's own credentials: no source may ever point there (AWS, GCP, Azure incl. its
+# wire server, Alibaba, Oracle).
+_METADATA = ("169.254.", "fd00:ec2::254", "metadata.google.internal", "metadata.azure.com", "100.100.100.200", "168.63.129.16", "192.0.0.192")
 
 
 def allow_insecure_http() -> bool:
@@ -88,9 +89,15 @@ def allow_insecure_http() -> bool:
 
 
 def _blocked(ip_text: str) -> bool:
+    """A metadata, link-local or "any" address, also when wrapped in IPv6 (mapped, NAT64, 6to4, Teredo). In production also the server
+    itself (loopback): its own API and admin ports are not a data source. Private networks stay allowed: that is where customer databases are."""
     import ipaddress
     ip = ipaddress.ip_address(ip_text.split("%")[0])
-    return ip.is_link_local or str(ip) in _METADATA or (ip.version == 6 and ip.ipv4_mapped is not None and ip.ipv4_mapped.is_link_local)
+    inner = [ip]
+    if ip.version == 6:
+        nat64 = ipaddress.ip_address(int(ip) & 0xFFFFFFFF) if ip in ipaddress.ip_network("64:ff9b::/96") else None
+        inner += [x for x in (ip.ipv4_mapped, ip.sixtofour, ip.teredo and ip.teredo[1], nat64) if x is not None]
+    return any(x.is_link_local or x.is_unspecified or str(x) in _METADATA or (x.is_loopback and _production()) for x in inner)
 
 
 def resolve_checked(host: str, what: str = "host") -> list[str]:
@@ -132,6 +139,8 @@ def check_host(host: str, what: str = "host") -> str:
     low = h.lower().rstrip(".")
     if low.startswith(_METADATA) or low in _METADATA:
         raise ConnectorConfigError(f"{what} points at a cloud metadata service, which is never allowed")
+    if _production() and (low in ("localhost", "localhost.localdomain") or low.endswith(".localhost")):
+        raise ConnectorConfigError(f"{what} is this server itself, which a production deployment does not allow")
     allowed = [a.strip().lower() for a in os.environ.get("DEDUPE_SOURCE_HOSTS", "").split(",") if a.strip()]
     if allowed and not any(low == a or (a.startswith("*.") and low.endswith(a[1:])) for a in allowed):
         raise ConnectorConfigError(f"this {what} is not on the list of hosts sources may connect to (DEDUPE_SOURCE_HOSTS)")
@@ -140,7 +149,7 @@ def check_host(host: str, what: str = "host") -> str:
     except OSError:
         return h                                    # unknown name: the driver reports that it cannot connect
     if any(_blocked(a) for a in addrs):
-        raise ConnectorConfigError(f"{what} resolves to a link-local or metadata address, which is never allowed")
+        raise ConnectorConfigError(f"{what} resolves to a link-local, metadata or local address, which is not allowed")
     return h
 
 

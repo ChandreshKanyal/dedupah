@@ -86,17 +86,18 @@ def test_a_restart_keeps_waiting_runs_and_ends_the_ones_that_were_going(tmp_path
     assert again.wait(PROJECT, second["id"], 30).status == "succeeded"                     # the queued run was picked up and ran
 
 
-def test_the_run_log_is_scrubbed_and_only_for_people_who_can_open_the_project(tmp_path):
+def test_the_run_log_is_scrubbed_and_only_for_people_who_run_the_project(tmp_path):
     c, s, sv = world(tmp_path, writing_summary({"crm": 12}))
     run = start(c, s).json()
     sv.jobs.wait(PROJECT, run["id"], 30)
-    log = c.get(f"{P}/runs/{run['id']}/log", headers=hdr(s, "viewer")).json()
+    assert c.get(f"{P}/runs/{run['id']}/log", headers=hdr(s, "viewer")).status_code == 403         # a failing row can still carry a name
+    log = c.get(f"{P}/runs/{run['id']}/log", headers=hdr(s, "platform_admin")).json()
     assert log["available"] is True and any("done" in line for line in log["lines"])
     text = "\n".join(log["lines"])
     assert "asha@example.com" not in text and "ABCDE1234F" not in text and "[redacted]" in text        # personal data never leaves through the log
-    assert c.get(f"{P}/runs/R000000000000/log", headers=hdr(s, "viewer")).status_code == 404
+    assert c.get(f"{P}/runs/R000000000000/log", headers=hdr(s, "platform_admin")).status_code == 404
     c.post(P + "/access", json={"subject": "someone", "role": "viewer"}, headers=hdr(s, *ADMIN))
-    assert c.get(f"{P}/runs/{run['id']}/log", headers=hdr(s, "viewer", "stranger")).status_code == 403
+    assert c.get(f"{P}/runs/{run['id']}/log", headers=hdr(s, "analyst", "stranger")).status_code == 403
 
 
 def test_a_run_records_rows_per_connection_and_each_connections_health(tmp_path):

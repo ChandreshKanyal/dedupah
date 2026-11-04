@@ -52,7 +52,17 @@ security_log = Table(
 )
 _HASHED = ("id", "created_at", "event", "actor", "roles", "method", "route", "status", "object_ref", "detail", "request_id", "client_ip")
 
-_PATTERNS = [re.compile(p) for p in (r"[A-Za-z]{5}\d{4}[A-Za-z]", r"[\w.+-]+@[\w-]+\.[\w.-]+", r"\b\d{4}\s?\d{4}\s?\d{4}\b", r"(?<!\d)(?:\+?91[\s-]?)?[6-9]\d{9}(?!\d)")]
+# What personal data looks like in free text. Each pattern stands alone between non-word characters, so our own ids (U9876543210ab,
+# P000000123) are left whole; separators people type (spaces, dashes, dots) are allowed inside the numbers.
+_PATTERNS = [re.compile(p) for p in (
+    r"[\w.+-]+@[\w-]+\.[\w.-]+",                                            # email
+    r"(?<![\w+])[A-Za-z]{5}\d{4}[A-Za-z](?!\w)",                              # PAN
+    r"(?<![\w+])\d{4}[\s.-]?\d{4}[\s.-]?\d{4}(?!\w)",                        # Aadhaar
+    r"(?<![\w+])(?:\+?91[\s-]?|0)?[6-9]\d(?:[\s-]?\d){8}(?!\w)",              # Indian mobile, with or without +91 / 0
+    r"(?<![\w+])[A-Za-z]{2}[\s-]?\d{2}[\s-]?(?:19|20)\d{2}[\s-]?\d{7}(?!\w)",  # driving licence (MH12 20110012345)
+    r"(?<![\w+])[A-Za-z]{3}\d{7}(?!\w)",                                      # voter id (EPIC)
+    r"(?<![\w+])[A-Za-z]\d{7}(?!\w)",                                         # passport
+)]
 _ALLOWED_DETAIL_KEYS = re.compile(r"[a-z][a-z0-9_]{0,39}")
 log = logging.getLogger("dedupe.security")
 

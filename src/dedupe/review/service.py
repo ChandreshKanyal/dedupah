@@ -41,6 +41,7 @@ class ReviewPolicy:
     four_eyes_split: bool = False
     four_eyes_override_fields: tuple = ("pan", "aadhaar_token", "aadhaar_last4", "dob")
     four_eyes_id_conflict: bool = True
+    four_eyes_change_approved: bool = True                               # changing a decision a second person approved needs a second person too
     reveal_sensitive: bool = False
 
 
@@ -254,8 +255,9 @@ class ReviewService:
         action_id = action_id or uuid.uuid4().hex[:12]
         best = pairs[0]
         j = self.store.same_person(best["a"], best["b"], actor, reason, self._evidence(con, best, {"action_id": action_id, "persons": [person_l, person_r]}),
-                                   requires_approval=approval, confirm_id_conflict=bool(conflicts and confirm_id_conflict))
-        return {"action_id": action_id, "judgment_ids": [j], "pending_approval": approval}
+                                   requires_approval=approval, confirm_id_conflict=bool(conflicts and confirm_id_conflict),
+                                   protect_approved=self.policy.four_eyes_change_approved)
+        return {"action_id": action_id, "judgment_ids": [j], "pending_approval": self.store.status(j) == "pending_approval"}
 
     def _decide_all_pairs(self, kind: str, person_l: str, person_r: str, actor: str, reason: str, action_id: str | None) -> dict:
         con = self._con()
@@ -266,8 +268,8 @@ class ReviewService:
         ids = []
         for p in pairs:   # every review pair between the two people, so the item does not come back after the next run
             ev = self._evidence(con, p, {"action_id": action_id, "persons": [person_l, person_r]})
-            ids.append(getattr(self.store, kind)(p["a"], p["b"], actor, reason, ev))
-        return {"action_id": action_id, "judgment_ids": ids, "pending_approval": False}
+            ids.append(getattr(self.store, kind)(p["a"], p["b"], actor, reason, ev, protect_approved=self.policy.four_eyes_change_approved))
+        return {"action_id": action_id, "judgment_ids": ids, "pending_approval": any(self.store.status(i) == "pending_approval" for i in ids)}
 
     def reject_match(self, person_l: str, person_r: str, actor: str, reason: str = "", action_id: str | None = None) -> dict:
         return self._decide_all_pairs("different_person", person_l, person_r, actor, reason, action_id)
@@ -297,12 +299,16 @@ class ReviewService:
                                                                          "pipeline": self._run_info()}, requires_approval=approval)
         return {"action_id": action_id, "judgment_ids": [j], "pending_approval": approval}
 
-    def undo_action(self, action_id: str, actor: str, reason: str = "") -> dict:
-        """Revoke every judgment created by one action (a reject covers many record pairs)."""
-        ids = [j.id for j in self.store.history(("same_person", "different_person", "unsure", "split", "field_override"))
-               if j.evidence.get("action_id") == action_id and j.status in ("active", "pending_approval")]
-        if not ids:
+    def undo_action(self, action_id: str, actor: str, reason: str = "", others: bool = False) -> dict:
+        """Revoke every judgment created by one action (a reject covers many record pairs). Only the person who made it may, unless `others`
+        (an approver: they may undo a colleague's decision)."""
+        found = [j for j in self.store.history(("same_person", "different_person", "unsure", "split", "field_override"))
+                 if j.evidence.get("action_id") == action_id and j.status in ("active", "pending_approval")]
+        if not found:
             raise ReviewError(f"no active judgments for action {action_id!r}")
+        if not others and any(j.actor != actor for j in found):
+            raise ReviewError("Only the person who made this decision, or an approver, can undo it.")
+        ids = [j.id for j in found]
         for i in ids:
             self.store.revoke(i, actor, reason or "undo")
         return {"action_id": action_id, "revoked": ids}

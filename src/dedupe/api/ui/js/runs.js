@@ -172,7 +172,8 @@ async function viewRun(pid, rid, tab) {
   if (r.status === "cancelled") { show(top, used, empty("This run was stopped before it finished, so it has no results." + restart)); return; }
   if (!okRun) {
     show(top, used, empty(r.status === "interrupted" ? "This run was interrupted when the server restarted, so it has no results." + restart
-      : "This run did not finish successfully (exit code " + r.exit_code + "), so it has no results. The end of its log is below." + restart), await runLogPanel(pid, rid));
+      : "This run did not finish successfully (exit code " + r.exit_code + "), so it has no results." + (can("runs.start") ? " The end of its log is below." : "") + restart),
+      can("runs.start") ? await runLogPanel(pid, rid) : null);
     return;
   }
   const stale = r.latest_run_id && r.latest_run_id !== rid ? el("div", { class: "notice warn", role: "note" },
@@ -180,7 +181,7 @@ async function viewRun(pid, rid, tab) {
     el("div", { class: "row" }, btn("Open the newest run", () => go(() => viewRun(pid, r.latest_run_id, tab)), "small primary"))) : null;
   let body;
   if (tab === "overview") body = el("div", {}, runOverview(r, pid), el("details", { class: "advanced" }, el("summary", {}, "Details: what it read, data quality, timings"),
-    el("p", { class: "muted" }, "Run id " + rid + "."), used, runDetails(r)), runLogDetails(pid, rid));
+    el("p", { class: "muted" }, "Run id " + rid + "."), used, runDetails(r)), can("runs.start") ? runLogDetails(pid, rid) : null);
   else if (tab === "results") body = await runResults(pid, rid);
   else body = await customersPanel(pid, rid);
   show(top, stale, tabs(tabList, tab, (t) => go(() => viewRun(pid, rid, t))), tabPanel(tab, body));

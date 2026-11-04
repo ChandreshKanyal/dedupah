@@ -189,7 +189,8 @@ class JudgmentStore:
         conn.execute(judgments.insert().values(**row, prev_hash=prev, row_hash=_hash(prev, row)))
         return new_id
 
-    def _decide_pair(self, kind, a, b, actor, reason, evidence, requires_approval) -> int:
+    def _decide_pair(self, kind, a, b, actor, reason, evidence, requires_approval, protect_approved=False) -> int:
+        """`protect_approved`: changing a decision a second person approved needs a second person too (one steward cannot overturn two)."""
         subject = _canon_pair(a, b)
         with serialized(self.engine) as conn:
             mine, opposite = [], []
@@ -201,25 +202,30 @@ class JudgmentStore:
             # a decision on a pair replaces earlier opposite decisions on it (a steward changing their mind); 'unsure' never replaces one
             if kind == "unsure" and any(o.kind in ("same_person", "different_person") for o in opposite):
                 raise JudgmentError("this pair already has a decision; revoke it first if you really are unsure")
+            if protect_approved and any(o.status == "active" and o.requires_approval for o in opposite):
+                requires_approval = True
+            # a change that waits for a second person replaces only other waiting ones: what is in force stays until it is approved
             for o in opposite:
-                self._append(conn, "revoke", actor, "{}", f"superseded by a new {kind} judgment", None, o.id)
+                if not requires_approval or o.status == "pending_approval":
+                    self._append(conn, "revoke", actor, "{}", f"superseded by a new {kind} judgment", None, o.id)
             return self._append(conn, kind, actor, subject, reason, evidence, None, requires_approval)
 
     def same_person(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None, requires_approval: bool = False,
-                    confirm_id_conflict: bool = False) -> int:
+                    confirm_id_conflict: bool = False, protect_approved: bool = False) -> int:
         """`confirm_id_conflict`: the records carry different valid PANs/Aadhaar and the steward confirms they are still one person
         (needs a reason); without it such a link is not applied by the clustering step and is reported."""
         if confirm_id_conflict:
             if not reason:
                 raise JudgmentError("confirming a merge across conflicting identifiers needs a reason")
             evidence = {**(evidence or {}), "confirmed_id_conflict": True}
-        return self._decide_pair("same_person", a, b, actor, reason, evidence, requires_approval)
+        return self._decide_pair("same_person", a, b, actor, reason, evidence, requires_approval, protect_approved)
 
-    def different_person(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None, requires_approval: bool = False) -> int:
-        return self._decide_pair("different_person", a, b, actor, reason, evidence, requires_approval)
+    def different_person(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None, requires_approval: bool = False,
+                         protect_approved: bool = False) -> int:
+        return self._decide_pair("different_person", a, b, actor, reason, evidence, requires_approval, protect_approved)
 
-    def unsure(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None) -> int:
-        return self._decide_pair("unsure", a, b, actor, reason, evidence, False)
+    def unsure(self, a: Key, b: Key, actor: str, reason: str = "", evidence: dict | None = None, protect_approved: bool = False) -> int:
+        return self._decide_pair("unsure", a, b, actor, reason, evidence, False, protect_approved)
 
     def split(self, parts: list[list[Key]], actor: str, reason: str, evidence: dict | None = None, requires_approval: bool = False) -> int:
         if not reason:
@@ -233,6 +239,10 @@ class JudgmentStore:
             raise JudgmentError("a field override needs a reason")
         with serialized(self.engine) as conn:
             return self._append(conn, "field_override", actor, _canon_override(field, value, anchors), reason, evidence, None, requires_approval)
+
+    def status(self, judgment_id: int) -> str:
+        with self.engine.connect() as conn:
+            return self._get(conn, judgment_id).status
 
     def revoke(self, judgment_id: int, actor: str, reason: str = "") -> int:
         with serialized(self.engine) as conn:
@@ -250,7 +260,12 @@ class JudgmentStore:
                 raise JudgmentError(f"judgment {judgment_id} is not waiting for approval (status: {j.status})")
             if actor == j.actor:
                 raise JudgmentError("four eyes: a decision cannot be approved by the person who made it")
-            return self._append(conn, "approve", actor, "{}", reason, None, judgment_id)
+            out = self._append(conn, "approve", actor, "{}", reason, None, judgment_id)
+            if j.kind in PAIR_KINDS:                       # now in force: the decision it changes on the same pair ends
+                for o in self._rows_for_subject(conn, _json(j.subject)):
+                    if o.id != j.id and o.kind in PAIR_KINDS and o.kind != j.kind and o.status in ("active", "pending_approval"):
+                        self._append(conn, "revoke", actor, "{}", f"superseded by approved judgment {judgment_id}", None, o.id)
+            return out
 
     def decline(self, judgment_id: int, actor: str, reason: str) -> int:
         if not reason:

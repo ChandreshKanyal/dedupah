@@ -2085,3 +2085,23 @@ Done with measurements first, then fixes, then the same measurements again (scri
   every scheduled start is in the security log (`run_started`, actor `schedule:<id>`, `on_behalf_of`).
 - **Tests** (`tests/test_governance_gaps.py`, 5 tests replaying r04, r11, r13, r05): all five fail on the code before. Two older tests that
   expected a steward to unmask the whole table were changed to the new rule. Suite: 493 passed, 4 skipped; ruff clean.
+
+## 87. Review fixes P1-10, P1-11, P1-12: stewards' decisions, personal data in logs, where sources may point (2026-11-04, session 4)
+
+- **P1-10 (medium), decisions:** (1) any steward could undo a colleague's decision although the role says "own decisions": only the person
+  who made it, or someone who approves decisions, can undo it (`ReviewService.undo_action(others=...)`, 409 with a plain message).
+  (2) One steward could overturn a decision two people made: while the project requires a second approval, changing a decision a second
+  person approved waits for a second person too (`protect_approved`, policy `four_eyes_change_approved`, off in one-person projects).
+  (3) A change waiting for approval used to revoke the decision in force at once, so declining it erased a colleague's decision: what is in
+  force now stays until the change is approved, and is revoked only then (`JudgmentStore._decide_pair`, `approve`). The responses say
+  `pending_approval` from the store's own answer.
+- **P1-11 (medium), logs:** the scrubber now removes mobiles with spaces or dashes (+91, 0), Aadhaar with dashes or dots, passport, voter
+  id and driving-licence numbers, and leaves our own ids whole (it used to cut `U9876543210ab` into `U[redacted]ab`): every pattern stands
+  between non-word characters. Reasons typed by people already pass through it. The run log is for people who start runs (`runs.start`):
+  a failing row can still carry a name, which no scrubber recognises; the portal shows it only to them.
+- **P1-12 (medium), source hosts:** cloud metadata addresses also when wrapped in IPv6 (mapped, NAT64, 6to4, Teredo), Azure's wire server,
+  Oracle's and Alibaba's metadata, and 0.0.0.0 / :: are always refused; in production also the server itself (localhost, 127.0.0.1, ::1).
+  Private networks stay allowed (customer databases live there); `DEDUPE_SOURCE_HOSTS` narrows further and is now in `docs/SECURITY.md`,
+  which also no longer says business-unit scoping is missing (part of P1-15).
+- **Tests** (`tests/test_steward_logs_hosts.py`, 24 cases; 19 fail on the code before, the other 5 check what already worked). The run log
+  test now expects viewers to be refused. Suite: 517 passed, 4 skipped; ruff clean.

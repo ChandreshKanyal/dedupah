@@ -314,8 +314,9 @@ def cancel_run(request: Request, project_id: str = PID, run_id: str = RID, p: Pr
 
 
 @router.get("/projects/{project_id}/runs/{run_id}/log")
-def run_log(request: Request, project_id: str = PID, run_id: str = RID, lines: int = Query(200, ge=1, le=1000), p: Principal = SEE_RUNS):
-    """The end of the run's log, with anything that looks like personal data removed. Useful when a run failed."""
+def run_log(request: Request, project_id: str = PID, run_id: str = RID, lines: int = Query(200, ge=1, le=1000), p: Principal = START):
+    """The end of the run's log, with anything that looks like personal data removed. Useful when a run failed. For the people who start runs: a
+    failing row can still carry a name, which no scrubber recognises."""
     project_scope(request, project_id)
     sv = _services(request)
     if sv.jobs.get(project_id, run_id) is None:
