@@ -486,3 +486,30 @@ button.small.icon { width: 22px; }
 .todo-row .tile-icon svg { width: 18px; height: 18px; }
 .tiles + .panel { margin-top: 12px; }
 @media (max-width: 640px) { .todo-row { flex-wrap: wrap; } .todo-row > button { margin-left: 42px; } }
+/* A project's journey: the five steps, the next step with the page's main button, and one row per step */
+ol.journey { display: flex; gap: 0; margin: 0 0 12px; padding: 0; list-style: none; border: 1px solid var(--border); background: var(--bg-panel); }
+ol.journey li { display: flex; flex: 1; align-items: center; gap: 8px; padding: 10px 14px; border-right: 1px solid var(--border); color: var(--muted); }
+ol.journey li:last-child { border-right: 0; }
+ol.journey li.done { color: var(--text); }
+ol.journey li.on { background: var(--bg-selected); color: var(--text); font-weight: 600; }
+ol.journey .n, .journey-row .n { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; flex: none; border: 1px solid var(--border-strong); font-size: 12px; }
+ol.journey li.done .n { background: var(--text); border-color: var(--text); color: var(--bg-panel); }
+ol.journey li.on .n { border-color: var(--text); }
+.next-step { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; padding: 14px 16px; border: 1px solid var(--border-strong); background: var(--bg-panel); }
+.next-step > div { flex: 1; min-width: 0; }
+.next-step .muted { display: block; font-size: 12px; }
+.next-step strong { display: block; margin-top: 2px; font-weight: 600; }
+.journey-steps { padding: 0; }
+.journey-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 16px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
+.journey-row:first-child { border-top: 0; }
+.journey-row .jname { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.journey-row .jbody > div + div { margin-top: 2px; }
+.journey-row > .row { margin: 0; justify-content: flex-end; }
+@media (max-width: 640px) {
+  ol.journey li { padding: 8px; font-size: 12px; }
+  ol.journey li:not(.on) { flex: none; }
+  ol.journey li:not(.on) .n + * { display: none; }
+  .next-step { flex-wrap: wrap; }
+  .journey-row { grid-template-columns: 1fr; gap: 6px; }
+  .journey-row > .row { justify-content: flex-start; }
+}

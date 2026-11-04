@@ -3,15 +3,16 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0 and 1 done, phase 2 next) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-2 done, phase 3 next) <<<
 
 **Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
 The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
 one-click run with a confirm summary, versions/approvals hidden when second approval is off, "connection" -> "data source", and phase 0
 first. **Phase 0 is done (section 76):** `app.js` is split into files under `ui/js/`. **Phase 1 is done (section 77):** the
 menu has 4 items (Home, Projects, Review, Admin), Home lists what needs the person now and each project's progress, Delete sits in
-"More" menus, the Runs, Decisions and Settings pages are gone (old links redirect), shared words live in `ui/js/words.js`. **Next:
-phase 2** (the project page as the journey Data > Rules > Run > Review > Results, with a "Next step" bar). Confirm with the user before starting each phase.
+"More" menus, the Runs, Decisions and Settings pages are gone (old links redirect), shared words live in `ui/js/words.js`. **Phase 2 is done (section 78):** the
+project page is the journey (Data > Rules > Run > Review > Results) with a "Next step" bar; the project tabs are gone. **Next: phase 3**
+(the Data step: source list first, upload first in Add data, unmapped uploads, a bad file in a batch). Confirm with the user before starting each phase.
 
 **Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
 DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
@@ -39,6 +40,7 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Revamp phase 2:** the project page as the journey Data > Rules > Run > Review > Results, with a Next step bar and one row per step; tabs replaced by pages under the project and a More menu | 78 |
 | session 4 | **Revamp phase 1:** 4-item menu (Home, Projects, Review, Admin); Home as "what needs you now" plus each project's progress (backend `progress` on projects and `/home`); Delete in More menus; Runs, Decisions and Settings pages removed (old links redirect); words file | 77 |
 | session 4 | **Revamp phase 0:** the portal script split into 11 files per area (`ui/js/`), loaded in a fixed order, no change in behaviour | 76 |
 | session 4 | **Review fixes, round 1:** engine (insufficient-mode scores, default birth dates, big identifier blocks, more date formats), uploads (separators, title rows, sheets, short and wide rows, midnight dates), platform (idempotency per project, reused project id, workspace reads, Excel control characters), portal (Back, refresh timer, taken connection id, approvals link, activity wording), duckdb pinned below 2 | 75 |
@@ -354,6 +356,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp phase 2)** — Project journey page; tests, ruff and both browser walks clean. Section 78.
 - **2026-11-04 (session 4, revamp phase 1)** — New menu, Home and More menus; tests, ruff and browser walk clean. Section 77.
 - **2026-11-04 (session 4, revamp phase 0)** — `app.js` split into 11 files under `ui/js/`; tests, ruff and a 27-screen browser tour clean. Section 76.
 - **2026-11-04 (session 4, revamp plan)** — Whole-portal critique after a browser tour; plan in `docs/REVAMP_PLAN.md` (phases 0-7), waiting for the user's decisions.
@@ -1878,3 +1881,18 @@ The user: "please start the fixing". Findings are in `~/agent-review/*/report-su
 - **Checked:** UI and project tests, ruff, full suite; a browser walk (`~/agent-review/p1/p1.py`, screenshots in `~/agent-review/p1/s/`)
   of Home, Projects with its More menu, old /runs and /settings links, Admin, My account, Review, a run's More menu and its delete
   dialog, and Home at phone width: no script errors or failed requests. Phone width is still too wide on most screens (phase 7).
+
+## 78. Revamp phase 2: the project page as the journey (2026-11-04, session 4)
+
+- **The project page** (`/projects/<id>`, `projectJourney` in projects.js): a bar of the five steps (Data, Rules, Run, Review, Results;
+  steps behind are filled, the current one highlighted), a **Next step** line with the page's only main button (from the project's
+  `progress`: add data, choose rules, start run, open a running or failed run, review N pairs, get the results), then one row per step with
+  what it holds now in words and its own buttons: sources in use; "The same when: PAN + Name, ..." and the clean-record rule in one line;
+  the last run as "2,404 records became 2,025 customers"; pairs waiting and decisions waiting for the next run; customers in the results.
+- **No more tabs.** Setup, Runs, Results and Settings became pages under the project with a breadcrumb back: the setup parts (unchanged,
+  still guided before the first run), All runs and schedules, Results, Decisions made, Project settings (General, Members, Activity). The
+  project's More menu holds All runs, Decisions made, Technical settings, Project settings, Members, Activity and Delete project. Every old
+  address still opens the same content.
+- **Checked:** UI tests, ruff, full suite; both browser walks (`tour.py`, 27 screens, and `~/agent-review/p1/p2.py`: journey with pairs to
+  review, a new empty project, the More menu, every page under the project, an old address, phone width): no script errors. The journey page
+  fits a phone.

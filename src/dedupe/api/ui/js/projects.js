@@ -96,6 +96,10 @@ function goldenWords(c) {
   return (parts.length ? parts.join(", ") + "; " + strategyName(c.default_strategy || "most_recent").toLowerCase() + " for the rest. " : strategyName(c.default_strategy || "most_recent") + " for every column. ") +
     ((c.source_trust || []).length ? "Trust order: " + c.source_trust.join(", ") + "." : "Sources ranked automatically by how complete they are.");
 }
+// One project. Its main page is the journey: Data > Rules > Run > Review > Results, with the one next step on top and each step's state and
+// buttons below. Everything else is a page under it, reached from a step or from More: a part of the setup, all runs, results, decisions made,
+// settings, members, activity.
+const PROJECT_PAGES = { runs: "All runs", results: "Results", settings: "Project settings" };
 async function viewProject(pid, tab, sub) {
   if (OLD_TAB[tab]) [tab, sub] = [OLD_TAB[tab][0], OLD_TAB[tab][1] || sub];
   const [p, runs, connections] = await Promise.all([api("GET", P(pid)), can("runs.read") ? api("GET", P(pid) + "/runs") : [],
@@ -107,66 +111,109 @@ async function viewProject(pid, tab, sub) {
     results: [...(can("results.export") ? ["files"] : []), ...(can("queue.read") ? ["decisions"] : [])],
     settings: [...(manage ? ["general", "members"] : []), ...(can("runs.read") ? ["activity"] : [])],
   };
-  const tabList = [["setup", "Setup"], ...(can("runs.read") ? [["runs", "Runs"]] : []), ...(subs.results.length ? [["results", "Results"]] : []),
-    ...(subs.settings.length ? [["settings", "Settings"]] : [])];
-  if (!tabList.some(([k]) => k === tab)) tab = "setup";
-  if (tab === "setup" ? !subs.setup.includes(sub) : tab !== "runs" && !subs[tab].includes(sub)) sub = tab === "setup" || tab === "runs" ? null : subs[tab][0];
+  if (tab === "runs" && !can("runs.read")) tab = "setup";
+  if ((tab === "results" || tab === "settings") && !subs[tab].length) tab = "setup";
+  if (!["setup", "runs", "results", "settings"].includes(tab)) tab = "setup";
+  if (tab === "setup" ? sub && !subs.setup.includes(sub) : tab !== "runs" && !subs[tab].includes(sub)) sub = tab === "setup" ? null : subs[tab][0];
   if (tab === "runs") sub = null;
   here(P(pid) + (tab === "setup" && !sub ? "" : "/" + tab + (sub ? "/" + sub : "")));
-  const guided = !runs.length;                     // until the first run, Setup walks through the steps in order
+  const guided = !runs.length;                     // until the first run, the setup pages walk through the steps in order
+  const second = p.second_approval ? tag("Second approval on", "info") : null;
+  const more = moreMenu([
+    can("runs.read") && tab !== "runs" ? ["All runs and schedules", () => go(() => viewProject(pid, "runs"))] : null,
+    subs.results.includes("decisions") ? ["Decisions made", () => go(() => viewProject(pid, "results", "decisions"))] : null,
+    subs.setup.includes("technical") ? ["Technical settings", () => go(() => viewProject(pid, "setup", "technical"))] : null,
+    subs.settings.includes("general") ? ["Project settings", () => go(() => viewProject(pid, "settings", "general"))] : null,
+    subs.settings.includes("members") ? ["Members", () => go(() => viewProject(pid, "settings", "members"))] : null,
+    subs.settings.includes("activity") ? ["Activity", () => go(() => viewProject(pid, "settings", "activity"))] : null,
+    can("data.delete") ? ["Delete project", () => deleteProject(p), true] : null], p.name);
+  if (tab === "setup" && !sub) {
+    show(page(p.name, p.description || null, [more], crumbs(crumb("Projects", "/projects"), p.name), second), await projectJourney(p, runs, connections));
+    return;
+  }
   let body;
-  if (tab === "setup") body = sub ? await setupPart(p, sub, connections, guided) : await projectSetup(p, runs, connections, guided);
-  else if (tab === "runs") body = el("div", {}, runsTable(runs, false, pid), await schedulesPanel(p, connections));
-  else if (tab === "results") body = el("div", {}, subTabs(subs.results, { files: "Files", decisions: "Decisions" }, sub, (s) => viewProject(pid, "results", s)),
-    sub === "files" ? await resultsPanel(p, runs) : await decisionsPanel([p], { project: true }));
-  else body = el("div", {}, subTabs(subs.settings, { general: "General", members: "Members", activity: "Activity" }, sub, (s) => viewProject(pid, "settings", s)),
+  let title = PROJECT_PAGES[tab];
+  const actions = [];
+  if (tab === "setup") { body = await setupPart(p, sub, connections, guided); title = SETUP_PARTS[sub]; }
+  else if (tab === "runs") {
+    body = el("div", {}, runsTable(runs, false, pid), await schedulesPanel(p, connections));
+    if (can("runs.start")) actions.push(btn("New run", () => go(() => newRun(pid)), "primary", "play"));
+  } else if (tab === "results") {
+    title = sub === "decisions" ? "Decisions made" : "Results";
+    body = sub === "files" ? await resultsPanel(p, runs) : await decisionsPanel([p], { project: true });
+  } else body = el("div", {}, subTabs(subs.settings, { general: "General", members: "Members", activity: "Activity" }, sub, (s) => viewProject(pid, "settings", s)),
     sub === "general" ? settingsPanel(p) : sub === "members" ? await accessPanel(pid) : await activityPanel(pid));
-  const actions = can("runs.start") ? [btn("New run", () => go(() => newRun(pid)), "primary", "play")] : [];
-  const trail = tab === "setup" && sub ? crumbs(crumb("Projects", "/projects"), crumb(p.name, P(pid)), SETUP_PARTS[sub]) : crumbs(crumb("Projects", "/projects"), p.name);
-  show(page(sub && tab === "setup" ? SETUP_PARTS[sub] : p.name, sub && tab === "setup" ? "Project " + p.name : p.description || "Project " + p.id, actions, trail,
-    p.second_approval ? tag("Second approval on", "info") : null),
-  tabs(tabList, tab, (t) => go(() => viewProject(pid, t))), tabPanel(tab, body));
+  show(page(title, "Project " + p.name, actions, crumbs(crumb("Projects", "/projects"), crumb(p.name, P(pid)), title), second), body);
 }
 function subTabs(keys, names, current, pick) {
   if (keys.length < 2) return null;
   return el("div", { class: "subtabs page-sub", role: "tablist" }, keys.map((k) => el("button", { type: "button", role: "tab", "aria-selected": k === current ? "true" : "false",
     onclick: () => go(() => pick(k)) }, names[k])));
 }
-// The Setup tab: the three things every run needs, each with what is chosen now, and the optional technical settings.
-async function projectSetup(p, runs, connections, guided) {
+// "Same when: PAN, Aadhaar, Name + Date of birth + Phone and 2 more": the columns of the rules that merge, in a few words.
+function sameWhenShort(dec) {
+  const rules = (dec.rules || []).filter((r) => r.type === "auto_merge" && r.enabled !== false);
+  const words = rules.map((r) => {
+    const ps = matchParts(r.when || {});
+    return ps ? ps.map((x) => MATCH_COLUMNS[x.col][0]).join(" + ") : label(r.id);
+  });
+  if (!words.length) return "No rule merges records by itself; " + leftoverWords(dec).toLowerCase();
+  return "The same when: " + words.slice(0, 4).join(", ") + (words.length > 4 ? " and " + (words.length - 4) + " more" : "") + ".";
+}
+const JOURNEY = ["Data", "Rules", "Run", "Review", "Results"];
+// The journey page: where the project is (steps), the one thing to do next, and one row per step with what it holds now.
+async function projectJourney(p, runs, connections) {
   const pid = p.id;
-  if (!can("config.read")) return empty("Your role cannot see this project's setup. Its runs and results are in the other tabs.");
-  const st = await setupState(pid, connections);
-  const { cfg } = st;
-  const content = async (n) => (cfg[n].live ? (await api("GET", P(pid) + "/config/" + n + "/versions/" + cfg[n].live.version)).content : null);
+  const st = can("config.read") ? await setupState(pid, connections) : null;
+  const content = async (n) => (st && st.cfg[n].live ? (await api("GET", P(pid) + "/config/" + n + "/versions/" + st.cfg[n].live.version)).content : null);
   const [dec, gold] = await Promise.all([content("decision"), content("survivorship")]);
-  const waiting = (n) => (n ? el("div", { class: "muted" }, plural(n, "version waits", "versions wait") + " for approval") : null);
-  const state = (on, text, n) => el("td", {}, on ? "In use" : tag(text, "warn"), waiting(n));
+  const latest = runs[0] || null;
+  const done = runs.find((r) => r.status === "succeeded") || null;
+  const box = done && can("queue.read") ? ((await api("GET", "/review/inbox")).find((x) => x.project_id === pid) || null) : null;
+  const pr = (cache.projects.find((x) => x.id === pid) || {}).progress || { step: "data" };
+  const openRun = (r) => () => go(() => viewRun(pid, r.id));
+  const missingRules = !dec ? "matching" : !gold ? "golden" : null;
+  // the next step: one sentence and the main button of the page
+  const NEXT = {
+    data: ["Add the data to find duplicates in: files or databases.", can("sources.manage") || can("config.read") ? ["Add data", () => go(() => viewProject(pid, "setup", "data")), "database"] : null],
+    rules: ["Choose " + (missingRules === "golden" ? "how the one clean record per customer is built." : "when two records are the same customer."),
+      can("config.read") ? ["Choose rules", () => go(() => viewProject(pid, "setup", missingRules || "matching")), "sliders"] : null],
+    run: ["Data and rules are set. Start the first run to find the duplicates.", can("runs.start") ? ["Start run", () => go(() => newRun(pid)), "play"] : null],
+    running: ["A run is going. This page shows the result when it is done.", latest ? ["Open the run", openRun(latest), "clock"] : null],
+    failed: ["The last run did not finish. Open it to see why, then run again.", latest ? ["Open the run", openRun(latest), "alert"] : null],
+    review: [plural(pr.open_review, "pair needs", "pairs need") + " your decision: same customer or not.", can("queue.read") ? ["Review " + plural(pr.open_review, "pair", "pairs"), link("/review/" + pid), "inbox"] : null],
+    done: ["Up to date. Run again when the data or the rules change.", done && can("results.export") ? ["Get the results", () => go(() => viewProject(pid, "results", "files")), "download"] : null],
+  }[pr.step] || ["", null];
+  const nextBar = el("div", { class: "next-step" }, el("div", {}, el("span", { class: "muted" }, "Next step"), el("strong", {}, NEXT[0])),
+    NEXT[1] ? btn(NEXT[1][0], NEXT[1][1], "primary", NEXT[1][2]) : null);
+  const at = { data: 0, rules: 1, run: 2, running: 2, failed: 2, review: 3, done: 4 }[pr.step] || 0;
+  const bar = el("ol", { class: "journey", "aria-label": "Steps of this project" }, JOURNEY.map((name, i) =>
+    el("li", { class: i < at || pr.step === "done" ? "done" : i === at ? "on" : null, "aria-current": i === at ? "step" : null },
+      el("span", { class: "n" }, String(i + 1)), el("span", {}, name))));
+  // one row per step: what it holds now, and its buttons (never the main one: that is the next step's)
+  const row = (n, name, lines, buttons) => el("div", { class: "journey-row" }, el("div", { class: "jname" }, el("span", { class: "n" }, String(n)), name),
+    el("div", { class: "jbody" }, lines.filter(Boolean).map((t) => (t instanceof Node && t.tagName === "DIV" ? t : el("div", {}, t)))), el("div", { class: "row" }, buttons.filter(Boolean)));
   const notInUse = connections.filter((c) => !c.live_version).length;
+  const records = done && done.summary.records ? num(done.summary.records) + " records in the last run." : null;
   const rows = [
-    linkRow("1. Data", () => viewProject(pid, "setup", "data"), el("td", {}, st.data.length ? st.data.map((c) => c.id + " (version " + c.live_version + ")").join(", ") : "No data in use yet."),
-      el("td", {}, st.data.length ? "In use" : tag("Not added yet", "warn"), notInUse ? el("div", { class: "muted" }, plural(notInUse, "connection is", "connections are") + " not in use yet") : null)),
-    linkRow("2. Matching rules", () => viewProject(pid, "setup", "matching"), el("td", {}, dec ? decisionWords(dec) : "Not chosen yet."),
-      state(!!dec, "Not chosen yet", cfg.decision.waiting.length)),
-    linkRow("3. Golden record", () => viewProject(pid, "setup", "golden"), el("td", {}, gold ? goldenWords(gold) : "Not chosen yet."),
-      state(!!gold, "Not chosen yet", cfg.survivorship.waiting.length)),
-    linkRow("Technical settings", () => viewProject(pid, "setup", "technical"), el("td", {}, cfg.settings.live ? "Version " + cfg.settings.live.version : "Standard values."),
-      el("td", {}, "Optional", waiting(cfg.settings.waiting.length))),
+    row(1, "Data", st ? [st.data.length ? plural(st.data.length, "source", "sources") + " in use: " + st.data.map((c) => c.id).join(", ") + "." : tag("No data yet", "warn"),
+      notInUse ? el("div", { class: "muted" }, plural(notInUse, "source is", "sources are") + " added but not in use yet.") : null, records]
+      : [el("span", { class: "muted" }, "Your role cannot see the data of this project.")],
+    [st ? btn(st.data.length ? "Open" : "Add data", () => go(() => viewProject(pid, "setup", "data")), "", st.data.length ? null : "database") : null]),
+    row(2, "Rules", st ? [dec ? sameWhenShort(dec) : tag("Matching rules not chosen", "warn"), gold ? el("div", { class: "muted" }, "Clean record: " + goldenWords(gold)) : tag("Golden-record rules not chosen", "warn"),
+      st.cfg.decision.waiting.length + st.cfg.survivorship.waiting.length ? el("div", { class: "muted" }, "Changes wait for approval.") : null] : [],
+    [st ? btn("Matching rules", () => go(() => viewProject(pid, "setup", "matching"))) : null, st ? btn("Clean record", () => go(() => viewProject(pid, "setup", "golden"))) : null]),
+    row(3, "Run", [latest ? (latest.status === "succeeded" ? "Last run " + when(latest.finished_at) + ": " + num(latest.summary.records) + " records became " + num(latest.summary.people) + " customers."
+      : el("div", {}, "Last run " + when(latest.started_at || latest.created_at) + ": ", runState(latest))) : "No run yet.",
+    runs.length > 1 ? el("div", { class: "muted" }, plural(runs.length, "run", "runs") + " so far.") : null],
+    [latest ? btn("Open", openRun(latest)) : null, can("runs.start") && st && st.ready && pr.step !== "running" ? btn(latest ? "Run again" : "Start run", () => go(() => newRun(pid)), "", "play") : null]),
+    row(4, "Review", [done ? (box && box.open ? plural(box.open, "pair waits", "pairs wait") + " for a person." : "Nothing waits for a person.") : "Pairs a person must check appear after the first run.",
+      box && box.waiting_for_run ? el("div", { class: "muted" }, plural(box.waiting_for_run, "decision is", "decisions are") + " made and change the customers at the next run.") : null],
+    [done && can("queue.read") ? btn("Review", link("/review/" + pid)) : null, done && can("queue.read") ? btn("Decisions made", () => go(() => viewProject(pid, "results", "decisions"))) : null]),
+    row(5, "Results", [done ? num(done.summary.people) + " customers, one clean record each, from the run of " + when(done.finished_at) + "." : "The customers and their clean records appear after the first run."],
+      [done && can("results.export") ? btn("Get the results", () => go(() => viewProject(pid, "results", "files")), "", "download") : null]),
   ];
-  const missing = [st.data.length ? null : "add data and put it in use", dec ? null : "choose the matching rules", gold ? null : "choose the golden-record rules"].filter(Boolean);
-  const ready = el("div", { class: "notice" + (missing.length ? " warn" : ""), role: "note" }, missing.length
-    ? "Before a run can start: " + missing.join(", ") + "."
-    : guided ? "Everything a run needs is chosen. Start the first run; you choose the data and the rule versions on the next screen." : "Everything a run needs is chosen.",
-  !missing.length && can("runs.start") && guided ? el("div", { class: "row" }, btn("Start the first run", () => go(() => newRun(pid)), "primary", "play")) : null);
-  const latest = runs.find((r) => r.status === "succeeded");
-  const box = latest && can("queue.read") ? ((await api("GET", "/review/inbox")).find((x) => x.project_id === pid) || null) : null;
-  const again = box && box.waiting_for_run ? el("div", { class: "notice", role: "note" }, plural(box.waiting_for_run, "decision waits", "decisions wait") +
-    " for the next run: people and golden records change only when a run applies them.") : null;
-  return el("div", {}, guided ? setupSteps(5, pid) : null,
-    table(["Step", "What is chosen", "Status"], rows), ready, again,
-    latest ? el("h2", { class: "section" }, "Latest finished run") : null,
-    latest ? kv([["Run", el("button", { type: "button", class: "link", onclick: () => go(() => viewRun(pid, latest.id)) }, latest.id)], ["Finished", when(latest.finished_at)],
-      ["People found", num(latest.summary.people)], box ? ["Pairs to review", box.open ? el("button", { type: "button", class: "link", onclick: link("/review/" + pid) }, num(box.open)) : "0"] : null]) : null);
+  return el("div", {}, bar, nextBar, el("div", { class: "panel journey-steps" }, rows));
 }
 // One part of the setup on its own page. Until the first run it carries the steps and a Next button, so a new project is set up in order.
 async function setupPart(p, sub, connections, guided) {
