@@ -73,7 +73,8 @@ async function newRun(pid) {
     : empty("This project has no data yet.", btn("Add data", () => go(() => viewProject(pid, "setup", "data")), "primary", "database"));
 
   // 2-4 rules: a version of each, with what it does in words
-  const allowed = (v) => ["active", "approved", "superseded"].includes(v.status) || (v.status === "proposed" && !p.second_approval);
+  const allowed = (v) => ["active", "approved"].includes(v.status) || (v.status === "superseded" && (v.reviewed || !p.second_approval)) ||
+    (v.status === "proposed" && !p.second_approval);
   const contents = {};
   const words = { decision: decisionWords, survivorship: goldenWords, settings: () => "" };
   const pickers = {};

@@ -155,10 +155,10 @@ def test_a_connection_that_is_no_longer_live_or_a_creator_who_is_gone_is_handled
     assert out[0]["outcome"] == "could_not_start" and sv.jobs.recent(PROJECT) == []
     shown = c.get(P + "/schedules", headers=hdr(s, "viewer")).json()[0]
     assert shown["last_status"] == "could_not_start" and shown["consecutive_failures"] == 1 and shown["enabled"] is True
-    sv.schedules._active = lambda sub: False                                                                 # the person who made it can no longer sign in
+    sv.schedules._active = lambda sub, project_id: False                                                     # the person who made it can no longer sign in
     clock.now = at(2026, 10, 7, 14, 0, 1)
     assert sv.schedules.tick()[0]["outcome"] == "paused_creator"
-    assert "can no longer sign in" in c.get(P + "/schedules", headers=hdr(s, "viewer")).json()[0]["paused_reason"]
+    assert "can no longer start runs" in c.get(P + "/schedules", headers=hdr(s, "viewer")).json()[0]["paused_reason"]
 
 
 def test_managing_schedules_needs_the_right_permission_a_known_connection_and_project_access(tmp_path):

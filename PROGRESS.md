@@ -2066,3 +2066,22 @@ Done with measurements first, then fixes, then the same measurements again (scri
 - **Tests** (`tests/test_project_roles.py`): the attack replayed (unmask, export, propose, start, delete refused; masked reading allowed),
   roles adding up, a project role never widening, Home and inbox, copy. With the narrowing switched off all three fail. P1-09 (old activity
   after re-creating a project id) turned out to be fixed in round 1 (section 75). Suite: 488 passed, 4 skipped; ruff clean.
+
+## 86. Review fixes P1-03, P1-04, P1-05, P1-08, P1-13: unmasked tables, second-approval gaps, schedules (2026-11-04, session 4)
+
+- **P1-03 (high):** a steward (no `results.export`) could page through the whole results table unmasked, 100 people a request. Showing a
+  result table unmasked now also needs `results.export` (it is an export in all but name); people are still shown one at a time to stewards
+  (Review, Customers), and the portal offers Show identifiers on tables only to export holders (`routes_results.dataset_rows`).
+- **P1-04 (high):** versions put in use while one person worked alone could be pinned for a run or rolled back to by one person after the
+  second approval was switched on. Each version now says whether a second person approved its content (`Version.reviewed`: approved by
+  someone else, or a rollback to such a version). While a second approval is required, rollback (`ConfigStore.rollback`) and run pinning
+  (`_chosen_rules`) accept only such earlier versions; the way out is to propose the same content again. The portal hides those choices.
+- **P1-05 (medium):** one person could switch the second approval off, put their own waiting change in use and switch it on again. While
+  other people work in the project, only an administrator (`projects.all`) can switch it off.
+- **P1-08 (medium):** the setting was remembered per API process forever; a second process let people approve their own work. It is read
+  from the database every time (`Workspace.second_approval`, the cache removed).
+- **P1-13 (medium):** a schedule now runs only for someone who may still start runs in its project (can sign in, still a member, project
+  role with `runs.start`; `app.may_run`); whoever switches a paused schedule on takes it over (so re-enabling no longer pauses it again);
+  every scheduled start is in the security log (`run_started`, actor `schedule:<id>`, `on_behalf_of`).
+- **Tests** (`tests/test_governance_gaps.py`, 5 tests replaying r04, r11, r13, r05): all five fail on the code before. Two older tests that
+  expected a steward to unmask the whole table were changed to the new rule. Suite: 493 passed, 4 skipped; ruff clean.

@@ -45,13 +45,14 @@ async function previewTable(pid, rid, d, st) {
   const again = (patch) => run(async () => wrap.replaceWith(await previewTable(pid, rid, d, { ...st, ...patch })));
   const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: d.name === "golden_records" ? "Name or person id" : "Person or record id" });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") again({ q: q.value.trim(), offset: 0 }); });
-  const reveal = can("pii.unmask") && r.masked.length ? btn("Show identifiers", async () => {
+  const mayReveal = can("pii.unmask") && can("results.export");
+  const reveal = mayReveal && r.masked.length ? btn("Show identifiers", async () => {
     const why = await revealIdentifiers("Show identifiers");
     if (why !== null) again({ reason: why });
   }, "small", "shield") : null;
   const last = Math.min(st.offset + size, r.total);
   add(wrap, el("div", { class: "row" }, field("Find", q), btn("Search", () => again({ q: q.value.trim(), offset: 0 }), "small", "search"), reveal),
-    r.masked.length ? el("p", { class: "hint" }, "Masked: " + r.masked.map(label).join(", ") + ". " + (can("pii.unmask") ? "Press Show identifiers to see them (every view is logged)." : "Your role cannot unmask them."))
+    r.masked.length ? el("p", { class: "hint" }, "Masked: " + r.masked.map(label).join(", ") + ". " + (mayReveal ? "Press Show identifiers to see them (every view is logged)." : "Your role cannot unmask them."))
       : r.unmasked ? el("p", { class: "hint" }, "Showing actual values. This view was logged.") : null,
     r.rows.length ? wide(r.columns.map(label), r.rows.map((row) => el("tr", {}, row.map((v) => el("td", {}, v == null ? "" : String(v)))))) : empty(st.q ? "Nothing matches." : "No rows."),
     r.total ? el("div", { class: "pager" }, el("span", { class: "muted" }, "Rows " + num(st.offset + 1) + " to " + num(last) + " of " + num(r.total)),

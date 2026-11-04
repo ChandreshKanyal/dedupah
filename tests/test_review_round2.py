@@ -46,8 +46,9 @@ def test_golden_records_can_be_looked_at_masked_searched_and_unmasked_with_a_rea
         assert hit["total"] >= 1, text
     assert c.get(url + "?q=" + mobile[:6], headers=hdr(s, "viewer")).json()["total"] == 0                     # part of a hidden number finds nothing
     assert c.get(url + "?unmask=true&reason=" + WHY, headers=hdr(s, "viewer")).status_code == 403         # needs pii.unmask
-    assert c.get(url + "?unmask=true", headers=hdr(s, "steward")).json()["unmasked"]                   # a reason is optional by default
-    open_page = c.get(url + "?limit=100&unmask=true&reason=" + WHY, headers=hdr(s, "steward"))
+    assert c.get(url + "?unmask=true", headers=hdr(s, "steward")).status_code == 403                    # the whole table unmasked is an export (P1-03)
+    assert c.get(url + "?unmask=true", headers=hdr(s, "analyst")).json()["unmasked"]                   # a reason is optional by default
+    open_page = c.get(url + "?limit=100&unmask=true&reason=" + WHY, headers=hdr(s, "analyst"))
     assert open_page.status_code == 200 and open_page.json()["unmasked"] and open_page.json()["masked"] == []
     assert {r[cols.index("pan")] for r in open_page.json()["rows"]} & {x[0] for x in raw}
     logged = [e for e in sv.seclog.events(event_name="pii_unmasked") if e["object_ref"].endswith("golden_records")]

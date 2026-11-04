@@ -120,9 +120,14 @@ def dataset_rows(request: Request, name: DatasetName, project_id: str = PID, run
                  offset: int = Query(0, ge=0, le=10_000_000), q: str = Query("", max_length=60), unmask: bool = False,
                  reason: str | None = Query(None, max_length=300), p: Principal = READ_PERSON):
     """A page of a result table to look at on screen. Identifiers, contact details and the sources' own extra columns are masked unless
-    the person holds `pii.unmask` and gives a reason (logged, rate limited). Viewing is not exporting: nothing leaves the platform."""
+    the person holds `pii.unmask` and gives a reason (logged, rate limited). Paging through a whole table unmasked is an export in all but name,
+    so it also needs `results.export`; stewards see people one at a time (Review, Customers)."""
     run_dir = _results(request, project_id, run_id)
     ref = f"{project_id}/{run_id}/{name}"
+    if unmask and "results.export" not in p.permissions:
+        _services(request).seclog.record("permission_denied", actor=p.actor, roles=p.roles, status=403, object_ref=ref,
+                                         detail={"needs": "results.export"}, **_context(request))
+        raise HTTPException(403, "Showing a whole table unmasked needs the right to export results. Open one person to see their details.")
     reveal = _unmask_gate(request, p, unmask, reason, ref)
     try:
         page = preview(run_dir, name, limit, offset, q)

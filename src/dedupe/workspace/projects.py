@@ -82,7 +82,6 @@ class Workspace:
             raise WorkspaceError("the project database URL template must contain {project}")
         self.engine = engine_for(url)
         create_and_upgrade(self.engine, _meta)
-        self._settings: dict[str, bool] = {}
         self._stores: dict[str, tuple[JudgmentStore, ConfigStore]] = {}
         self._lock = threading.Lock()
 
@@ -146,17 +145,15 @@ class Workspace:
         return judgments, configs
 
     def second_approval(self, pid: str) -> bool:
-        """Does this project require a second person to approve connection and rule changes (and sensitive decisions)?"""
-        if pid not in self._settings:
-            with self.engine.connect() as c:
-                r = c.execute(select(projects.c.second_approval).where(projects.c.id == pid)).first()
-            self._settings[pid] = bool(r.second_approval) if r else True
-        return self._settings[pid]
+        """Does this project require a second person to approve connection and rule changes (and sensitive decisions)? Read from the database
+        every time, never remembered: a second API process must see a change at once (a cached "off" let people approve their own work)."""
+        with self.engine.connect() as c:
+            r = c.execute(select(projects.c.second_approval).where(projects.c.id == pid)).first()
+        return bool(r.second_approval) if r else True
 
     def set_second_approval(self, pid: str, value: bool) -> None:
         with self.engine.begin() as c:
             c.execute(update(projects).where(projects.c.id == pid).values(second_approval=int(bool(value))))
-        self._settings[pid] = bool(value)
 
     def update(self, pid: str, name: str | None = None, description: str | None = None) -> Project:
         values = {}
@@ -186,7 +183,6 @@ class Workspace:
         with self.engine.begin() as c:
             c.execute(project_grants.delete().where(project_grants.c.project_id == pid))
             c.execute(projects.delete().where(projects.c.id == pid))
-        self._settings.pop(pid, None)
         shutil.rmtree(self.project_dir(pid), ignore_errors=True)
 
     def is_owner(self, pid: str, subject: str) -> bool:

@@ -39,7 +39,8 @@ def test_a_member_added_as_viewer_is_a_viewer_in_that_project(world):
     # the owner, and a second role given in the project, add up; the project role never adds what his own roles lack
     assert c.get(run + "/datasets/golden_records/rows?unmask=true&limit=1", headers=alice).status_code == 200
     assert c.post("/projects/p-one/access", json={"subject": "bob", "role": "steward"}, headers=alice).status_code == 201
-    assert c.get(run + "/datasets/golden_records/rows?unmask=true&limit=1", headers=bob).status_code == 200
+    you_can = next(x for x in c.get("/projects", headers=bob).json() if x["id"] == "p-one")["you_can"]
+    assert "pii.unmask" in you_can and "results.export" not in you_can                                             # analyst and steward: a steward
     viewer_everywhere = hdr(s, "viewer", "carol")
     assert c.post("/projects/p-one/access", json={"subject": "carol", "role": "steward"}, headers=alice).status_code == 201
     assert c.get(run + "/datasets/golden_records/rows?unmask=true&limit=1", headers=viewer_everywhere).status_code == 403

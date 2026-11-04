@@ -22,8 +22,9 @@ from dedupe.workspace.schedules import SchedulerThread, Schedules
 
 from .accounts import AccountStore
 from .auth import Principal, TokenVerifier
-from .guards import authenticated, public, require
+from .guards import authenticated, in_project, public, require
 from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddleware, SlidingWindow
+from .roles import PERMISSIONS
 from .routes_admin import router as admin_router
 from .routes_connections import router as connections_router
 from .routes_projects import router as projects_router
@@ -103,13 +104,24 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     health = ConnectionHealth(ws.engine)
     accounts = AccountStore(ws.engine)
 
-    def still_active(sub: str) -> bool:                    # local accounts: a disabled or removed person's schedules stop; other sign-ins cannot be asked
-        if settings.auth_mode != "local":
-            return True
-        u = accounts.get(sub)
-        return u is not None and not u.disabled
+    def may_run(sub: str, project_id: str) -> bool:
+        """May the person a schedule runs for still start runs in its project? Local accounts: they can sign in and their roles, narrowed by
+        their project role, include runs.start. Other sign-ins (roles known only at sign-in): they are still in the project with a role that starts runs."""
+        if settings.auth_mode == "local":
+            u = accounts.get(sub)
+            if u is None or u.disabled:
+                return False
+            who = Principal(sub, sub, frozenset(u.roles), granted=accounts.permissions_of(u.roles))
+        else:
+            who = Principal(sub, sub, frozenset(), granted=frozenset(PERMISSIONS) - {"projects.all"})
+        here = in_project(sv, who, project_id)
+        return here is not None and "runs.start" in here.permissions
 
-    schedules = Schedules(jobs, still_active)
+    def scheduled_start(s: dict, run) -> None:
+        sv.seclog.record("run_started", actor=f"schedule:{s['id']}", status=202, object_ref=f"{run.project_id}/{run.id}", project_id=run.project_id,
+                         detail={"action": "start", "connections": s["connections"], "on_behalf_of": s["created_by"]})
+
+    schedules = Schedules(jobs, may_run, on_started=scheduled_start)
     sv = Services(settings, verifier or TokenVerifier(settings, accounts=accounts), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws,
                   Uploads(ws.engine, ws.upload_dir), jobs, accounts, health, schedules)
 

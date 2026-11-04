@@ -146,7 +146,7 @@ async function rulesPanel(p, name, editing) {
   const rows = versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version), el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by),
     el("td", {}, when(v.proposed_at)), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")),
     el("td", { class: "actions-cell" }, btn("View", () => view(v), "small"),
-      can("config.activate") && v.status === "superseded" ? btn("Go back to this", () => back(v), "small", "undo") : null)));
+      can("config.activate") && v.status === "superseded" && (v.reviewed || !second) ? btn("Go back to this", () => back(v), "small", "undo") : null)));
   const history = versions.length > 1 || second ? el("details", { class: "history" }, el("summary", {}, icon("clock"), "Earlier versions (" + versions.length + ")"),
     table(["Version", "Status", "Proposed by", "When", "Reason", "Approved by", ""], rows)) : null;
 

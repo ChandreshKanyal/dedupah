@@ -132,6 +132,7 @@ class VersionView(BaseModel):
     declined_reason: str | None = None
     activated_at: str | None
     activated_by: str | None
+    reviewed: bool = False                 # a second person approved this content (only such earlier versions may run or be restored when a second approval is required)
 
 
 class ConfigHistoryRow(BaseModel):

@@ -81,7 +81,7 @@ def change_schedule(request: Request, body: SchedulePatch, project_id: str = PID
         if not ps.configs.versions(f"connection/{cid}"):
             raise HTTPException(422, f"Connection {cid!r} does not exist in this project.")
     try:
-        s = sv.schedules.update(project_id, schedule_id, **body.model_dump(exclude_unset=True))
+        s = sv.schedules.update(project_id, schedule_id, actor=p.actor, **body.model_dump(exclude_unset=True))
     except ScheduleError as e:
         raise HTTPException(422, str(e)) from None
     _log(request, p, "change_schedule", schedule_id, enabled=s["enabled"])

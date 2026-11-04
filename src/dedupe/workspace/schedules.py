@@ -8,7 +8,9 @@ Safety rules
     and the run carries an idempotency key built from the schedule and the due time as a second line of defence;
   - after downtime a missed schedule runs ONCE when the server is back, never once per missed slot;
   - a schedule does not start a new run while its previous run is still waiting or running (no pile-up);
-  - three runs in a row that fail, a connection that is no longer live, or a creator who can no longer sign in pause the schedule with the reason shown;
+  - three runs in a row that fail, a connection that is no longer live, or a person responsible who may no longer start runs in the project
+    (cannot sign in, removed from it, or their project role does not start runs) pause the schedule with the reason shown;
+  - the person responsible is whoever set the schedule up, or last switched it back on (they take it over); every start is logged by `on_started`;
   - times are kept in UTC and computed in the schedule's own time zone (daylight-saving aware).
 
 Load mode: `incremental` (the default) reuses the project's latest successful run for records that did not change (see dedupe.incremental);
@@ -114,9 +116,10 @@ def validate(name: str, connections: list[str], frequency: str, at_time: str, we
 
 
 class Schedules:
-    def __init__(self, jobs: RunJobs, is_active=lambda sub: True, clock=lambda: datetime.now(timezone.utc)):
-        """`is_active(sub)`: may this person still start runs? (False pauses their schedules.) `clock` is injectable for tests."""
-        self.jobs, self.engine, self._active, self._clock = jobs, jobs.engine, is_active, clock
+    def __init__(self, jobs: RunJobs, may_run=lambda sub, project_id: True, clock=lambda: datetime.now(timezone.utc), on_started=lambda s, run: None):
+        """`may_run(sub, project_id)`: may this person still start runs in that project? (False pauses their schedules there.)
+        `on_started(schedule, run)`: called for every run a schedule starts (the security log). `clock` is injectable for tests."""
+        self.jobs, self.engine, self._active, self._clock, self._on_started = jobs, jobs.engine, may_run, clock, on_started
         create_and_upgrade(self.engine, _meta)
 
     # ---- management ---------------------------------------------------------------------------------------------------------
@@ -148,7 +151,8 @@ class Schedules:
                 next_run_at=_utc(next_after(now, frequency, at_time, weekday, tz)), consecutive_failures=0))
         return self.get(project_id, sid)
 
-    def update(self, project_id: str, sid: str, **changes) -> dict:
+    def update(self, project_id: str, sid: str, actor: str | None = None, **changes) -> dict:
+        """Change a schedule. Whoever switches a paused schedule back on (`actor`) becomes the person it runs for."""
         cur = self.get(project_id, sid)
         if cur is None:
             raise ScheduleError("no such schedule")
@@ -162,6 +166,8 @@ class Schedules:
             values["next_run_at"] = _utc(next_after(self._clock(), values["frequency"], values["at_time"], values["weekday"], values["timezone"]))
             values["paused_reason"] = None
             values["consecutive_failures"] = 0 if not cur["enabled"] else cur["consecutive_failures"]
+            if not cur["enabled"] and actor:
+                values["created_by"] = actor
         if not values["enabled"]:
             values["next_run_at"] = None
             values["paused_reason"] = cur["paused_reason"] if not cur["enabled"] else "Paused by a person."
@@ -197,8 +203,9 @@ class Schedules:
                                 .values(next_run_at=nxt)).rowcount
         if not claimed:
             return {"id": s["id"], "outcome": "claimed_elsewhere", "run_id": None}
-        if not self._active(s["created_by"]):
-            self._pause(s["id"], "The person who set this schedule up can no longer sign in. Someone else must re-enable it.")
+        if not self._active(s["created_by"], s["project_id"]):
+            self._pause(s["id"], "The person this schedule runs for can no longer start runs in this project (cannot sign in, or was removed). "
+                                 "Switching it on again makes you the person it runs for.")
             return {"id": s["id"], "outcome": "paused_creator", "run_id": None}
         actor = f"schedule:{s['id']}"
         with self.engine.connect() as c:
@@ -214,6 +221,7 @@ class Schedules:
             self._failed(s["id"], str(e)[:200])
             return {"id": s["id"], "outcome": "could_not_start", "run_id": None}
         self._note(s["id"], "started", run.id, last_run_at=_utc(now))
+        self._on_started(s, run)
         return {"id": s["id"], "outcome": "started", "run_id": run.id}
 
     def _note(self, sid: str, status: str, run_id: str | None, **extra) -> None:

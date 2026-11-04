@@ -258,7 +258,7 @@ def start_run(request: Request, response: Response, body: StartIn, project_id: s
 
 def _chosen_rules(sv, project_id: str, chosen: dict) -> dict:
     """Check the rule versions a run was started with: each must exist and not be declined; while the project requires a second approval, only
-    approved or live versions may run (an unapproved draft never produces results there)."""
+    approved or live versions may run (an unapproved draft never produces results there), and an earlier version only if a second person approved it."""
     configs = sv.workspace.stores(project_id)[1]
     second = sv.workspace.second_approval(project_id)
     allowed = {"active", "approved", "superseded"} | (set() if second else {"proposed"})
@@ -268,6 +268,8 @@ def _chosen_rules(sv, project_id: str, chosen: dict) -> dict:
             raise HTTPException(422, f"There is no version {version} of the {name} rules.")
         if v.status not in allowed:
             raise HTTPException(422, f"Version {version} of the {name} rules is {v.status}" + (": it needs a second person's approval first." if second and v.status == "proposed" else "."))
+        if second and v.status == "superseded" and not v.reviewed:
+            raise HTTPException(422, f"Version {version} of the {name} rules was put in use without a second person's approval: propose it again so someone can approve it.")
     return dict(chosen)
 
 
@@ -379,8 +381,12 @@ def project_settings(request: Request, body: SettingsIn, project_id: str = PID, 
         sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=200, object_ref=project_id,
                          detail={"action": "rename_project"}, **_context(request))
     if body.second_approval is not None and body.second_approval != ps.project.second_approval:
-        if body.second_approval and len({g.subject for g in sv.workspace.members(project_id)}) < 2:
+        people = {g.subject for g in sv.workspace.members(project_id)}
+        if body.second_approval and len(people) < 2:
             raise HTTPException(409, "Add at least one more person to the project first: a second approver is needed.")
+        if not body.second_approval and people - {p.sub} and "projects.all" not in p.permissions:
+            # otherwise one person could switch it off, put their own waiting change in use and switch it on again
+            raise HTTPException(409, "Only an administrator can switch the second approval off while other people work in this project.")
         sv.workspace.set_second_approval(project_id, body.second_approval)
         sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=200, object_ref=project_id,
                          detail={"action": "set_second_approval", "second_approval": body.second_approval}, **_context(request))

@@ -101,6 +101,7 @@ class Version:
     declined_reason: str | None = None     # why it was declined: shown to the person who proposed it
     activated_at: str | None = None
     activated_by: str | None = None
+    reviewed: bool = False                  # a second person approved this content (itself, or the version a rollback restored)
 
 
 @dataclass(frozen=True)
@@ -153,7 +154,9 @@ class ConfigStore:
                 live[r.name] = r.version
                 out[k]["activated_at"], out[k]["activated_by"] = r.created_at, r.actor
         result = {}
-        for k, d in out.items():
+        for k, d in sorted(out.items(), key=lambda kv: kv[0][1]):        # by version: a rollback restores an older, already replayed version
+            parent = result.get((k[0], d["parent_version"]))
+            d["reviewed"] = bool(d["approved_by"]) or bool(d["rollback"] and parent and parent.reviewed)
             ever_live = d["activated_at"] is not None
             if live.get(k[0]) == k[1]:
                 status = "active"
@@ -277,7 +280,8 @@ class ConfigStore:
 
     def rollback(self, name: str, to_version: int, actor: str, reason: str) -> int:
         """Go back to content that was live before. Published as a NEW version (history is never rewritten); no fresh approval is
-        needed because that exact content was already approved once. Returns the new version number."""
+        needed because that exact content was already approved once (while the project requires a second approval, only content a second
+        person approved can be restored). Returns the new version number."""
         if not reason:
             raise ConfigError("a rollback needs a reason")
         with serialized(self.engine) as conn:
@@ -287,6 +291,8 @@ class ConfigStore:
                 raise ConfigError(f"{name} v{to_version} was never live: only a version that was live can be restored")
             if old.status == "active":
                 raise ConfigError(f"{name} v{to_version} is already the live version")
+            if not (self.solo or old.reviewed):
+                raise ConfigError(f"{name} v{to_version} was put in use without a second person's approval: propose it again so someone can approve it")
             content = conn.execute(select(config_log.c.content).where(config_log.c.name == name, config_log.c.version == to_version,
                                                                       config_log.c.kind.in_(("propose", "rollback")))).scalar_one()
             new = max(v.version for k, v in vs.items()) + 1
