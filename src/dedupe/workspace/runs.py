@@ -310,6 +310,11 @@ class RunJobs:
                 raise RunError("no such run")
             if run.status in ACTIVE:
                 raise RunError("this run has not finished: cancel it first")
+            mine = str(self.ws.run_dir(project_id, run_id))
+            for other in self.recent(project_id, limit=1000):           # an incremental run going now may be reusing this run's work
+                prev = self.ws.run_dir(project_id, other.id) / PREVIOUS_RUN
+                if other.status in ACTIVE and prev.exists() and prev.read_text(encoding="utf-8").strip() == mine:
+                    raise RunError(f"run {other.id} is reusing this run's results right now: delete this one after it has finished")
             shutil.rmtree(self.ws.run_dir(project_id, run_id), ignore_errors=True)
             with self.engine.begin() as c:
                 c.execute(update(runs).where(runs.c.id == run_id).values(status="deleted"))

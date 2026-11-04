@@ -347,11 +347,12 @@ def grant_access(request: Request, body: GrantIn, project_id: str = PID, p: Prin
     if body.role == "owner" or body.role not in sv.accounts.role_names():
         raise HTTPException(422, "Unknown role.")
     try:
-        g = sv.workspace.grant(project_id, body.subject, body.role, p.actor)
+        subject = body.subject.strip().lower() if sv.settings.auth_mode == "local" else body.subject.strip()   # local user names are lower case; other sign-ins' ids are exact
+        g = sv.workspace.grant(project_id, subject, body.role, p.actor)
     except WorkspaceError as e:
         raise HTTPException(422, str(e)) from None
     sv.seclog.record("config_change", actor=p.actor, roles=p.roles, status=201, object_ref=project_id,
-                     detail={"action": "grant_access", "subject": body.subject, "role": body.role}, **_context(request))
+                     detail={"action": "grant_access", "subject": g.subject, "role": body.role}, **_context(request))
     return GrantView(**g.__dict__)
 
 

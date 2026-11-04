@@ -2105,3 +2105,11 @@ Done with measurements first, then fixes, then the same measurements again (scri
   which also no longer says business-unit scoping is missing (part of P1-15).
 - **Tests** (`tests/test_steward_logs_hosts.py`, 24 cases; 19 fail on the code before, the other 5 check what already worked). The run log
   test now expects viewers to be refused. Suite: 517 passed, 4 skipped; ruff clean.
+
+## 88. Review fix P1-15 (low): exact sign-in ids for members; a run being reused cannot be deleted (2026-11-04, session 4)
+
+- The portal lowercased the id typed when adding a member, so a single-sign-on id with capitals never matched: the server now lowercases
+  only local user names (which are lower case by rule) and keeps other ids exact.
+- Deleting a run while an incremental run was reusing its work could break that run: deletion is refused (409, naming the run) until the
+  run reusing it has ended (`RunJobs.delete`). SECURITY.md was updated in section 87. Tests in `tests/test_runs_queue_health.py`.
+- **The platform review (P1) is now closed:** P1-01..P1-15 fixed (sections 75, 84-88); P1-09 and P1-14 were already fixed in round 1.

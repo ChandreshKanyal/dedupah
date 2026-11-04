@@ -305,7 +305,7 @@ async function accessPanel(pid) {
   const role = el("select", {}, roles.roles.map((x) => el("option", { value: x.name, selected: x.name === "analyst" }, label(x.name))));
   const err = errBox();
   const add = async () => {
-    try { await api("POST", P(pid) + "/access", { subject: who.value.trim().toLowerCase(), role: role.value }); }
+    try { await api("POST", P(pid) + "/access", { subject: who.value.trim(), role: role.value }); }
     catch (e) { fail(err, e.message, who); return; }
     await go(() => viewProject(pid, "access"));
     say(who.value.trim() + " was added as " + label(role.value) + ".", "good");

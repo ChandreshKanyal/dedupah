@@ -145,3 +145,24 @@ def test_drift_lists_columns_added_and_removed_since_the_last_good_check(tmp_pat
     path.write_text("\n".join(base) + "\n", encoding="utf-8")                                               # and it went away again
     removed = c.post(P + "/connections/crm/test", headers=admin).json()
     assert removed["ok"] is True and removed["drift"] == {"added": [], "removed": ["extra_col"]}
+
+
+def test_a_run_whose_work_an_incremental_run_is_reusing_cannot_be_deleted_until_that_run_ends(tmp_path):
+    gate = tmp_path / "go"
+    gate.touch()
+    c, s, sv = world(tmp_path, waiting(gate))
+    first = start(c, s).json()
+    assert sv.jobs.wait(PROJECT, first["id"], 30).status == "succeeded"
+    gate.unlink()
+    second = start(c, s).json()                                                                 # incremental: reuses the first run's work
+    body = {"reason": "client asked to erase it"}
+    r = c.post(f"{P}/runs/{first['id']}/delete", json=body, headers=hdr(s, *ADMIN))
+    assert r.status_code == 409 and second["id"] in r.text
+    gate.touch()
+    sv.jobs.wait(PROJECT, second["id"], 30)
+    assert c.post(f"{P}/runs/{first['id']}/delete", json=body, headers=hdr(s, *ADMIN)).status_code == 200
+
+
+def test_a_member_is_added_under_the_exact_id_their_sign_in_uses(tmp_path):
+    c, s, sv = world(tmp_path, waiting(tmp_path / "never"))
+    assert c.post(P + "/access", json={"subject": " Asha.Rao@Bank.example ", "role": "viewer"}, headers=hdr(s, *ADMIN)).json()["subject"] == "Asha.Rao@Bank.example"
