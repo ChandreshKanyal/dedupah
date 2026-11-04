@@ -233,6 +233,7 @@ async function viewConnection(pid, cid) {
     can("sources.manage") ? [btn("Change", () => run(() => editConnection(pid, cid)), "", "edit")] : [],
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), cid), null,
     logo(shown.connector.type, "big")),
+  declinedNotice(c.versions, live),
   pending ? el("div", { class: "notice", role: "note" }, el("strong", {}, (live ? "A change" : "This data source") + " waits to be put in use. "),
     live ? (changes && changes.length ? "Compared with what is in use: " + changes.join("; ") + "." : "It reads the same as what is in use.") : "",
     el("div", { class: "row" }, buttons(latest))) : null,

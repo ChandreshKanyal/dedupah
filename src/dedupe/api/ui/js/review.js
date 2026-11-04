@@ -23,9 +23,12 @@ async function openQueueItem(ctx, index, doneText) {
 
 // The Review inbox is one work screen (the Task Manager layout of classic MDM tools): the project's open pairs in a work list on the left, the
 // selected pair on the right with its decision buttons. Deciding moves to the next pair in place; Undo is offered in the message.
-const REVIEW_STATUS = ["open", "unsure", "all"];
+const REVIEW_STATUS = ["open", "unsure", "all", "decided"];
 const pairName = (it) => (it.name_l || it.person_l) + " and " + (it.name_r || it.person_r);
-const WHY_FILTER = [["any", "Any reason"], ["rule", "Flagged by a rule"], ["score", "Its score only"]];
+const WHY_FILTER = [["any", "Any reason"], ["rule", "Sent by a rule"], ["score", "Its score only"]];
+// How strongly a piece of evidence counts, in a word instead of the engine's bits
+const strength = (bits) => (Math.abs(bits) >= 6 ? "strong" : Math.abs(bits) >= 2 ? "some weight" : "weak");
+const comparisonTitle = (c) => (MATCH_COLUMNS[c] || [label(c)])[0];
 async function viewInbox(pidArg, statusArg, ridArg) {
   const status = REVIEW_STATUS.includes(statusArg) ? statusArg : "open";
   const [rows] = await Promise.all([api("GET", "/review/inbox"), refreshCache()]);
@@ -36,7 +39,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
   const chosenRun = finished.find((r) => r.id === ridArg) ? ridArg : newest;
   here(cur ? "/review/" + cur.project_id + (status !== "open" || chosenRun !== newest ? "/" + status : "") + (chosenRun !== newest ? "/" + chosenRun : "") : "/review");
   if (!cur) {
-    show(page("Review inbox", "Pairs that need a person appear here after a project's first finished run."),
+    show(page("Review", "Pairs that need a person appear here after a project's first finished run."),
       empty(rows.length ? "No project has a finished run yet." : "You are not in any project yet."));
     return;
   }
@@ -44,12 +47,16 @@ async function viewInbox(pidArg, statusArg, ridArg) {
   const rid = chosenRun;
   const older = rid !== newest;
   const ctx = { pid, rid, status, band: "all", why: "any", q: "", offset: 0 };
+  // why a rule sent a pair here, in words: the built-in rules have short titles, the project's own rules carry the name people gave them
+  const live = can("config.read") ? (await api("GET", P(pid) + "/config/decision")).find((v) => v.status === "active") : null;
+  const projectRules = live ? (await api("GET", P(pid) + "/config/decision/versions/" + live.version)).content.rules || [] : [];
+  const ruleWords = (id) => { const r = projectRules.find((x) => x.id === id); return r ? ruleTitle(r) : RULE_TITLE[id] || label(id); };
   const filtered = () => ctx.band !== "all" || ctx.why !== "any" || !!ctx.q;
   // the filter bar: where the pairs come from (project, run) and which of them to list (score, why it is here, a name, id or city)
   const picker = el("select", {}, usable.map((x) => el("option", { value: x.project_id, selected: x.project_id === pid },
     x.project_name + (x.open == null ? "" : " (" + num(x.open) + ")"))));
   picker.addEventListener("change", () => go(() => viewInbox(picker.value, status)));
-  const runPick = el("select", {}, finished.map((r) => el("option", { value: r.id, selected: r.id === rid }, r.id + " \u00b7 " + when(r.finished_at) + (r.id === newest ? " (newest)" : ""))));
+  const runPick = el("select", {}, finished.map((r) => el("option", { value: r.id, selected: r.id === rid }, "Run of " + shortWhen(r.started_at || r.created_at) + (r.id === newest ? " (newest)" : ""))));
   runPick.addEventListener("change", () => go(() => viewInbox(pid, status, runPick.value)));
   const band = el("select", {}, BANDS.map(([v, t]) => el("option", { value: v }, t)));
   const why = el("select", {}, WHY_FILTER.map(([v, t]) => el("option", { value: v }, t)));
@@ -57,17 +64,31 @@ async function viewInbox(pidArg, statusArg, ridArg) {
   const apply = () => { ctx.band = band.value; ctx.why = why.value; ctx.q = text.value.trim(); return loadList(0, 0); };
   for (const x of [band, why]) x.addEventListener("change", () => run(apply));
   text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); run(apply); } });
-  const filters = el("div", { class: "filters", role: "search", "aria-label": "Filter the pairs" },
-    field("Project", picker), field("Run", runPick), field("Match score", band), field("Why it is here", why), field("Name, person ID or city", text),
-    btn("Search", apply, "", "search"), btn("Clear", () => { band.value = "all"; why.value = "any"; text.value = ""; return apply(); }, "ghost"));
+  text.setAttribute("aria-label", "Find a pair by name, person ID or city");
+  text.placeholder = "Find a pair: name, person ID or city";
+  text.classList.add("wide-search");
+  const filters = el("div", { role: "search", "aria-label": "Filter the pairs" },
+    el("div", { class: "row" }, usable.length > 1 ? picker : null, text, btn("Search", apply, "", "search"),
+      btn("Clear", () => { band.value = "all"; why.value = "any"; text.value = ""; return apply(); }, "ghost")),
+    el("details", { class: "advanced" }, el("summary", {}, "More filters: run, match score, why it is here"),
+      el("div", { class: "filters" }, field("Run", runPick), field("Match score", band), field("Why it is here", why))));
+  picker.setAttribute("aria-label", "Project");
   const actions = [
     cur.pending_approval ? btn("Waiting for a second person (" + num(cur.pending_approval) + ")", link("/approvals"), "", "check") : null,
-    btn(cur.waiting_for_run ? "Decided, next run (" + num(cur.waiting_for_run) + ")" : "Decisions made", link("/review/decisions"), "", "list"),
-    cur.waiting_for_run && can("runs.start") ? btn("Run again", () => startRun(pid, [], rid, "apply the latest review decisions"), "", "play") : null,
+    cur.waiting_for_run && can("runs.start") ? btn("Run again", () => quickRun(pid), "", "play") : null,
     btn("", () => go(() => viewInbox(pid, status, older ? rid : null)), "icon", "refresh", { "aria-label": "Refresh", title: "Refresh" })];
-  const count = older ? null : { open: cur.open, unsure: cur.unsure }[status];                  // the inbox counts the newest run only
-  const tabList = older ? [["open", "Open"], ["unsure", "Not sure"], ["all", "All, including decided"]]
-    : [["open", "Open" + (cur.open == null ? "" : " (" + num(cur.open) + ")")], ["unsure", "Not sure (" + num(cur.unsure) + ")"], ["all", "All, including decided"]];
+  let count = older ? null : { open: cur.open, unsure: cur.unsure }[status];                    // the inbox counts the newest run only
+  const tabsBox = el("div");
+  const drawTabs = () => fill(tabsBox, tabs(older ? [["open", "Open"], ["unsure", "Not sure"], ["all", "All pairs"], ["decided", "Decided"]]
+    : [["open", "Open" + (cur.open == null ? "" : " (" + num(cur.open) + ")")], ["unsure", "Not sure (" + num(cur.unsure) + ")"], ["all", "All pairs"],
+      ["decided", "Decided" + (cur.waiting_for_run ? " (" + num(cur.waiting_for_run) + " for the next run)" : "")]], status, (st) => go(() => viewInbox(pid, st, older ? rid : null))));
+  // after each decision: the counts on the tabs and in the list are read again (a decided pair leaves Open at once)
+  const recount = async () => {
+    if (older) return;
+    const now = (await api("GET", "/review/inbox")).find((x) => x.project_id === pid);
+    if (now) { Object.assign(cur, now); count = { open: cur.open, unsure: cur.unsure }[status]; drawTabs(); }
+  };
+  drawTabs();
   const listPane = el("section", { class: "pane list-pane", "aria-label": "Pairs to review" });
   const detail = el("section", { class: "pane detail-pane", "aria-label": "Selected pair", "aria-live": "polite" });
   const writer = can("judgment.write");
@@ -94,7 +115,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       if (why === null) return;
       const out = await api("POST", R(pid, rid) + "/decisions/bulk", { decision, reason: why, items: [...chosen].map((it) => ({ person_l: it.person_l, person_r: it.person_r })) },
         { "Idempotency-Key": uuid() });
-      await loadList(ctx.offset, at);
+      await Promise.all([loadList(ctx.offset, at), recount()]);
       say(plural(out.done.length, "pair", "pairs") + " decided." + (out.failed.length ? " Not done: " + out.failed.map((f) => f.pair + " (" + f.error + ")").join("; ") : ""), out.failed.length ? "bad" : "good");
     };
     const rowsEl = items.map((it, i) => {
@@ -102,8 +123,8 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       if (cb) cb.addEventListener("change", () => { if (cb.checked) chosen.add(it); else chosen.delete(it); selCount.textContent = num(chosen.size) + " selected"; });
       return el("div", { class: "wl-item" + (i === at ? " on" : "") }, cb || el("span"),
         el("button", { type: "button", class: "wl-open", "aria-current": i === at ? "true" : null, onclick: () => run(() => openPair(i)) },
-          el("span", { class: "wl-title" }, pairName(it)), el("span", { class: "wl-score" }, pct(it.top_probability)),
-          el("span", { class: "wl-meta" }, it.size_l + " + " + it.size_r + " records", it.city_l ? " · " + it.city_l : "", it.forced ? " · flagged by a rule" : "",
+          el("span", { class: "wl-title" }, pairName(it)), el("span", { class: "wl-score" }, it.forced ? "Rule" : pct(it.top_probability)),
+          el("span", { class: "wl-meta" }, it.size_l + " + " + it.size_r + " records", it.city_l ? " · " + it.city_l : "", it.forced ? " · sent by a rule" : "",
             it.state !== "open" ? [" · ", statusTag(it.state)] : null)));
     });
     const last = ctx.offset + items.length;
@@ -144,10 +165,10 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       const words = { approve: "Same person", reject: "Different people", unsure: "Not sure" }[kind];
       const msg = words + " recorded for " + pairName(it) + (out.pending_approval ? ". It waits for a second person." : ". It applies at the project's next run.");
       const stays = status === "all" || (status === "unsure" && kind === "unsure");
-      await loadList(ctx.offset, stays ? i + 1 : i);
+      await Promise.all([loadList(ctx.offset, stays ? i + 1 : i), recount()]);
       say(msg, "good", { label: "Undo", icon: "undo", fn: async () => {
         await api("POST", P(pid) + "/decisions/" + out.action_id + "/undo", { reason: "undone right after deciding" });
-        await loadList(ctx.offset, i);
+        await Promise.all([loadList(ctx.offset, i), recount()]);
         say("The decision on " + pairName(it) + " was undone.", "good");
       } });
     };
@@ -170,7 +191,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     ];
     const both = [A, Bp].flatMap((x) => x.records.map((r) => el("tr", {}, el("td", { class: "mono" }, x.person_id), el("td", {}, r.source_id), el("td", { class: "mono" }, r.source_record_id),
       el("td", {}, r.name_as_written || ""), el("td", {}, r.dob || ""), el("td", {}, r.mobile || ""), el("td", {}, r.email || ""), el("td", {}, r.city || ""))));
-    const evidence = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, label(x.comparison) + ": " + x.level + " (" + x.bits.toFixed(1) + " bits)")))
+    const evidence = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, comparisonTitle(x.comparison) + ": " + x.level + " (" + strength(x.bits) + ")")))
       : el("p", { class: "muted" }, "None."));
     const panes = {
       compare: () => [fieldDiff(A.golden, Bp.golden)],
@@ -196,18 +217,25 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     detail.replaceChildren(...[                                            // filtered: replaceChildren would print an empty slot as "null"
       el("div", { class: "pane-head" }, el("div", { class: "pane-title" },
         el("h2", {}, pairName({ ...it, name_l: A.golden.full_name || it.name_l, name_r: Bp.golden.full_name || it.name_r }), el("span", { class: "muted" }, " (" + position + ")")), el("span", { class: "grow" }), B.prev, B.next),
-        el("p", { class: "muted" }, "Score " + pct(c.probability) + " · " + A.person_id + " (" + plural(A.record_count, "record", "records") + ") and " + Bp.person_id + " (" +
-          plural(Bp.record_count, "record", "records") + ") · Run " + rid + (c.decided_by ? " · Rule: " + c.decided_by : it.forced ? " · Flagged by a rule" : ""),
+        el("p", { class: "why" }, c.decided_by ? el("span", {}, el("strong", {}, "Why it is here: "), ruleWords(c.decided_by) + ".")
+          : it.forced ? el("strong", {}, "Sent here by a rule.") : el("span", {}, el("strong", {}, "Why it is here: "), "the match score is " + pct(c.probability) + ", too unsure to decide alone.")),
+        el("p", { class: "muted" }, A.person_id + " (" + plural(A.record_count, "record", "records") + ") and " + Bp.person_id + " (" + plural(Bp.record_count, "record", "records") + ")",
           c.unmasked ? " · Identifiers shown in full; this view is logged." : " · Identifiers masked.")),
-      c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(label).join(", ") + ". These are probably two different people.",
+      c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(fieldTitle).join(", ") + ". These are probably two different people.",
         writer ? el("label", { class: "check" }, conflict, el("span", {}, "I confirm they are one person despite the conflicting identifiers (a note is required)")) : null) : null,
       el("div", { class: "pane-actions" }, writer ? [B.same, B.diff, B.unsure, note] : el("span", { class: "muted" }, "Your role can look but not decide."), el("span", { class: "grow" }), more),
       subBar, subBody].filter(Boolean));
     pick("compare");
   }
 
-  show(page("Review inbox", null, actions, crumbs(crumb(cur.project_name, P(pid)), crumb("Run " + rid, R(pid, rid)))),
-    tabs(tabList, status, (s) => go(() => viewInbox(pid, s, older ? rid : null))),
+  const runAt = finished.find((r) => r.id === rid);
+  const trail = crumbs(crumb(cur.project_name, P(pid)), crumb("Run of " + shortWhen(runAt ? runAt.started_at || runAt.created_at : null), R(pid, rid)));
+  if (status === "decided") {
+    const proj = cache.projects.find((x) => x.id === pid) || { id: pid, name: cur.project_name };
+    show(page("Review", null, actions, trail), tabsBox, await decisionsPanel([proj], { project: true }));
+    return;
+  }
+  show(page("Review", null, actions, trail), tabsBox,
     filters,
     older ? el("div", { class: "notice warn", role: "note" }, "This is an older run. Decisions made here still count, but the newest run may already show these people differently.",
       el("div", { class: "row" }, btn("Review the newest run", () => go(() => viewInbox(pid, status)), "small"))) : null,
@@ -227,7 +255,7 @@ function fieldDiff(a, b) {
     const same = !one && norm(x) === norm(y);
     const masked = String(x).includes("*") || String(y).includes("*");
     const verdict = one ? ["Only on one side", "muted"] : same ? [masked ? "Looks the same (masked)" : "Same", "same"] : ["Differs", "differs"];
-    return el("tr", {}, el("th", { scope: "row" }, label(k)), el("td", {}, x == null ? "" : String(x)), el("td", {}, y == null ? "" : String(y)), el("td", { class: "flag " + verdict[1] }, verdict[0]));
+    return el("tr", {}, el("th", { scope: "row" }, fieldTitle(k)), el("td", {}, x == null ? "" : String(x)), el("td", {}, y == null ? "" : String(y)), el("td", { class: "flag " + verdict[1] }, verdict[0]));
   }))));
 }
 function recordsTable(p) {
@@ -295,7 +323,7 @@ async function viewCompare(pid, rid, l, r, reveal) {
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run " + rid, R(pid, rid)), crumb("Review queue", R(pid, rid) + "/review"), l + " and " + r)),
   stale, scoringNotice(runInfo.summary),
   c.unmasked ? el("p", { class: "hint" }, "Identifiers are shown in full. This view is logged.") : el("p", { class: "hint" }, "Identifiers are masked. Masked values that look the same may still differ."),
-  c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(label).join(", ") + ". These are probably two different people.") : null,
+  c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(fieldTitle).join(", ") + ". These are probably two different people.") : null,
   writer ? el("div", { class: "panel" }, el("h3", {}, "Your decision"), el("div", { class: "body" },
     conflict ? el("label", { class: "check" }, conflict, el("span", {}, "I confirm they are one person despite the conflicting identifiers (a reason is required)")) : null,
     field("Note", note),
@@ -326,7 +354,7 @@ async function viewPerson(pid, rid, person, reveal) {
     const value = el("input", { type: "text", maxlength: "200", value: current == null || String(current).includes("*") ? "" : String(current) });
     const why = el("textarea", { class: "plain", maxlength: "300" });
     const err = errBox();
-    const out = await dialog("Correct " + label(fieldName), el("div", {}, el("p", { class: "hint" }, "The golden record of " + person + " will show this value from the project's next run on, whatever the sources say. Leave it empty to clear the field."),
+    const out = await dialog("Correct " + fieldTitle(fieldName), el("div", {}, el("p", { class: "hint" }, "The golden record of " + person + " will show this value from the project's next run on, whatever the sources say. Leave it empty to clear the field."),
       field("New value", value), field("Why? (at least 10 characters; it is recorded)", why), err), "Save correction", async () => {
       try {
         return await api("POST", base + "/people/" + person + "/override", { field: fieldName, value: value.value.trim() || null, reason: why.value.trim() }, { "Idempotency-Key": uuid() });
@@ -345,7 +373,7 @@ async function viewPerson(pid, rid, person, reveal) {
     const out = await api("POST", base + "/people/" + person + "/split", { parts: [chosen.map(key), rest.map(key)], reason: why }, { "Idempotency-Key": uuid() });
     say("Split recorded" + (out.pending_approval ? ". It waits for a second person." : ". The records become separate people at the project's next run."), "good");
   };
-  const golden = Object.entries(v.golden || {}).map(([k, val]) => [label(k), el("span", { class: "title-row" }, String(val),
+  const golden = Object.entries(v.golden || {}).map(([k, val]) => [fieldTitle(k), el("span", { class: "title-row" }, String(val),
     writer ? btn("Correct", () => correct(k, val), "small ghost", "edit", { "aria-label": "Correct " + label(k) }) : null)]);
   const rows = v.records.map((r) => {
     const cb = writer && v.records.length > 1 ? el("input", { type: "checkbox", "aria-label": "Select record " + r.source_id + " " + r.source_record_id }) : null;
@@ -359,8 +387,8 @@ async function viewPerson(pid, rid, person, reveal) {
   })] : [];
   show(page("Customer " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run", R(pid, rid)), crumb("Customers", R(pid, rid) + "/customers"), person)),
-  v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map(label).join(", ") + ". The golden record shows the best-supported value.") : null,
-  el("h2", { class: "section" }, "Golden record"), golden.length ? kv(golden) : empty("No values."),
+  v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map(fieldTitle).join(", ") + ". The golden record shows the best-supported value.") : null,
+  el("h2", { class: "section" }, "Clean record (golden record)"), golden.length ? kv(golden) : empty("No values."),
   Object.keys(v.extra || {}).length ? [el("h3", { class: "section" }, "Other columns from the sources"), kv(Object.entries(v.extra).map(([k, val]) => [label(k), String(val)]))] : null,
   el("h2", { class: "section" }, "Source records"),
   table([...(writer && v.records.length > 1 ? [""] : []), "Source", "Record", "Name as written", "Date of birth", "Mobile", "Email", "City"], rows),

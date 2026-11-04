@@ -72,7 +72,17 @@ function signOut(msg) {
 const NAV = [["Home", "any", "home", "/"], ["Projects", "any", "folder", "/projects"], ["Review", "queue.read", "inbox", "/review"], ["Admin", "admin", "shield", "/admin"]];
 const canNav = (perm) => (perm === "admin" ? ADMIN_PAGES.some((x) => can(x[1])) : can(perm));
 function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
-function go(fn) {
+// A screen with changes not saved yet sets leaveGuard to a function that says whether there is something to lose; going elsewhere asks first.
+let leaveGuard = null;
+async function mayLeave() {
+  if (leaveGuard && leaveGuard() && !(await confirmDialog("Leave without saving?", "Your changes on this page are not saved. They are lost if you leave.", "Leave without saving", true))) {
+    return false;
+  }
+  leaveGuard = null;
+  return true;
+}
+async function go(fn) {
+  if (!(await mayLeave())) return undefined;
   stopTimer();
   pageKeys = null;
   closeSearch();

@@ -111,11 +111,13 @@ async function newRun(pid) {
     const rules = Object.fromEntries(Object.entries(pickers).filter(([, s]) => s.value).map(([n, s]) => [n, Number(s.value)]));
     return startRun(pid, [...chosen], null, reason.value, key, load.value() === "full", can("config.read") ? rules : null);
   };
+  const rulesParts = () => [section(2, "Matching rules", rulePart("decision", "matching", true)), section(3, "Golden record", rulePart("survivorship", "golden", true)),
+    section(4, "Technical settings", rulePart("settings", "technical", false))];
   const section = (n, title, body, extra) => el("section", { class: "run-part" }, el("div", { class: "title-row" }, el("h2", { class: "section" }, n + ". " + title), extra || null), body);
   show(top, cache.projects.length > 1 ? el("div", { class: "narrow" }, field("Project", projSel)) : null,
     section(1, "Data", dataPart, pickAll),
-    can("config.read") ? [section(2, "Matching rules", rulePart("decision", "matching", true)), section(3, "Golden record", rulePart("survivorship", "golden", true)),
-      section(4, "Technical settings", rulePart("settings", "technical", false))] : el("p", { class: "hint" }, "The run uses the rule versions the project has in use."),
+    can("config.read") ? (p.second_approval ? rulesParts() : el("details", { class: "advanced", open: !st.ready ? true : null },
+      el("summary", {}, "Rules: the ones in use (choose an earlier version)"), rulesParts())) : el("p", { class: "hint" }, "The run uses the rule versions the project has in use."),
     section(can("config.read") ? 5 : 2, "What to process", load.node),
     el("div", { class: "narrow" }, field("Reason (optional, recorded with the run)", reason)), err,
     el("div", { class: "row" }, btn("Cancel", () => go(() => viewProject(pid))), can("runs.start") ? btn("Start run", start, "primary", "play") : null));

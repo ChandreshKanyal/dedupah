@@ -196,6 +196,7 @@ async function run(fn, quiet) {
 
 // ---- addresses: Back, Forward, reload and shared links open the same screen -------------------------------------------------
 let quietAddress = null;
+let shownPath = "/";               // the address of the screen on show (Back is undone to it when someone stays to save their changes)
 let arrivedAt = null;           // the address a person arrived by (Back, a link, a reload): a screen that shows another address replaces it instead of adding a step to Back
 const PART = /^[A-Za-z0-9_.-]{1,64}$/;
 function readAddress() { return window.location.hash.replace(/^#/, ""); }
@@ -236,6 +237,7 @@ const SECTIONS = [["/review", "Review"], ["/new-run", "Projects"], ["/new-projec
 // Every screen says where it is: the address (so Back works), the highlighted menu item and the window title (set by show()).
 function here(path) {
   writeAddress(path);
+  shownPath = path;
   const sec = path === "/" ? "Home" : (SECTIONS.find(([p]) => path.startsWith(p)) || [null, ""])[1];
   sectionIcon = (NAV.find(([name]) => name === sec) || [null, null, "home"])[2];
   if (/\/connections|\/add-data|\/map\//.test(path)) sectionIcon = "plug";

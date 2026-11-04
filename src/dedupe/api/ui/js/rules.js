@@ -96,7 +96,7 @@ async function rulesPanel(p, name, editing) {
   };
   const form = canEdit && !optional;                       // matching and golden-record rules: always the form, never a separate view mode
   const status = el("div", { class: "rules-status" },
-    live ? el("div", { class: "live-line on" }, el("strong", {}, "In use: version " + live.version),
+    live ? el("div", { class: "live-line on" }, el("strong", {}, second ? "In use: version " + live.version : "In use"),
       el("span", { class: "muted" }, (live.activated_by ? "put in use by " + live.activated_by + ", " : "") + when(live.activated_at)))
       : optional ? el("div", { class: "live-line" }, el("strong", {}, "Standard values"), el("span", { class: "muted" }, "nothing to choose unless your administrator asks"))
         : el("div", { class: "notice warn", role: "note" }, el("strong", {}, "Not chosen yet. "), "Runs cannot start until this project has " + what + " in use. " +
@@ -147,10 +147,18 @@ async function rulesPanel(p, name, editing) {
     el("td", {}, when(v.proposed_at)), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")),
     el("td", { class: "actions-cell" }, btn("View", () => view(v), "small"),
       can("config.activate") && v.status === "superseded" ? btn("Go back to this", () => back(v), "small", "undo") : null)));
-  const history = versions.length ? el("details", { class: "history" }, el("summary", {}, icon("clock"), "Version history (" + versions.length + ")"),
+  const history = versions.length > 1 || second ? el("details", { class: "history" }, el("summary", {}, icon("clock"), "Earlier versions (" + versions.length + ")"),
     table(["Version", "Status", "Proposed by", "When", "Reason", "Approved by", ""], rows)) : null;
 
-  add(wrap, form ? head : null, status, result, form ? null : head, el("div", { class: "rules-body" }, body), history);
+  const bodyEl = el("div", { class: "rules-body" }, body);
+  if (editing && canEdit) {
+    // leaving with changes not saved asks first: any edit in the form counts (the save bar's own fields and buttons do not)
+    let dirty = false;
+    const mark = (e) => { if (!e.target.closest(".save-bar") && (e.type !== "click" || e.target.closest("button"))) dirty = true; };
+    for (const t of ["input", "change", "click"]) bodyEl.addEventListener(t, mark);
+    leaveGuard = () => dirty && bodyEl.isConnected;
+  }
+  add(wrap, form ? head : null, declinedNotice(versions, live), status, result, form ? null : head, bodyEl, history);
   return wrap;
 }
 

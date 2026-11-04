@@ -98,6 +98,7 @@ class Version:
     rollback: bool = False
     approved_by: tuple = ()
     declined_by: str | None = None
+    declined_reason: str | None = None     # why it was declined: shown to the person who proposed it
     activated_at: str | None = None
     activated_by: str | None = None
 
@@ -143,11 +144,11 @@ class ConfigStore:
             if r.kind in ("propose", "rollback"):
                 out[k] = {"name": r.name, "version": r.version, "proposed_by": r.actor, "proposed_at": r.created_at, "reason": r.reason,
                           "parent_version": r.parent_version, "content_hash": r.content_hash, "rollback": r.kind == "rollback",
-                          "approved_by": [], "declined_by": None, "activated_at": None, "activated_by": None}
+                          "approved_by": [], "declined_by": None, "declined_reason": None, "activated_at": None, "activated_by": None}
             if r.kind == "approve" and r.actor != out[k]["proposed_by"]:
                 out[k]["approved_by"].append(r.actor)
             elif r.kind == "decline":
-                out[k]["declined_by"] = r.actor
+                out[k]["declined_by"], out[k]["declined_reason"] = r.actor, r.reason
             if r.kind in ("activate", "rollback"):
                 live[r.name] = r.version
                 out[k]["activated_at"], out[k]["activated_by"] = r.created_at, r.actor

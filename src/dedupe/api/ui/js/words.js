@@ -25,3 +25,11 @@ function runTitle(r, runs) {
   return (i < 0 ? "Run" : "Run " + (runs.length - i)) + " \u00b7 " + shortWhen(r.started_at || r.created_at);
 }
 const LOAD_WORDS = { incremental: "Only what changed (faster)", full: "Everything again" };
+
+// A change someone declined: who, why, and that the person who proposed it can change it and save again. Null when the newest version was not declined.
+function declinedNotice(versions, live) {
+  const v = versions[versions.length - 1];
+  if (!v || v.status !== "declined" || (live && live.version > v.version)) return null;
+  return el("div", { class: "notice warn", role: "note" }, el("strong", {}, (v.proposed_by === me.sub ? "Your change" : "The change by " + v.proposed_by) + " was declined"),
+    " by " + v.declined_by + (v.declined_reason ? ": \u201c" + v.declined_reason + "\u201d" : "") + ". Change it and save again, or keep what is in use.");
+}

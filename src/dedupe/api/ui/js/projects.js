@@ -121,7 +121,7 @@ async function viewProject(pid, tab, sub) {
   const second = p.second_approval ? tag("Second approval on", "info") : null;
   const more = moreMenu([
     can("runs.read") && tab !== "runs" ? ["All runs and schedules", () => go(() => viewProject(pid, "runs"))] : null,
-    subs.results.includes("decisions") ? ["Decisions made", () => go(() => viewProject(pid, "results", "decisions"))] : null,
+    can("queue.read") ? ["Decisions made", link("/review/" + pid + "/decided")] : null,
     subs.setup.includes("technical") ? ["Technical settings", () => go(() => viewProject(pid, "setup", "technical"))] : null,
     subs.settings.includes("general") ? ["Project settings", () => go(() => viewProject(pid, "settings", "general"))] : null,
     subs.settings.includes("members") ? ["Members", () => go(() => viewProject(pid, "settings", "members"))] : null,
@@ -209,7 +209,7 @@ async function projectJourney(p, runs, connections) {
     [latest ? btn("Open", openRun(latest)) : null, can("runs.start") && st && st.ready && pr.step !== "running" ? btn(latest ? "Run again" : "Start run", () => quickRun(pid), "", "play") : null]),
     row(4, "Review", [done ? (box && box.open ? plural(box.open, "pair waits", "pairs wait") + " for a person." : "Nothing waits for a person.") : "Pairs a person must check appear after the first run.",
       box && box.waiting_for_run ? el("div", { class: "muted" }, plural(box.waiting_for_run, "decision is", "decisions are") + " made and change the customers at the next run.") : null],
-    [done && can("queue.read") ? btn("Review", link("/review/" + pid)) : null, done && can("queue.read") ? btn("Decisions made", () => go(() => viewProject(pid, "results", "decisions"))) : null]),
+    [done && can("queue.read") ? btn("Review", link("/review/" + pid)) : null, done && can("queue.read") ? btn("Decisions made", link("/review/" + pid + "/decided")) : null]),
     row(5, "Results", [done ? num(done.summary.people) + " customers, one clean record each, from " + runTitle(done, runs) + "." : "The customers and their clean records appear after the first run."],
       [done && can("person.read") ? btn("Find a customer", () => go(() => viewRun(pid, done.id, "customers")), "", "search") : null,
       done && can("results.export") ? btn("Get the results", () => go(() => viewProject(pid, "results", "files")), "", "download") : null]),

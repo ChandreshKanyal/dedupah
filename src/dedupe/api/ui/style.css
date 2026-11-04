@@ -519,3 +519,5 @@ ol.journey li.on .n { border-color: var(--text); }
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .card-head h3 { margin: 0 0 4px; }
 .card-head p { margin: 0; }
+.pane-head p.why { margin: 4px 0 0; }
+[role=search] > .row > select { width: auto; max-width: 260px; }

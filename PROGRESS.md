@@ -3,7 +3,7 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-4 done, phase 5 next) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-6 done, phase 7 next) <<<
 
 **Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
 The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
@@ -15,8 +15,10 @@ project page is the journey (Data > Rules > Run > Review > Results) with a "Next
 first, unmapped uploads as "Needs mapping", upload first in Add data, mapping screens with their own address, a bad file in a batch named,
 the source page without internals). **Phase 4 is done (section 80):** one-click run with a confirm box,
 runs named "Run 3 · 4 Nov, 06:40", the run page as one sentence with details folded, one Download menu per file, Customers search (name,
-id, whole mobile or email). **Next: phase 5** (Review: plain reasons, no score on rule-flagged pairs, field titles, live counts, Decided
-tab). Confirm with the user before starting each phase.
+id, whole mobile or email). **Phase 5 is done (section 81):** Review with plain reasons, no score on
+rule-flagged pairs, field titles, live counts, a Decided tab and folded filters. **Phase 6 is done (section 82):** governance out of the way in
+one-person projects, a warning before leaving unsaved rule changes, the decline reason shown to the proposer. **Next: phase 7** (polish:
+phone layout, messages that hide by themselves, empty states, a glossary pass, plain validation messages). Confirm with the user before starting each phase.
 
 **Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
 DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
@@ -44,6 +46,8 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Revamp phase 6:** one-person projects show no version numbers on the rules page and fold rule versions on New run; leaving a rules form with unsaved changes asks first (menu, Back, reload); a declined change says who declined it and why (backend `declined_reason`) | 82 |
+| session 4 | **Revamp phase 5:** Review says why a pair is there in words (the project's own rule names too), no score on pairs a rule sent, field titles everywhere, evidence as strong / some weight / weak, counts that follow each decision and Undo, a Decided tab, search first with the other filters folded | 81 |
 | session 4 | **Revamp phase 4:** one-click run with a confirm box (Change options opens the full form, now pre-ticked); run titles by number and time; run page with one summary sentence, engine details folded; tabs Overview, Results, Customers (review queue = Review screen); one Download menu per file; customers searchable by name, id, whole mobile or email (backend) | 80 |
 | session 4 | **Revamp phase 3:** the Data step: data sources first with unmapped uploads as Needs mapping (Map it), upload first on Add data, mapping screens at `/map/<upload>`, a bad file in a batch named while the others go in, the source page shows its fields with the internals under Details | 79 |
 | session 4 | **Revamp phase 2:** the project page as the journey Data > Rules > Run > Review > Results, with a Next step bar and one row per step; tabs replaced by pages under the project and a More menu | 78 |
@@ -362,6 +366,8 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp phase 6)** — Governance tucked away, unsaved-changes warning, decline reasons; tests, ruff and browser walks clean. Section 82.
+- **2026-11-04 (session 4, revamp phase 5)** — Review screen; tests, ruff and browser walks clean. Section 81.
 - **2026-11-04 (session 4, revamp phase 4)** — Run and Results rebuilt; tests, ruff and browser walks clean. Section 80.
 - **2026-11-04 (session 4, revamp phase 3)** — Data step rebuilt; tests, ruff and browser walks clean. Section 79.
 - **2026-11-04 (session 4, revamp phase 2)** — Project journey page; tests, ruff and both browser walks clean. Section 78.
@@ -1949,3 +1955,38 @@ The user: "please start the fixing". Findings are in `~/agent-review/*/report-su
 - **Checked:** UI and results tests, ruff, full suite; `tour.py` (28 screens) and `~/agent-review/p1/p4.py` (confirm box, Change options,
   a run started from the box, run page and details, Download menu, customer search by name / whole mobile / part of a mobile, a customer
   page, the old review address, journey, All runs): no script errors or failed requests.
+
+## 81. Revamp phase 5: the Review screen (2026-11-04, session 4)
+
+- **Why a pair is here, in words:** "Why it is here: Same identifier but a clearly different name." for a pair a rule sent (built-in rules
+  by their short title, the project's own rules by the name people gave them, read from the matching rules in use); "the match score is
+  72%, too unsure to decide alone" for the others. The raw rule id and "Run R..." are gone from the header.
+- **No score on rule-flagged pairs:** the work list shows "Rule" instead of a percentage ("Score 100%" on a pair sent for review was
+  confusing).
+- **Field titles** (Date of birth, Second phone, PIN code...) in the comparison, the conflicts notice, the customer page ("Clean record
+  (golden record)", "Correct Date of birth"). Evidence reads "PAN: same PAN (strong)" instead of bits.
+- **Counts follow the work:** after each decision, bulk decision and Undo the inbox is read again and the tabs redraw (Open (3) -> Open (2),
+  Decided (1 for the next run) -> (2 ...); Undo puts them back). Checked in the browser.
+- **Decided tab** (`/review/<project>/decided`): the project's decisions with their status and Undo (the old Decisions page, inside Review).
+  The journey's "Decisions made" and the project's More menu open it. The cross-project `/review/decisions` page still works.
+- **Filters:** a search box first (and the project picker when there are several); run, match score and why it is here folded under "More
+  filters". Runs are shown by time ("Run of 4 Nov, 09:24"). Run again uses the one-click confirm box.
+- **Checked:** UI tests, ruff, full suite; `~/agent-review/p1/p5.py` (reason text, list scores, evidence, field titles, decide with D,
+  counts, Undo, Decided tab, journey link, phone), plus `tour.py` and `p4.py` again: no script errors or failed requests. Known: on a
+  phone with no open pairs the list and detail panes both say so (phase 7).
+
+## 82. Revamp phase 6: governance out of the way (2026-11-04, session 4)
+
+- **One-person projects** (second approval off): the rules page says "In use" without a version number, the version list is called
+  "Earlier versions" and only appears once there is more than one; New run folds the rule-version choices under "Rules: the ones in use
+  (choose an earlier version)" (open when something is missing). With second approval on, everything shows as before. Approvals already
+  appear only for approvers (Admin) and on Home when something waits (phase 1); the reason box is only asked with second approval (section 72).
+- **Unsaved changes:** a rules form (matching, golden record, technical) remembers that something was edited (any input, change or button
+  in the form, not the save bar); leaving by the menu, a link, Back or Forward asks "Leave without saving?" (Cancel stays and puts the
+  address back), and closing or reloading the tab gets the browser's own question. `leaveGuard` / `mayLeave` in shell.js; `go()` is async now.
+- **Declined changes reach the proposer:** a config version keeps why it was declined (`declined_reason` in the governance store's replay and
+  in `VersionView`; test in `test_governance.py`). The rules page and the data source page show "Your change was declined by X: "...".
+  Change it and save again, or keep what is in use." while the newest version is the declined one.
+- **Checked:** governance and UI tests, ruff, full suite; `~/agent-review/p1/p6.py` (status line, leaving without changes, leaving with a
+  change and staying, Back with a change, leaving for real, a change proposed and declined through the API, New run in a one-person
+  project): no script errors or failed requests.

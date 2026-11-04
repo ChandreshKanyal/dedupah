@@ -129,6 +129,7 @@ class VersionView(BaseModel):
     rollback: bool
     approved_by: list[str]
     declined_by: str | None
+    declined_reason: str | None = None
     activated_at: str | None
     activated_by: str | None
 

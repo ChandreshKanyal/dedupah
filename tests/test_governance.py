@@ -96,6 +96,7 @@ def test_decline_rollback_and_history(store):
     store.approve("decision", v3, "ravi")
     store.activate("decision", v3, "ravi")
     assert [v.status for v in store.versions("decision")] == ["superseded", "declined", "active"]
+    assert store.versions("decision")[1].declined_reason == "too strict for retail"                    # the proposer is told why
     with pytest.raises(ConfigError, match="never live"):
         store.rollback("decision", v2, "ravi", "restore the declined one")
     with pytest.raises(ConfigError, match="already the live"):
