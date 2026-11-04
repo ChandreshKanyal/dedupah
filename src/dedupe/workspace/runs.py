@@ -20,6 +20,7 @@ from pathlib import Path
 
 from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, func, select, update
 
+from dedupe import envgrants
 from dedupe.schema import create_and_upgrade
 
 from .projects import Workspace
@@ -181,6 +182,10 @@ class RunJobs:
             act = configs.active(f"connection/{cid}")
             if act is None:
                 raise RunError(f"Connection {cid!r} has no approved live version yet.")
+            try:                                                   # the server variables it names must be allowed for this project
+                envgrants.check(project_id, act.content.get("connector") or {})
+            except envgrants.EnvNotGranted as e:
+                raise RunError(f"Data source {cid!r}: {e}") from None
             sources.append(act.content)
             used.append({"id": cid, "version": act.version})
         return {"sources": sources}, used

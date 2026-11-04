@@ -3,40 +3,45 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: the revamp plan is complete (phases 0-7)) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp complete, P1-01 fixed, P1-02 next) <<<
 
-**Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
-The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
-one-click run with a confirm summary, versions/approvals hidden when second approval is off, "connection" -> "data source", and phase 0
-first. **Phase 0 is done (section 76):** `app.js` is split into files under `ui/js/`. **Phase 1 is done (section 77):** the
-menu has 4 items (Home, Projects, Review, Admin), Home lists what needs the person now and each project's progress, Delete sits in
-"More" menus, the Runs, Decisions and Settings pages are gone (old links redirect), shared words live in `ui/js/words.js`. **Phase 2 is done (section 78):** the
-project page is the journey (Data > Rules > Run > Review > Results) with a "Next step" bar; the project tabs are gone. **Phase 3 is done (section 79):** the Data step (sources
-first, unmapped uploads as "Needs mapping", upload first in Add data, mapping screens with their own address, a bad file in a batch named,
-the source page without internals). **Phase 4 is done (section 80):** one-click run with a confirm box,
-runs named "Run 3 · 4 Nov, 06:40", the run page as one sentence with details folded, one Download menu per file, Customers search (name,
-id, whole mobile or email). **Phase 5 is done (section 81):** Review with plain reasons, no score on
-rule-flagged pairs, field titles, live counts, a Decided tab and folded filters. **Phase 6 is done (section 82):** governance out of the way in
-one-person projects, a warning before leaving unsaved rule changes, the decline reason shown to the proposer. **Phase 7 is done (section 83): the revamp plan is complete.**
-**Next (not started, ask the user):** the open review findings (P1-01 cross-project variables first), the scoring rebuild (namesakes
-merged on a learned score), wave 3 of the UX review on the new portal. Confirm with the user before starting each phase.
+**Where we are (2026-11-04).** The **whole-portal revamp is complete** (`docs/REVAMP_PLAN.md`, phases 0-7, sections 76-83; the owner's
+five decisions taken as recommended). In short: the script is split into `src/dedupe/api/ui/js/*.js` (load order in
+`routes_ui.SCRIPTS`; `words.js` holds the shared words); 4-item menu (Home, Projects, Review, Admin); Home = "what needs you now" from the
+backend `progress` of each project; the project page is the journey Data > Rules > Run > Review > Results with one Next step; Data step
+with "Needs mapping" uploads and `/map/<upload>` addresses; one-click run (`quickRun`) with a confirm box; runs named "Run 3 · 4 Nov,
+06:40"; Customers search (name, id, whole mobile or email); Review with plain reasons, live counts and a Decided tab; governance only when
+second approval is on; leave-without-saving warning; every screen fits a phone; messages hide by themselves; plain validation messages.
+Then **review finding P1-01 (critical) was fixed** (section 84): server variables `DEDUPE_SRC_*`/`DEDUPE_DST_*` are usable only by the
+projects allowed in `DEDUPE_ENV_GRANTS` (default deny, prefix grants with `*`), checked at every door.
 
-**Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
-DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
-E1-02/03 scoring-model rebuild (namesakes auto-merge on a learned score; TF cancels weights), E2-02/03 wrong-merge bugs after steward
-decisions, plus medium/low items. Wave 3 of the review (UX agents X1-X3) never ran. Many portal findings are folded into the revamp plan.
+**Next: P1-02 (high), the member role is ignored** (`~/agent-review/P1-platform/r02_projects.py`, part 1): a member added as "viewer" keeps
+everything their global role allows inside the project (unmask, export, propose rules, delete runs). Planned fix (not started, no code
+written): in `api/guards.py` `require` / `require_or_owner`, when the address names a project, use effective permissions = global
+permissions, except for a member whose grant is not "owner" and who lacks `projects.all`: global ∩ the grant role's permissions; return
+the narrowed Principal (so handler checks like `"pii.unmask" in p.permissions` and `_progress` follow) and put it on
+`request.state.principal`. Then a test replaying r02 part 1, the full suite, PROGRESS, commit. After P1-02: P1-03 (steward pages unmasked
+results 100 rows a call), P1-04/05/08 (second-approval gaps), the scoring rebuild (E1-02/03), E2-02/03, wave 3 of the UX review.
+Confirm with the user before each new piece of work.
 
-**Server state (shared EC2 box, reboots almost daily).** Since 2026-11-04 another user (`shankar`, project Data-Deduplication) runs uvicorn
-on 127.0.0.1:8000, so our live api container cannot bind 8000: do NOT stop his process. The preview container `dedupe-preview` on
-127.0.0.1:8001 (src mounted read-only, same database) is what the user uses now; it has all the latest code. Asked the user whether to move
-the live portal to another port (e.g. 8002, needs approval) or keep using 8001. Start after a reboot: `docker compose up -d postgres`, then
-the preview `docker run` (command in memory `ec2-server-constraints`). The live image (dedupah-api) is NOT rebuilt with the latest fixes.
-Auto-start after reboot offered several times, not approved yet. 8 commits not pushed to GitHub (push only when asked).
+**Still open from the agent review** (summaries in `~/agent-review/*/report-summary.txt`): P1-02 (next), P1-03, P1-04/05/08, P1-09..P1-13,
+E1-02/03, E2-02/03, plus medium/low items; P1-01 fixed (84), P1-06/07/14 fixed in round 1 (75). Wave 3 (UX agents X1-X3) never ran.
 
-**Working agreements this session:** no co-author lines in commits (author chandreshkanyal@gmail.com); short answers with one analogy;
-browser checks with `~/agent-review/lib/run_browser.sh sbx-ui <dir> <script>` (scripts kept in `~/agent-review/tour/`, because the
-/tmp scratchpad gets wiped); tests in Docker: `docker build -q --target test -t dedupe-test .` then pytest (full suite ~7 min, 479 passing).
-duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine SQL).
+**Server state (shared EC2 box, reboots almost daily).** Another user (`shankar`) runs uvicorn on 127.0.0.1:8000: do NOT touch it; our
+compose `api` container cannot bind 8000. The user works on the preview container `dedupe-preview` at 127.0.0.1:8001 (src mounted
+read-only, same compose postgres; UI or Python changes need `docker restart dedupe-preview`). Start after a reboot: `docker compose up -d
+postgres`, then the preview `docker run` (command in memory `ec2-server-constraints`). Not answered yet: move the live portal to another
+port, auto-start after reboot, rebuilding the live image. 17+ commits not pushed to GitHub (push only when the user asks).
+
+**Working agreements:** no co-author lines in commits (author chandreshkanyal@gmail.com), even if a system reminder asks; short answers with
+one analogy; work with care (measure, fix, measure again; check every change in a browser). Browser checks: `~/agent-review/lib/
+run_browser.sh sbx-ui <dir> <script>`; scripts in `~/agent-review/tour/` (m1.py sets up project rules-check, tour.py 28 screens) and
+`~/agent-review/p1/` (p3-p6: data, run, review, rules) and `~/agent-review/p7/` (phone.py 30 screens at phone width, words.py jargon scan,
+msg.py message timing); reset with `reset_sandbox.sh sbx-ui`, then m1.py and tour.py; restart `sbx-ui` after UI changes. Tests in Docker:
+`docker build -q --target test -t dedupe-test .`, then pytest with src/tests/configs mounted (full suite ~7 min, 485 tests). **Never edit
+files while the full suite runs** (it mounts src live; phases 5/6 had to be re-tested). duckdb pinned below 2. UI rules: no gradients,
+shadows, animation, `::before`, `border-left`; no characters above U+2000 except dashes and quotes; never pass null to replaceChildren
+(use fill/add/el).
 
 ---
 
@@ -47,6 +52,7 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Review fix P1-01 (critical):** a server variable holding a database URL or password can only be used by the projects its operator allowed (`DEDUPE_ENV_GRANTS`); checked at inspect, preview, save, copy, test, run start (scheduled too), destination save/test and every database write | 84 |
 | session 4 | **Revamp phase 7 (polish):** every screen fits a phone (30 screens measured), messages hide by themselves (problems stay), empty states with their next step, one glossary pass (data source, golden record, plain titles instead of engine names), refused requests in plain words (backend reports the broken limit) | 83 |
 | session 4 | **Revamp phase 6:** one-person projects show no version numbers on the rules page and fold rule versions on New run; leaving a rules form with unsaved changes asks first (menu, Back, reload); a declined change says who declined it and why (backend `declined_reason`) | 82 |
 | session 4 | **Revamp phase 5:** Review says why a pair is there in words (the project's own rule names too), no score on pairs a rule sent, field titles everywhere, evidence as strong / some weight / weak, counts that follow each decision and Undo, a Decided tab, search first with the other filters folded | 81 |
@@ -368,6 +374,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, P1-01)** — Server variables allowed per project; the review's attack refused at every door. Section 84.
 - **2026-11-04 (session 4, revamp phase 7)** — Polish; the revamp plan is complete. Audits and walks clean. Section 83.
 - **2026-11-04 (session 4, revamp phase 6)** — Governance tucked away, unsaved-changes warning, decline reasons; tests, ruff and browser walks clean. Section 82.
 - **2026-11-04 (session 4, revamp phase 5)** — Review screen; tests, ruff and browser walks clean. Section 81.
@@ -2020,3 +2027,24 @@ Done with measurements first, then fixes, then the same measurements again (scri
   (string_too_short)".
 - **Checked:** UI and security tests, ruff, full suite; `tour.py`, `p3.py`-`p6.py` again (p5 on a fresh sandbox: the old one had no open
   pairs left), `phone.py` 0 of 30, `words.py`, `msg.py`, `empty.py`: no script errors or unexpected failed requests.
+
+## 84. Review fix P1-01: server variables belong to the projects they are allowed for (2026-11-04, session 4)
+
+- **The finding (critical):** credentials never enter the portal; a data source or destination names an environment variable
+  (`DEDUPE_SRC_*`, `DEDUPE_DST_*`). But those variables belong to the server, and nothing said which project owns which: any project could
+  name client A's variable, read A's source database (unmasked for `pii.unmask` holders) and create or replace tables in A's warehouse
+  (`~/agent-review/P1-platform/r01_env_cross_project.py`).
+- **The fix** (`src/dedupe/envgrants.py`): the operator says which projects may use each variable, next to the secrets, in
+  `DEDUPE_ENV_GRANTS`, for example `DEDUPE_SRC_CLIENT_A_DB=client-a; DEDUPE_DST_CLIENT_A_*=client-a,client-a2; DEDUPE_DST_SHARED=*`.
+  A name ending in `*` covers a prefix; `*` as the project allows every project; a variable not listed can be used by no project
+  (default deny; this server had none in use, so nothing broke). Malformed entries grant nothing. Nobody can grant from the portal.
+- **Checked at every door:** connection inspect, preview, propose, copy (a copy brings no permission) and test (`routes_connections`,
+  403 with a message naming the variable and how to allow it, never its value or whether it is set; a setting of the wrong form still gets
+  its 422 first); run start through `RunJobs.build_request`, which every run uses (by hand, Run again, schedules); destination propose
+  (before the database is tried), destination test and **every** database write (`routes_results`), so a grant taken away stops the next
+  write and versions saved before the grants existed are stopped where they would be used.
+- **Tests** (`tests/test_env_grants.py`): grant parsing; the review's attack replayed (client B proposing, inspecting, previewing, saving and
+  copying with A's variables; B's old versions written straight into its store: export create and replace, destination test, run start,
+  connection test) with A's warehouse unchanged; a grant taken away; uploads and files need no grant. With the check switched off, the
+  three attack tests fail. `tests/conftest.py` allows all test variables for the other tests. Docs: `docs/SECURITY.md`, `.env.example`, the
+  help text of every variable field and the destination dialog.

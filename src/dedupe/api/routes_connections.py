@@ -13,13 +13,23 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
+from dedupe import envgrants
 from dedupe.connectors.catalogue import GROUPS
 from dedupe.connectors.catalogue import C as CATALOGUE
 from dedupe.connectors.catalogue import public as catalogue_public
 from dedupe.governance.diff import describe_changes
 from dedupe.governance.store import ConfigError
 from dedupe.mapping.canonical import CANONICAL_FIELDS
-from dedupe.mapping.check import ALLOWED_SETTINGS, SETTING_HELP, SourceProblem, check_source, check_sources, inspect_source, probe_source
+from dedupe.mapping.check import (
+    ALLOWED_SETTINGS,
+    SETTING_HELP,
+    SourceProblem,
+    check_connector_settings,
+    check_source,
+    check_sources,
+    inspect_source,
+    probe_source,
+)
 from dedupe.mapping.config import SourceConfig
 from dedupe.workspace import PROJECT_ID, UploadError
 
@@ -88,6 +98,20 @@ def _log(request: Request, p: Principal, action: str, ref: str, **detail) -> Non
 
 def _conflict(e: Exception) -> HTTPException:
     return HTTPException(409, str(e)[:300])
+
+
+def _granted(project_id: str, conf: dict) -> None:
+    """403 unless the server's operator allowed this project to use every secret variable the settings name (envgrants). A connector's settings
+    are checked for their form first (422), so a name of the wrong form gets the message that says what is wrong with it."""
+    try:
+        if "type" in conf:
+            check_connector_settings(conf)
+    except SourceProblem as e:
+        raise HTTPException(422, str(e)) from None
+    try:
+        envgrants.check(project_id, conf)
+    except envgrants.EnvNotGranted as e:
+        raise HTTPException(403, str(e)) from None
 
 
 def _own_upload(request: Request, project_id: str, connector: dict) -> None:
@@ -174,6 +198,7 @@ def test_connection(request: Request, project_id: str = PID, connection_id: str 
     try:
         src = SourceConfig.model_validate(ps.configs.get(name, version))
         _own_upload(request, project_id, src.connector)
+        envgrants.check(project_id, src.connector)
         probe = probe_source(src)
     except (SourceProblem, HTTPException, ValueError) as e:
         text = e.detail if isinstance(e, HTTPException) else str(e)
@@ -194,6 +219,7 @@ def inspect(request: Request, body: InspectIn, project_id: str = PID, unmask: bo
     reveal = _unmask_gate(request, p, unmask, reason, f"{project_id}/source-sample")
     _throttle(request, p, "source_inspect", INSPECT_LIMIT_PER_MIN)
     _own_upload(request, project_id, body.connector)
+    _granted(project_id, body.connector)
     try:
         info = inspect_source(body.connector)
     except SourceProblem as e:
@@ -218,6 +244,7 @@ def preview(request: Request, body: SourceConfig, project_id: str = PID, unmask:
     reveal = _unmask_gate(request, p, unmask, reason, f"{project_id}/source-sample")
     _throttle(request, p, "source_inspect", INSPECT_LIMIT_PER_MIN)
     _own_upload(request, project_id, body.connector)
+    _granted(project_id, body.connector)
     try:
         table = check_source(body)
     except SourceProblem as e:
@@ -238,6 +265,7 @@ def propose(request: Request, body: ProposeIn, project_id: str = PID, p: Princip
     """Check the connection against the real source, then propose it as its next version. The connection id is its `source_id`."""
     ps = project_scope(request, project_id)
     _own_upload(request, project_id, body.connection.get("connector") or {})
+    _granted(project_id, body.connection.get("connector") or {})
     problems = check_sources({"sources": [body.connection]})
     if problems:
         raise HTTPException(422, "The connection is not valid: " + "; ".join(x["problem"] for x in problems[:8]))
@@ -265,6 +293,7 @@ def copy(request: Request, body: CopyIn, project_id: str = PID, p: Principal = M
     content = dict(source.configs.get(src_name, live.version))
     if (content.get("connector") or {}).get("type") == "upload":
         raise HTTPException(422, "A connection to an uploaded file cannot be copied: upload the file to this project instead.")
+    _granted(project_id, content.get("connector") or {})          # a copy brings no permission: the server variable must be allowed here too
     new_id = body.new_id or body.connection_id
     content["source_id"] = new_id
     try:

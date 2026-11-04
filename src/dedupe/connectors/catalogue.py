@@ -16,7 +16,8 @@ def S(name, label, kind="text", required=False, help="", default=None, choices=N
             "placeholder": placeholder, "advanced": advanced, "show_if": show_if}
 
 
-ENV = "Name of an environment variable on the server (starting with DEDUPE_SRC_) that holds it. The value itself is never typed here."
+ENV = ("Name of an environment variable on the server (starting with DEDUPE_SRC_) that holds it. The value itself is never typed here, and "
+       "the server's operator allows each variable for the projects that may use it.")
 
 # ---- reusable groups of settings --------------------------------------------------------------------------------------------------
 PATH = S("path", "File path", "path", True, "A file inside a folder the administrator allowed for sources (DEDUPE_DATA_ROOTS).", placeholder="/data/exports/customers.csv")

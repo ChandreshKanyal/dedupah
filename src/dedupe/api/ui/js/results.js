@@ -129,7 +129,7 @@ async function destinationsPanel(p, refresh) {
   });
   return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Database destinations"),
     can("sources.manage") ? btn("Add a destination", () => destinationDialog(p, refresh), "", "plus") : null),
-  el("p", { class: "hint" }, "A destination is the name of an environment variable (starting with DEDUPE_DST_) that holds a database address. The address and password are set on the server by whoever runs it, never typed here."),
+  el("p", { class: "hint" }, "A destination is the name of an environment variable (starting with DEDUPE_DST_) that holds a database address. The address and password are set on the server by whoever runs it, never typed here, and they allow each variable only for the projects that may use it."),
   rows.length ? table(["Destination", "Environment variable", "Schema", "In use", "Waiting", ""], rows) : empty("No destinations yet. Add one to write results into a database."));
 }
 async function destinationDialog(p, refresh) {

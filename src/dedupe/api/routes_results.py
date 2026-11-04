@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+from dedupe import envgrants
 from dedupe.governance.store import ConfigError
 from dedupe.results import (
     DATASETS,
@@ -32,6 +33,7 @@ from dedupe.review.service import SENSITIVE, _mask
 
 from .auth import Principal
 from .guards import _context, _services, require
+from .routes_connections import _granted
 from .routes_read import PID, RID, VersionView, _log_unmask, _unmask_gate
 from .scope import project_scope
 
@@ -175,6 +177,7 @@ def export_database(request: Request, body: DatabaseIn, project_id: str = PID, r
     if act is None:
         raise HTTPException(409, f"Destination {body.destination!r} has no approved live version in this project.")
     cfg = DestinationConfig.model_validate(act.content)
+    _granted(project_id, {"url_env": cfg.url_env})               # checked at every write: a grant taken away stops the next write
     try:
         result = write_database(database_url(cfg.url_env), run_dir, body.dataset, body.table, body.mode, body.schema_name or cfg.schema_name, body.confirm_replace)
     except ExportError as e:
@@ -226,11 +229,13 @@ def propose_destination(request: Request, body: ProposeDestIn, project_id: str =
     ps = project_scope(request, project_id)
     try:
         cfg = DestinationConfig.model_validate(body.destination)
+    except ValueError as e:
+        raise HTTPException(422, "The destination is not valid: " + "; ".join(sorted({".".join(str(x) for x in err["loc"]) for err in getattr(e, "errors", lambda: [])()})[:6])) from None
+    _granted(project_id, {"url_env": cfg.url_env})               # before it is tried: an unallowed variable is never opened
+    try:
         test_destination(database_url(cfg.url_env), cfg.schema_name)
     except ExportError as e:
         raise HTTPException(422, str(e)) from None
-    except ValueError as e:
-        raise HTTPException(422, "The destination is not valid: " + "; ".join(sorted({".".join(str(x) for x in err["loc"]) for err in getattr(e, "errors", lambda: [])()})[:6])) from None
     try:
         version = ps.configs.propose(f"destination/{cfg.destination_id}", cfg.model_dump(), p.actor, body.reason)
     except ConfigError as e:
@@ -248,8 +253,9 @@ def test_saved_destination(request: Request, project_id: str = PID, destination_
         raise HTTPException(404, "Not found.")
     cfg = DestinationConfig.model_validate(ps.configs.get(name, next((v for v in vs if v.status == "active"), vs[-1]).version))
     try:
+        envgrants.check(project_id, {"url_env": cfg.url_env})
         test_destination(database_url(cfg.url_env), cfg.schema_name)
-    except ExportError as e:
+    except (ExportError, envgrants.EnvNotGranted) as e:
         return {"ok": False, "error": str(e)}
     return {"ok": True, "error": None}
 
