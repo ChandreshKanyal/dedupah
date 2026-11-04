@@ -22,6 +22,23 @@ async function startRun(pid, connections, fromRun, reason, key, full, rules) {
   await go(() => viewRun(pid, r.id));
   say(r.replayed ? "This run was already started." : "Run started. This page updates by itself until it finishes.", "good");
 }
+// One click: run with every data source in use and the rules in use, only what changed. All of it is shown before it starts; "Change options"
+// opens the full form (choose sources, rule versions, everything again, a reason).
+async function quickRun(pid) {
+  const conns = can("config.read") ? await api("GET", P(pid) + "/connections") : [];
+  const st = await setupState(pid, conns);
+  if (!can("config.read") || !st.ready) { await go(() => newRun(pid)); return; }
+  const full = el("input", { type: "checkbox" });
+  const key = uuid();
+  const ver = (n) => "the ones in use (version " + st.cfg[n].live.version + ")";
+  const body = el("div", {}, kv([["Data", st.data.map((c) => c.id).join(", ")], ["Matching rules", ver("decision")], ["Clean record", ver("survivorship")],
+    ["Technical settings", st.cfg.settings.live ? ver("settings") : "standard values"]]),
+  el("label", { class: "check" }, full, el("span", {}, "Process everything again", el("span", { class: "muted" },
+    "Slower. Otherwise only what changed since the last run is processed again; customers are still formed from all records."))));
+  const choice = await dialog("Start a run of " + projectName(pid) + "?", body, "Start run", async () => "start", false, ["Change options", "options"]);
+  if (choice === "options") await go(() => newRun(pid));
+  else if (choice === "start") await startRun(pid, st.data.map((c) => c.id), null, "", key, full.checked, null);
+}
 // Versions a run may use: the one in use, approved ones, earlier ones, and drafts while no second approval is required.
 const VERSION_NOTE = { active: "in use", approved: "approved, not in use", proposed: "draft, not in use", superseded: "used before" };
 // New run: one screen with every choice visible. Nothing is picked for you except the rule versions the project has in use.
@@ -32,7 +49,7 @@ async function newRun(pid) {
   const trail = pid ? crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), "New run") : crumbs(crumb("Projects", "/projects"), "New run");
   const projSel = el("select", {}, pid ? null : el("option", { value: "" }, "Choose a project"), cache.projects.map((p) => el("option", { value: p.id, selected: p.id === pid }, p.name)));
   projSel.addEventListener("change", () => { if (projSel.value) go(() => newRun(projSel.value)); });
-  const top = page("New run", "Choose what this run reads, which rules it uses and how it loads. Each choice is recorded with the run.", [], trail);
+  const top = page("New run", "Choose what this run reads, which rules it uses and whether it processes everything again. Each choice is recorded with the run.", [], trail);
   if (!cache.projects.length) { show(top, empty("Create a project first.", can("projects.create") ? btn("New project", () => go(newProject), "primary", "plus") : null)); return; }
   if (!pid) { show(top, el("div", { class: "narrow" }, field("Project", projSel))); return; }
   const p = cache.projects.find((x) => x.id === pid) || await api("GET", P(pid));
@@ -43,7 +60,8 @@ async function newRun(pid) {
   // 1 data: every connection, the ones not in use shown but not choosable
   const chosen = new Set();
   const boxes = all.map((c) => {
-    const cb = el("input", { type: "checkbox", disabled: c.live_version ? null : true, "aria-label": "Read " + c.id });
+    const cb = el("input", { type: "checkbox", disabled: c.live_version ? null : true, checked: c.live_version ? true : null, "aria-label": "Read " + c.id });
+    if (c.live_version) chosen.add(c.id);                    // every data source in use is read unless unticked
     cb.addEventListener("change", () => { if (cb.checked) chosen.add(c.id); else chosen.delete(c.id); });
     return [c, cb];
   });
@@ -98,7 +116,7 @@ async function newRun(pid) {
     section(1, "Data", dataPart, pickAll),
     can("config.read") ? [section(2, "Matching rules", rulePart("decision", "matching", true)), section(3, "Golden record", rulePart("survivorship", "golden", true)),
       section(4, "Technical settings", rulePart("settings", "technical", false))] : el("p", { class: "hint" }, "The run uses the rule versions the project has in use."),
-    section(can("config.read") ? 5 : 2, "How to load", load.node),
+    section(can("config.read") ? 5 : 2, "What to process", load.node),
     el("div", { class: "narrow" }, field("Reason (optional, recorded with the run)", reason)), err,
     el("div", { class: "row" }, btn("Cancel", () => go(() => viewProject(pid))), can("runs.start") ? btn("Start run", start, "primary", "play") : null));
 }
@@ -111,27 +129,31 @@ function runUsed(r) {
   const part = (k, v) => el("span", {}, el("strong", {}, k + ": "), v);
   const parts = [part("Data", r.connections.length ? r.connections.map((c) => c.id + " version " + c.version).join(", ") : "imported"),
     part("Matching rules", ver("decision", "standard (built in)")), part("Golden record", ver("survivorship", "standard (built in)")),
-    part("Technical settings", ver("settings", "standard values")), part("Load", (r.options || {}).full ? "full reload" : "incremental")];
+    part("Technical settings", ver("settings", "standard values")), part("Load", ((r.options || {}).full ? LOAD_WORDS.full : LOAD_WORDS.incremental).toLowerCase())];
   return el("p", { class: "run-used" }, parts.flatMap((x, i) => (i ? [" · ", x] : [x])));
 }
+// One run. Finished: Overview (what came out, in one sentence; the engine's details folded away), Results (the files) and Customers (find a
+// customer by name, id, phone or email). The review queue is the Review screen, opened at this run.
 async function viewRun(pid, rid, tab) {
   stopTimer();                                                 // never two polls: a leftover one would put this run back on screen after the person has left
-  const [r] = await Promise.all([api("GET", R(pid, rid)), refreshCache()]);
+  if (tab === "review") { await viewInbox(pid, "open", rid); return; }          // older links
+  if (tab === "people") tab = "customers";
+  const [r, runs] = await Promise.all([api("GET", R(pid, rid)), can("runs.read") ? api("GET", P(pid) + "/runs?limit=1000") : [], refreshCache()]);
   const going = r.status === "running" || r.status === "queued";
   const okRun = r.status === "succeeded";
-  const tabList = okRun ? [["overview", "Overview"], ["results", "Results"], ...(can("queue.read") ? [["review", "Review queue"]] : []),
-    ...(can("person.read") ? [["people", "People"]] : [])] : [];
+  const tabList = okRun ? [["overview", "Overview"], ...(can("results.export") ? [["results", "Results"]] : []), ...(can("person.read") ? [["customers", "Customers"]] : [])] : [];
   if (!tabList.some(([k]) => k === tab)) tab = "overview";
   here(R(pid, rid) + (tab === "overview" ? "" : "/" + tab));
+  const title = runTitle(r, runs);
   const again = can("runs.start") && !going && r.connections.length;
   const actions = [];
   if (okRun && can("results.export") && tab !== "results") actions.push(btn("Get the results", () => go(() => viewRun(pid, rid, "results")), "primary", "download"));
   if (going) actions.push(btn("Refresh", () => go(() => viewRun(pid, rid, tab)), "", "refresh"));
   if (going && can("runs.start")) actions.push(btn("Stop run", () => cancelRun(pid, rid), "danger"));
-  if (again) actions.push(btn("Run again", () => startRun(pid, [], rid), "", "play"));
-  if (!going) actions.push(moreMenu([can("data.delete") ? ["Delete run", () => deleteRun(pid, rid), true] : null], "run " + rid));
-  const top = page("Run " + rid, "Started " + when(r.started_at || r.created_at) + " by " + r.requested_by + (r.finished_at ? ". Finished " + when(r.finished_at) + "." : "."), actions,
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Runs", P(pid) + "/runs"), rid), runState(r));
+  if (again) actions.push(btn("Run again", () => run(() => quickRun(pid)), okRun ? "" : "primary", "play"));
+  if (!going) actions.push(moreMenu([can("data.delete") ? ["Delete run", () => deleteRun(pid, rid), true] : null], title));
+  const top = page(title, "Started by " + r.requested_by + (r.finished_at ? ", finished " + when(r.finished_at) + "." : "."), actions,
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("All runs", P(pid) + "/runs"), title), runState(r));
   const used = runUsed(r);
   if (going) {
     timer = setInterval(() => run(async () => {
@@ -151,24 +173,50 @@ async function viewRun(pid, rid, tab) {
     return;
   }
   const stale = r.latest_run_id && r.latest_run_id !== rid ? el("div", { class: "notice warn", role: "note" },
-    el("strong", {}, "A newer run has finished. "), "This run's people, review queue and results are out of date. Decisions made here still count, but review in the newest run.",
+    el("strong", {}, "A newer run has finished. "), "This run's customers and results are out of date. Decisions made from it still count, but review in the newest run.",
     el("div", { class: "row" }, btn("Open the newest run", () => go(() => viewRun(pid, r.latest_run_id, tab)), "small primary"))) : null;
   let body;
-  if (tab === "overview") body = el("div", {}, runOverview(r), runLogDetails(pid, rid));
-  else if (tab === "review") body = el("div", {}, scoringNotice(r.summary), await reviewQueue(pid, rid, { status: "open", band: "all", offset: 0 }));
+  if (tab === "overview") body = el("div", {}, runOverview(r, pid), el("details", { class: "advanced" }, el("summary", {}, "Details: what it read, data quality, timings"),
+    el("p", { class: "muted" }, "Run id " + rid + "."), used, runDetails(r)), runLogDetails(pid, rid));
   else if (tab === "results") body = await runResults(pid, rid);
-  else body = peopleLookup(pid, rid);
-  show(top, used, stale, tabs(tabList, tab, (t) => go(() => viewRun(pid, rid, t))), tabPanel(tab, body));
+  else body = await customersPanel(pid, rid);
+  show(top, stale, tabs(tabList, tab, (t) => go(() => viewRun(pid, rid, t))), tabPanel(tab, body));
 }
-// The results of one finished run, right on the run page: the three datasets, each as a file or into a database.
+// The results of one finished run, right on the run page: each file with one Download menu (formats, or into a database).
 async function runResults(pid, rid) {
   if (!can("results.export")) {
-    return empty("Your role cannot take results out of the portal. You can still read them here (Overview, Review queue, People). Ask an administrator for the results.export permission if you need files.");
+    return empty("Your role cannot take results out of the portal. You can still look customers up under Customers. Ask an administrator for the results.export permission if you need files.");
   }
   const p = await api("GET", P(pid));
   const refresh = () => go(() => viewRun(pid, rid, "results"));
   return el("div", {}, el("p", { class: "hint" }, "Results contain personal data. Every download or database write asks for a reason and is recorded in the project's activity."),
-    ...(await datasetCards(p, rid)), await destinationsPanel(p, refresh));
+    ...(await datasetCards(p, rid)), el("details", { class: "advanced" }, el("summary", {}, "Database destinations"), await destinationsPanel(p, refresh)));
+}
+// Customers: find one by name, person id, a whole mobile number or email; open them to see their records, split a wrong merge or correct a value.
+const CUSTOMER_COLUMNS = ["person_id", "full_name", "dob", "mobile", "email", "city", "record_count", "sources"];
+async function customersPanel(pid, rid, st) {
+  st = st || { offset: 0, q: "" };
+  const size = 25;
+  const r = await api("GET", R(pid, rid) + "/datasets/golden_records/rows?limit=" + size + "&offset=" + st.offset + "&q=" + encodeURIComponent(st.q));
+  const wrap = el("div");
+  const again = (patch) => run(async () => wrap.replaceWith(await customersPanel(pid, rid, { ...st, ...patch })));
+  const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: "Name, person ID, whole mobile number or email", class: "wide-search" });
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") again({ q: q.value.trim(), offset: 0 }); });
+  const cols = CUSTOMER_COLUMNS.map((c) => [c, r.columns.indexOf(c)]).filter(([, i]) => i >= 0);
+  const TITLES = { person_id: "Person ID", record_count: "Records", sources: "Sources" };
+  const cell = (c, v) => (v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v));
+  const last = Math.min(st.offset + size, r.total);
+  add(wrap, el("div", { class: "row", role: "search" }, q, btn("Search", () => again({ q: q.value.trim(), offset: 0 }), "", "search"),
+    st.q ? btn("Clear", () => again({ q: "", offset: 0 }), "ghost") : null),
+  r.masked.length ? el("p", { class: "hint" }, "Phone numbers, emails and identifiers are masked here; open a customer to see more. A search by mobile or email needs the whole value.") : null,
+  r.rows.length ? table(cols.map(([c]) => (c === "record_count" ? [TITLES[c]] : TITLES[c] || fieldTitle(c))), r.rows.map((row) => {
+    const id = row[r.columns.indexOf("person_id")];
+    return linkRow(id, () => viewPerson(pid, rid, id), cols.slice(1).map(([c, i]) => el("td", { class: c === "record_count" ? "num" : null }, cell(c, row[i]))));
+  })) : empty(st.q ? "No customer matches " + st.q + "." : "No customers."),
+  r.total ? el("div", { class: "pager" }, el("span", { class: "muted" }, num(st.offset + 1) + " to " + num(last) + " of " + plural(r.total, "customer", "customers")),
+    st.offset > 0 ? btn("Previous", () => again({ offset: Math.max(0, st.offset - size) }), "small", "prev") : null,
+    last < r.total ? btn("Next", () => again({ offset: st.offset + size }), "small", "next") : null) : null);
+  return wrap;
 }
 // The log of a finished run, folded away at the end of its overview and read only when opened.
 function runLogDetails(pid, rid) {
@@ -208,16 +256,24 @@ const ODDITY = {
   organisation: ["Looks like a company, not a person", "Kept in the results as its own record, never matched with a person"],
   header_row: ["Header line repeated inside the data", "Kept out of matching"],
 };
-function runOverview(r) {
+// What came out, in one sentence and four numbers, then what a person should know (decisions applied); the engine's details are in runDetails.
+function runOverview(r, pid) {
   const s = r.summary;
   const j = s.judgments;
-  const parts = [scoringNotice(s), el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("People found", num(s.people)), stat("Households", num(s.households)),
-    stat("Pairs merged automatically", num(s.auto_merged_pairs)), stat("In the review queue", num(s.review_items)), stat("Time taken", s.seconds == null ? "" : s.seconds.toFixed(1) + " s"))];
+  const sentence = num(s.records) + " records became " + plural(s.people, "customer", "customers") + ": " + plural(s.auto_merged_pairs, "pair was", "pairs were") +
+    " merged automatically, and " + plural(s.review_items, "pair waits", "pairs wait") + " for a person.";
+  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s), el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("Customers", num(s.people)),
+    stat("Merged automatically", num(s.auto_merged_pairs)), stat("Sent to a person", num(s.review_items), can("queue.read") ? link("/review/" + pid) : null))];
   if (j && j.judgments_applied_to_run) {
-    parts.push(el("h2", { class: "section" }, "Steward decisions this run applied"),
+    parts.push(el("h2", { class: "section" }, "Decisions by people this run applied"),
       kv([["Decisions applied", num(j.judgments_applied_to_run)], ...Object.entries(j.by_kind || {}).map(([k, n]) => ["  " + (KIND_LABEL[k] || label(k)), num(n)]),
         ["Kept in the result", num(j.held)], ["Not kept", j.not_held ? el("span", { class: "bad" }, num(j.not_held) + " (a later decision or an identifier rule overruled them)") : "0"]]));
   }
+  return el("div", {}, parts);
+}
+function runDetails(r) {
+  const s = r.summary;
+  const parts = [kv([["Households", num(s.households)], ["Time taken", s.seconds == null ? "" : s.seconds.toFixed(1) + " seconds"]])];
   const inc = s.incremental;
   if (inc) {
     const rc = inc.records || {};
@@ -253,7 +309,7 @@ function runOverview(r) {
   if (g && g.trust_order) {
     parts.push(el("h2", { class: "section" }, "How the golden records were chosen"),
       kv([["Source trust order", g.trust_order.join(" > ")],
-        g.auto_ranked_sources && g.auto_ranked_sources.length ? ["Ranked automatically", g.auto_ranked_sources.join(", ") + " (by how complete their records are; set the order in Setup, Golden record)"] : null,
+        g.auto_ranked_sources && g.auto_ranked_sources.length ? ["Ranked automatically", g.auto_ranked_sources.join(", ") + " (by how complete their records are; set the order in Rules, Clean record)"] : null,
         g.sources_without_dates && g.sources_without_dates.length ? ["No record date", el("span", { class: "bad" }, g.sources_without_dates.join(", ") + ": 'newest record' could not use them")] : null,
         ["Fields where sources disagreed", num(g.values_with_source_conflict)],
         g.shared_values_passed_over ? ["Shared phones or emails passed over", num(g.shared_values_passed_over)] : null]));
@@ -261,7 +317,7 @@ function runOverview(r) {
   const rowsOf = (id) => (s.records_by_source || {})[id];
   const srcRows = r.connections.length ? r.connections.map((c) => el("tr", {}, el("td", {}, c.id), el("td", {}, "Version " + c.version), el("td", { class: "num" }, num(rowsOf(c.id)))))
     : (s.sources || []).map((x) => el("tr", {}, el("td", {}, x), el("td", { class: "muted" }, "imported run"), el("td", { class: "num" }, num(rowsOf(x)))));
-  parts.push(el("h2", { class: "section" }, "Sources read"), table(["Connection", "Version", ["Records read"]], srcRows));
+  parts.push(el("h2", { class: "section" }, "Sources read"), table(["Data source", "Version", ["Records read"]], srcRows));
   if (r.stages) {
     parts.push(el("h2", { class: "section" }, "Stages"), table(["Stage", ["Seconds"], ["Peak memory (MB)"]], r.stages.map((st) => el("tr", {}, el("td", {}, label(st.stage)),
       el("td", { class: "num" }, st.seconds), el("td", { class: "num" }, num(st.peak_memory_mb))))));

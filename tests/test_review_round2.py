@@ -2,6 +2,7 @@
 reason), which field comes from which connection, the field guide for the mapping screen, and a customer number shared across sources."""
 import csv
 import json
+from urllib.parse import quote
 
 import duckdb
 import pytest
@@ -39,6 +40,11 @@ def test_golden_records_can_be_looked_at_masked_searched_and_unmasked_with_a_rea
     found = c.get(url + "?q=" + name.split()[0].lower(), headers=hdr(s, "viewer")).json()
     assert found["total"] >= 1 and all(name.split()[0].lower() in (r[cols.index("full_name")] or "").lower() or name.split()[0].lower() in r[0].lower()
                                        for r in found["rows"])
+    mobile, email = duckdb.sql(f"SELECT mobile, email FROM '{output / 'golden' / 'golden_records.parquet'}' WHERE mobile IS NOT NULL AND email IS NOT NULL LIMIT 1").fetchone()
+    for text in ("+91 " + mobile[:5] + " " + mobile[5:], email.upper()):                                  # a whole number or email finds the person
+        hit = c.get(url + "?q=" + quote(text), headers=hdr(s, "viewer")).json()
+        assert hit["total"] >= 1, text
+    assert c.get(url + "?q=" + mobile[:6], headers=hdr(s, "viewer")).json()["total"] == 0                     # part of a hidden number finds nothing
     assert c.get(url + "?unmask=true&reason=" + WHY, headers=hdr(s, "viewer")).status_code == 403         # needs pii.unmask
     assert c.get(url + "?unmask=true", headers=hdr(s, "steward")).json()["unmasked"]                   # a reason is optional by default
     open_page = c.get(url + "?limit=100&unmask=true&reason=" + WHY, headers=hdr(s, "steward"))

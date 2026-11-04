@@ -5,31 +5,34 @@ async function resultsPanel(p, runs) {
   const done = runs.filter((r) => r.status === "succeeded");
   const refresh = () => go(() => viewProject(p.id, "results"));
   if (!done.length) {
-    return el("div", {}, empty("Results appear here after a run has finished. Start a run first.", can("runs.start") ? btn("New run", () => go(() => newRun(p.id)), "primary", "play") : null),
+    return el("div", {}, empty("Results appear here after a run has finished. Start a run first.", can("runs.start") ? btn("Start run", () => quickRun(p.id), "primary", "play") : null),
       await destinationsPanel(p, refresh));
   }
-  const pick = el("select", {}, done.map((r) => el("option", { value: r.id }, r.id + ", " + when(r.finished_at || r.created_at) + " (" + num(r.summary.people) + " people)")));
+  const pick = el("select", {}, done.map((r) => el("option", { value: r.id }, runTitle(r, runs) + " (" + plural(r.summary.people, "customer", "customers") + ")")));
   const box = el("div");
   const load = () => run(async () => box.replaceChildren(...(await datasetCards(p, pick.value))));
   pick.addEventListener("change", load);
   const wrap = el("div", {}, el("p", { class: "hint" }, "Results contain personal data. Every download or database write asks for a reason and is recorded in the project's activity."),
-    el("div", { class: "row" }, field("Results of run (newest first)", pick)), box, await destinationsPanel(p, refresh));
+    done.length > 1 ? el("div", { class: "row" }, field("Results of (newest first)", pick)) : null, box,
+    el("details", { class: "advanced" }, el("summary", {}, "Database destinations"), await destinationsPanel(p, refresh)));
   await load();
   return wrap;
 }
+// The files of a run: the customers (one clean record each) first, the other two folded; each with one Download menu (a format, or a database).
 async function datasetCards(p, rid) {
   const info = await api("GET", R(p.id, rid) + "/datasets");
-  return info.datasets.map((d) => {
+  const menu = (d) => moreMenu([...["xlsx", "csv", "parquet"].map((f) => [info.formats[f], () => downloadResults(p.id, rid, d.name, f)]),
+    ["Write to a database", () => databaseDialog(p, rid, d)]], d.title, "Download", "download");
+  const card = (d, title, preview) => {
     const box = el("div");
-    const open = () => run(async () => box.replaceChildren(await previewTable(p.id, rid, d)));
-    const card = el("div", { class: "panel" }, el("h3", {}, d.title + " (" + num(d.rows) + " rows)"),
-      el("div", { class: "body" }, el("p", {}, d.description),
-        el("div", { class: "row" }, ...["xlsx", "csv", "parquet"].map((f) => btn(info.formats[f], () => downloadResults(p.id, rid, d.name, f), "small", "download")),
-          btn("Write to a database", () => databaseDialog(p, rid, d), "small", "database"),
-          d.name === "golden_records" ? null : btn("Show a preview", open, "small", "list")), box));
-    if (d.name === "golden_records") open();
-    return card;
-  });
+    return el("div", { class: "panel" }, el("div", { class: "card-head body" }, el("div", {}, el("h3", {}, title + " (" + num(d.rows) + " rows)"), el("p", { class: "muted" }, d.description)),
+      el("div", { class: "row tight" }, preview ? btn("Show a preview", () => run(async () => box.replaceChildren(await previewTable(p.id, rid, d))), "small", "list") : null, menu(d))), box);
+  };
+  const golden = info.datasets.find((d) => d.name === "golden_records");
+  const others = info.datasets.filter((d) => d !== golden);
+  return [golden ? card(golden, "Customers, one clean record each", false) : null,
+    others.length ? el("details", { class: "advanced" }, el("summary", {}, "Other files: which record belongs to which customer, households"), others.map((d) => card(d, d.title, true))) : null]
+    .filter(Boolean);
 }
 // A page of a result table on screen. Identifiers, contact details and extra columns stay masked until someone allowed to see them asks (logged).
 async function previewTable(pid, rid, d, st) {
@@ -162,9 +165,9 @@ function choiceCards(name, options, current) {
 // ---- schedules: run the project's connections by themselves -----------------------------------------------------------------
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const ZONES = ["UTC", "Asia/Kolkata", "Asia/Dubai", "Asia/Singapore", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Australia/Sydney"];
-const LOAD_MODES = [["incremental", "Incremental", "refresh", "Reads every record, but reuses the latest successful run's work for records that did not change. Much faster; people are still formed from all records."],
-  ["full", "Full reload", "layers", "Reads and processes every record from scratch, and learns the scoring again. Slower; use it after big changes to the data or the rules."]];
-const loadTag = (mode) => (mode === "full" ? tag("Full reload", "info") : tag("Incremental", "success"));
+const LOAD_MODES = [["incremental", LOAD_WORDS.incremental, "refresh", "Reads every record, but reuses the latest successful run's work for records that did not change. Much faster; people are still formed from all records."],
+  ["full", LOAD_WORDS.full, "layers", "Reads and processes every record from scratch, and learns the scoring again. Slower; use it after big changes to the data or the rules."]];
+const loadTag = (mode) => (mode === "full" ? tag(LOAD_WORDS.full, "info") : tag(LOAD_WORDS.incremental, "success"));
 function scheduleWhen(s) {
   const t = s.at_time;
   if (s.frequency === "hourly") return "Every hour at :" + t.slice(3) + " (" + s.timezone + ")";

@@ -85,10 +85,11 @@ function buildNav() {
 }
 // "More": the less used and the destructive actions of a page or a row, out of the way of the main button. items: [text, action, danger?];
 // the empty ones (null) are left out, and with none left there is no menu. A real menu: arrow keys move, Escape and a click elsewhere close it.
-function moreMenu(items, name) {
+function moreMenu(items, name, text, ic) {
   const list = items.filter(Boolean);
   if (!list.length) return null;
-  const opener = el("button", { type: "button", class: "small", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": name ? "More for " + name : "More" }, "More");
+  const opener = el("button", { type: "button", class: "small", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": (text || "More") + (name ? " for " + name : "") },
+    ic ? icon(ic) : null, text || "More");
   const menu = el("div", { class: "more-menu", role: "menu", hidden: true });
   const wrap = el("div", { class: "more" }, opener, menu);
   // the menu is placed on the screen under its button (fixed), so a table that scrolls sideways does not cut it off; scrolling closes it

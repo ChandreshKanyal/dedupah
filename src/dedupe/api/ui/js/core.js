@@ -127,7 +127,7 @@ function fail(box, msg, input) {
   box.hidden = !msg;
   if (input) input.setAttribute("aria-invalid", msg ? "true" : "false");
 }
-function dialog(title, body, confirmLabel, onConfirm, danger) {
+function dialog(title, body, confirmLabel, onConfirm, danger, other) {
   return new Promise((resolve) => {
     const box = $("dialog");
     const opener = document.activeElement;
@@ -141,7 +141,8 @@ function dialog(title, body, confirmLabel, onConfirm, danger) {
     };
     const onKey = (e) => { if (e.key === "Escape") close(null); };
     const ok = btn(confirmLabel, async () => { const v = await onConfirm(); if (v !== undefined) close(v); }, danger ? "danger" : "primary");
-    box.replaceChildren(el("h2", { id: "dialog-title" }, title), body, el("div", { class: "buttons" }, btn("Cancel", () => close(null)), ok));
+    box.replaceChildren(el("h2", { id: "dialog-title" }, title), body,
+      el("div", { class: "buttons" }, btn("Cancel", () => close(null)), other ? btn(other[0], () => close(other[1])) : null, ok));
     $("overlay").hidden = false;
     $("app").inert = true;                       // the page behind cannot be reached with the keyboard or a screen reader while the dialog is open
     document.addEventListener("keydown", onKey);

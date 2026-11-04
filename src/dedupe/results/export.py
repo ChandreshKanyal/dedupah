@@ -19,6 +19,7 @@ from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, MetaD
 from dedupe import crypto
 
 from ..dburl import driver_url
+from ..standardise.identifiers import phone
 from .config import identifier_ok
 
 EXCEL_MAX_ROWS = 1_048_575
@@ -94,9 +95,17 @@ def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str =
         cols = [c[0] for c in con.execute(f"DESCRIBE {sql}").fetchall()]
         where, args = "", []
         if q.strip():
+            text = q.strip().lower()
             keys = [c for c in ("full_name", "person_id", "source_record_id", "household_id") if c in cols]
-            where = "WHERE " + " OR ".join(f'lower(CAST("{c}" AS VARCHAR)) LIKE ?' for c in keys)
-            args = ["%" + q.strip().lower() + "%"] * len(keys)
+            conds = [f'lower(CAST("{c}" AS VARCHAR)) LIKE ?' for c in keys]
+            args = ["%" + text + "%"] * len(keys)
+            # a whole mobile number or email address finds the person too: an exact match only, so a part of a hidden value never does
+            number = phone(text)
+            for c in ("mobile", "mobile_alt") if number else ("email",) if "@" in text else ():
+                if c in cols:
+                    conds.append(f'lower(CAST("{c}" AS VARCHAR)) = ?')
+                    args.append(number or text)
+            where = "WHERE " + " OR ".join(conds) if conds else ""
         total = con.execute(f"SELECT count(*) FROM ({sql}) {where}", args).fetchone()[0]
         # columns that are empty in the whole table (fields no source filled) only clutter a screen; the files keep them
         quoted = ['"' + c.replace('"', '""') + '"' for c in cols]

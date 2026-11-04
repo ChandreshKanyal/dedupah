@@ -514,3 +514,8 @@ ol.journey li.on .n { border-color: var(--text); }
   .journey-row > .row { justify-content: flex-start; }
 }
 .row.tight { margin: 0; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; }
+.lead { margin: 0 0 12px; font-size: 16px; }
+.wide-search { flex: 1; min-width: 240px; max-width: 520px; }
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.card-head h3 { margin: 0 0 4px; }
+.card-head p { margin: 0; }

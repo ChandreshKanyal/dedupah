@@ -215,53 +215,6 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     el("div", { class: "work" }, listPane, detail));
   await loadList(0, 0);
 }
-
-async function reviewQueue(pid, rid, ctx) {
-  ctx = { pid, rid, ...ctx };
-  const [summary, items] = await Promise.all([api("GET", R(pid, rid) + "/queue/summary"), api("GET", queueUrl(ctx, QUEUE_PAGE, ctx.offset))]);
-  const box = el("div");
-  const reload = async (patch) => box.replaceWith(await reviewQueue(pid, rid, { ...ctx, ...patch }));
-  const status = el("select", {}, [["open", "Open"], ["unsure", "Marked not sure"], ["all", "All, including decided"]].map(([v, t]) => el("option", { value: v, selected: v === ctx.status }, t)));
-  const band = el("select", {}, BANDS.map(([v, t]) => el("option", { value: v, selected: v === ctx.band }, t)));
-  status.addEventListener("change", () => run(() => reload({ status: status.value, offset: 0 })));
-  band.addEventListener("change", () => run(() => reload({ band: band.value, offset: 0 })));
-  const writer = can("judgment.write");
-  const chosen = new Set();
-  const open = (i, it) => go(() => { reviewCtx = { ...ctx, index: ctx.offset + i, l: it.person_l, r: it.person_r }; return viewCompare(pid, rid, it.person_l, it.person_r); });
-  const rows = items.map((it, i) => {
-    const cb = writer && it.state !== "decided" ? el("input", { type: "checkbox", "aria-label": "Select " + it.person_l + " and " + it.person_r }) : null;
-    if (cb) cb.addEventListener("change", () => { if (cb.checked) chosen.add(it); else chosen.delete(it); });
-    return el("tr", { class: "click", onclick: (e) => { if (!e.target.closest("button, input, label")) open(i, it); } },
-      writer ? el("td", { class: "check" }, cb) : null,
-      el("td", {}, el("button", { type: "button", class: "link mono", onclick: () => open(i, it) }, it.person_l + " and " + it.person_r)),
-      el("td", { class: "num" }, it.size_l + " and " + it.size_r), el("td", { class: "num" }, pct(it.top_probability)),
-      el("td", {}, it.forced ? tag("Flagged by a rule", "info") : ""), el("td", {}, statusTag(it.state)));
-  });
-  const bulk = async (decision) => {
-    if (!chosen.size) { say("Tick the pairs first.", "bad"); return; }
-    const what = decision === "approve" ? "Same person" : "Different people";
-    const why = await askReason(what + " for " + plural(chosen.size, "pair", "pairs"), "Why? It is recorded with every one of these decisions", decision === "approve" ? 10 : 0, "Decide " + plural(chosen.size, "pair", "pairs"));
-    if (why === null) return;
-    const out = await api("POST", R(pid, rid) + "/decisions/bulk", { decision, reason: why, items: [...chosen].map((it) => ({ person_l: it.person_l, person_r: it.person_r })) }, { "Idempotency-Key": uuid() });
-    await reload({});
-    say(plural(out.done.length, "pair", "pairs") + " decided." + (out.failed.length ? " Not done: " + out.failed.map((f) => f.pair + " (" + f.error + ")").join("; ") : ""), out.failed.length ? "bad" : "good");
-  };
-  const first = items.length && ctx.status !== "all" ? btn(ctx.status === "unsure" ? "Revisit the first" : "Start reviewing", () => openQueueItem(ctx, ctx.offset), "primary", "next") : null;
-  const pager = el("div", { class: "pager" }, "Showing " + (items.length ? (ctx.offset + 1) + " to " + (ctx.offset + items.length) : "none"),
-    btn("Previous", () => reload({ offset: Math.max(0, ctx.offset - QUEUE_PAGE) }), "small", "prev", { disabled: ctx.offset === 0 }),
-    btn("Next", () => reload({ offset: ctx.offset + QUEUE_PAGE }), "small", "next", { disabled: items.length < QUEUE_PAGE }));
-  add(box,
-    el("div", { class: "row" }, field("Show", status), field("Match score", band), first),
-    el("p", { class: "hint" }, (summary.open_now == null ? "Many" : num(summary.open_now)) + " pairs are open in this run. " + plural(summary.pending_approval, "decision waits", "decisions wait") +
-      " for a second person. Decisions take effect at the project's next run."),
-    items.length ? table([...(writer ? [""] : []), "People", ["Records"], ["Match score"], "Why it is here", "State"], rows)
-      : empty(ctx.status === "open" ? "Nothing to review here." + (ctx.band !== "all" ? " Try another score band." : "") : "No pairs in this view."),
-    writer && items.length ? el("div", { class: "row" }, el("span", { class: "muted" }, "With the ticked pairs:"),
-      btn("Different people", () => bulk("reject"), "small"), btn("Same person", () => bulk("approve"), "small")) : null,
-    items.length ? pager : null);
-  return box;
-}
-
 // ---- comparing two people ----------------------------------------------------------------------------------------------------
 const FIELD_ORDER = ["full_name", "father_name", "dob", "gender", "marital_status", "mobile", "email", "address", "city", "state", "pincode", "pan", "aadhaar_last4", "passport_no",
   "dl_no", "voter_id", "occupation", "annual_income"];
@@ -363,13 +316,6 @@ async function viewCompare(pid, rid, l, r, reveal) {
 }
 
 // ---- one person: their records, fixing a wrong merge (split) and correcting a golden value (override) ----------------------------------
-function peopleLookup(pid, rid) {
-  const id = el("input", { type: "text", placeholder: "for example P000000123", maxlength: "10" });
-  const openIt = () => go(() => viewPerson(pid, rid, id.value.trim().toUpperCase()));
-  id.addEventListener("keydown", (e) => { if (e.key === "Enter") openIt(); });
-  return el("div", {}, el("p", { class: "hint" }, "Open a person by their ID to see their records, split a wrong merge, or correct a value. Person IDs appear in the review queue and in the results files."),
-    el("div", { class: "row" }, field("Person ID", id), btn("Open", openIt, "primary")));
-}
 async function viewPerson(pid, rid, person, reveal) {
   here(R(pid, rid) + "/people/" + person);
   const base = R(pid, rid);
@@ -411,8 +357,8 @@ async function viewPerson(pid, rid, person, reveal) {
     const why = await revealIdentifiers("Show identifiers");
     if (why) await go(() => viewPerson(pid, rid, person, why));
   })] : [];
-  show(page("Person " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run " + rid, R(pid, rid)), crumb("People", R(pid, rid) + "/people"), person)),
+  show(page("Customer " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run", R(pid, rid)), crumb("Customers", R(pid, rid) + "/customers"), person)),
   v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map(label).join(", ") + ". The golden record shows the best-supported value.") : null,
   el("h2", { class: "section" }, "Golden record"), golden.length ? kv(golden) : empty("No values."),
   Object.keys(v.extra || {}).length ? [el("h3", { class: "section" }, "Other columns from the sources"), kv(Object.entries(v.extra).map(([k, val]) => [label(k), String(val)]))] : null,

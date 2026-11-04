@@ -3,7 +3,7 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-3 done, phase 4 next) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-4 done, phase 5 next) <<<
 
 **Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
 The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
@@ -13,7 +13,10 @@ menu has 4 items (Home, Projects, Review, Admin), Home lists what needs the pers
 "More" menus, the Runs, Decisions and Settings pages are gone (old links redirect), shared words live in `ui/js/words.js`. **Phase 2 is done (section 78):** the
 project page is the journey (Data > Rules > Run > Review > Results) with a "Next step" bar; the project tabs are gone. **Phase 3 is done (section 79):** the Data step (sources
 first, unmapped uploads as "Needs mapping", upload first in Add data, mapping screens with their own address, a bad file in a batch named,
-the source page without internals). **Next: phase 4** (one-click run with a confirm summary, run titles, Results step, Browse customers). Confirm with the user before starting each phase.
+the source page without internals). **Phase 4 is done (section 80):** one-click run with a confirm box,
+runs named "Run 3 · 4 Nov, 06:40", the run page as one sentence with details folded, one Download menu per file, Customers search (name,
+id, whole mobile or email). **Next: phase 5** (Review: plain reasons, no score on rule-flagged pairs, field titles, live counts, Decided
+tab). Confirm with the user before starting each phase.
 
 **Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
 DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
@@ -41,6 +44,7 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Revamp phase 4:** one-click run with a confirm box (Change options opens the full form, now pre-ticked); run titles by number and time; run page with one summary sentence, engine details folded; tabs Overview, Results, Customers (review queue = Review screen); one Download menu per file; customers searchable by name, id, whole mobile or email (backend) | 80 |
 | session 4 | **Revamp phase 3:** the Data step: data sources first with unmapped uploads as Needs mapping (Map it), upload first on Add data, mapping screens at `/map/<upload>`, a bad file in a batch named while the others go in, the source page shows its fields with the internals under Details | 79 |
 | session 4 | **Revamp phase 2:** the project page as the journey Data > Rules > Run > Review > Results, with a Next step bar and one row per step; tabs replaced by pages under the project and a More menu | 78 |
 | session 4 | **Revamp phase 1:** 4-item menu (Home, Projects, Review, Admin); Home as "what needs you now" plus each project's progress (backend `progress` on projects and `/home`); Delete in More menus; Runs, Decisions and Settings pages removed (old links redirect); words file | 77 |
@@ -358,6 +362,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp phase 4)** — Run and Results rebuilt; tests, ruff and browser walks clean. Section 80.
 - **2026-11-04 (session 4, revamp phase 3)** — Data step rebuilt; tests, ruff and browser walks clean. Section 79.
 - **2026-11-04 (session 4, revamp phase 2)** — Project journey page; tests, ruff and both browser walks clean. Section 78.
 - **2026-11-04 (session 4, revamp phase 1)** — New menu, Home and More menus; tests, ruff and browser walk clean. Section 77.
@@ -1920,3 +1925,27 @@ The user: "please start the fixing". Findings are in `~/agent-review/*/report-su
   the new Add data page) and `~/agent-review/p1/p3.py` (Data page, Add data, a good and an empty file uploaded together, reload while
   mapping, Map it, an unknown upload address, the source page and its Details, phone width). The only failed request is the expected 422 for
   the empty file.
+
+## 80. Revamp phase 4: run and results (2026-11-04, session 4)
+
+- **One-click run** (`quickRun` in runs.js): Start run / Run again on the journey, Home, All runs and the run page open a confirm box that
+  lists the data sources in use, the rule versions in use and the technical settings, with one tick box "Process everything again"; Start run
+  starts it, **Change options** opens the full New run form (where every data source in use is now ticked already). A project that is not
+  ready goes to the form, which says what is missing. `dialog()` takes an optional second button.
+- **Run names:** "Run 4 · 4 Nov, 09:21" (number in the project's runs, oldest = 1; `runTitle` in words.js) on the run page, journey,
+  All runs and the results picker. The run id is under Details. Note: deleting a run renumbers the later ones.
+- **Run page:** one sentence first ("2,404 records became 2,025 customers: 437 pairs were merged automatically, and 4 pairs wait for a
+  person."), four numbers (Records read, Customers, Merged automatically, Sent to a person, which opens Review), decisions by people the
+  run applied; everything else (what it read, households, time, data reuse, data quality, unusual data, how clean records were chosen,
+  sources read, stages) under "Details", the log folded as before. Tabs: Overview, Results, Customers. The Review queue tab is gone (its
+  address opens the Review screen); the People tab (an ID box) became **Customers**.
+- **Customers** (`customersPanel`): a searchable list of the run's customers (person id, name, birth date, mobile and email masked, city,
+  records, sources); each opens the customer page (was "Person"). **Backend:** the results search (`results/export.preview`) also finds
+  a whole mobile number (any format: +91, spaces) or a whole email; part of a hidden value finds nothing. Test in
+  `test_review_round2.py`.
+- **Results:** customers first, one **Download** menu per file (Excel, CSV, Parquet, Write to a database); the person map and households
+  folded under "Other files"; database destinations folded. "Incremental / Full reload" are now "Only what changed (faster) /
+  Everything again" everywhere.
+- **Checked:** UI and results tests, ruff, full suite; `tour.py` (28 screens) and `~/agent-review/p1/p4.py` (confirm box, Change options,
+  a run started from the box, run page and details, Download menu, customer search by name / whole mobile / part of a mobile, a customer
+  page, the old review address, journey, All runs): no script errors or failed requests.

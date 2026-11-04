@@ -17,3 +17,11 @@ const PROGRESS_LABEL = { data: "Needs data", rules: "Needs rules", run: "Ready t
 const PROGRESS_KIND = { data: "warn", rules: "warn", run: "info", running: "info", failed: "danger", review: "warn", done: "success" };
 const progressTag = (pr) => (pr ? tag(pr.step === "review" && pr.open_review ? plural(pr.open_review, "pair", "pairs") + " to review" : PROGRESS_LABEL[pr.step],
   PROGRESS_KIND[pr.step]) : null);
+
+// A run is called by its number in its project and when it started: "Run 3 · 4 Nov, 06:40" (the machine id stays under Details).
+const shortWhen = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
+function runTitle(r, runs) {
+  const i = (runs || []).findIndex((x) => x.id === r.id);
+  return (i < 0 ? "Run" : "Run " + (runs.length - i)) + " \u00b7 " + shortWhen(r.started_at || r.created_at);
+}
+const LOAD_WORDS = { incremental: "Only what changed (faster)", full: "Everything again" };
