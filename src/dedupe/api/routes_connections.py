@@ -34,7 +34,7 @@ from dedupe.mapping.config import SourceConfig
 from dedupe.workspace import PROJECT_ID, UploadError
 
 from .auth import Principal
-from .guards import _context, _services, require
+from .guards import _context, _services, in_project, require
 from .routes_read import PID, VersionView, _log_unmask, _unmask_gate
 from .scope import project_scope
 
@@ -285,6 +285,9 @@ def copy(request: Request, body: CopyIn, project_id: str = PID, p: Principal = M
     either do not affect the other. Uploaded files stay with the project that uploaded them, so those connections cannot be copied."""
     target = project_scope(request, project_id)
     source = project_scope(request, body.from_project)
+    there = in_project(_services(request), p, body.from_project)
+    if there is None or "config.read" not in there.permissions:                  # a member there must be allowed to read its settings
+        raise HTTPException(403, "You do not have permission to do this.")
     src_name = f"connection/{body.connection_id}"
     vs = source.configs.versions(src_name)
     if not vs:

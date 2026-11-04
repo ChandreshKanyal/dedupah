@@ -88,7 +88,10 @@ function icon(name) {
   s.append(p);
   return s;
 }
-const can = (perm) => perm === "any" || (!!me && me.permissions.includes(perm));
+// Inside a project a member may hold less than their own roles (added as viewer = a viewer there): the project list says what (you_can).
+const projectOf = (path) => (/^\/(?:projects|review)\/([a-z0-9-]+)/.exec(path) || [])[1];
+const can = (perm, pid = projectOf(shownPath)) => perm === "any" ||
+  (!!me && ((cache.projects.find((p) => p.id === pid) || {}).you_can || me.permissions).includes(perm));
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9_-]/g, "");
 const pct = (x) => (x == null ? "" : (x * 100).toFixed(1) + "%");
 const when = (t) => (t ? new Date(t).toLocaleString() : "");

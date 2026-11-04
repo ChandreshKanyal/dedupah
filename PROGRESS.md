@@ -2048,3 +2048,21 @@ Done with measurements first, then fixes, then the same measurements again (scri
   connection test) with A's warehouse unchanged; a grant taken away; uploads and files need no grant. With the check switched off, the
   three attack tests fail. `tests/conftest.py` allows all test variables for the other tests. Docs: `docs/SECURITY.md`, `.env.example`, the
   help text of every variable field and the destination dialog.
+
+## 85. Review fix P1-02: the role given in a project is what a member may do there (2026-11-04, session 4)
+
+- **The finding (high):** the role chosen when adding a member was stored and never used: bob, an analyst elsewhere, added to alice's project
+  as viewer, could unmask, export, propose rules and delete her runs (`~/agent-review/P1-platform/r02_projects.py`, part 1).
+- **The fix** (`api/guards.py` `in_project`): inside a project that has members, a member who is not its owner keeps only what both their
+  own roles and their project role(s) allow (several project roles add up; a project role never adds what their own roles lack). The owner,
+  holders of `projects.all` and everyone in a project without members keep their own roles. Every guard (`require`, `require_or_owner`,
+  `authenticated`) narrows the person to the project in the address and puts the narrowed person on the request, so the checks inside the
+  handlers (unmask, approvals) follow; an outsider of a members-only project is refused there ("not a member"). `scope.can_see` and the
+  membership check for a second project (copy, inbox) reuse the same function instead of their own copy of the rule.
+- **Pages over several projects:** the project list and Home count per project with the narrowed rights (`you_can` on each project; a
+  viewer member sees no approvals), the Review inbox lists only projects where the person may read the queue, and copying a data source
+  needs `config.read` in the project it comes from. The portal's `can()` uses the project's `you_can` on project and review pages (Home
+  passes each project), so buttons a project role does not allow are hidden; the server refuses them anyway.
+- **Tests** (`tests/test_project_roles.py`): the attack replayed (unmask, export, propose, start, delete refused; masked reading allowed),
+  roles adding up, a project role never widening, Home and inbox, copy. With the narrowing switched off all three fail. P1-09 (old activity
+  after re-creating a project id) turned out to be fixed in round 1 (section 75). Suite: 488 passed, 4 skipped; ruff clean.

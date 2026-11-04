@@ -12,9 +12,9 @@ from pydantic import BaseModel
 from dedupe.store.judgments import DECISION_KINDS
 
 from .auth import Principal
-from .guards import _services, require
+from .guards import _services, in_project, require
 from .routes_read import PID
-from .scope import can_see, project_scope, run_scope
+from .scope import project_scope, run_scope
 
 router = APIRouter()
 READ_QUEUE = Depends(require("queue.read"))
@@ -95,11 +95,12 @@ def decisions_of(sv, store, project_id: str, actor: str | None = None) -> list[d
 def inbox(request: Request, p: Principal = READ_QUEUE):
     """For every project you can open: what waits for a person in its latest finished run."""
     sv = _services(request)
-    approver = "judgment.approve" in p.permissions
     out = []
     for proj in sv.workspace.list():
-        if not can_see(sv, p, proj.id):
+        q = in_project(sv, p, proj.id)                    # what this person may do in that project (None: not a member)
+        if q is None or "queue.read" not in q.permissions:
             continue
+        approver = "judgment.approve" in q.permissions
         run = sv.jobs.latest_succeeded(proj.id)
         store = sv.workspace.stores(proj.id)[0]
         pending = [j for j in store.pending_approval() if approver or j.actor == p.actor]

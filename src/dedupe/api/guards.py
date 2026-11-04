@@ -8,6 +8,7 @@ Authentication and authorization happen here, before the route's own code runs. 
 routes use it as the `actor` of everything they write, so identities in the audit logs are verified, not typed.
 """
 import re
+from dataclasses import replace
 
 from fastapi import HTTPException, Request
 
@@ -58,6 +59,36 @@ def authenticate(request: Request) -> Principal:
     return principal
 
 
+def in_project(sv, principal: Principal, project_id: str) -> Principal | None:
+    """The person as they act inside one project. A member keeps only what both their own roles and the role they were given in the
+    project allow (added as viewer = a viewer there, whatever they are elsewhere); the owner, holders of `projects.all` and everyone in a
+    project without members keep their own permissions. None: the project has members and this person is not one of them."""
+    if "projects.all" in principal.permissions:
+        return principal
+    members = sv.workspace.members(project_id)
+    mine = {g.role for g in members if g.subject == principal.sub}
+    if not members or "owner" in mine:
+        return principal
+    if not mine:
+        return None
+    return replace(principal, granted=principal.permissions & sv.accounts.permissions_of(mine))
+
+
+def _scoped(request: Request, principal: Principal) -> Principal:
+    """The principal narrowed to the project in the address (if any), kept on the request so every later check uses the same answer."""
+    pid = _context(request)["project_id"]
+    if pid is None:
+        return principal
+    sv = _services(request)
+    narrowed = in_project(sv, principal, pid)
+    if narrowed is None:
+        sv.seclog.record("permission_denied", actor=principal.actor, roles=principal.roles, status=403, detail={"needs": f"member of {pid}"},
+                         **_context(request))
+        raise HTTPException(403, "You are not a member of this project.")
+    request.state.principal = narrowed
+    return narrowed
+
+
 def public():
     def guard() -> None:
         return None
@@ -67,7 +98,7 @@ def public():
 
 def authenticated():
     def guard(request: Request) -> Principal:
-        return authenticate(request)
+        return _scoped(request, authenticate(request))
     guard.access = ("authenticated", None)
     return guard
 
@@ -77,7 +108,7 @@ def require(permission: str):
         raise ValueError(f"unknown permission {permission!r}")
 
     def guard(request: Request) -> Principal:
-        principal = authenticate(request)
+        principal = _scoped(request, authenticate(request))
         if permission not in principal.permissions:
             _services(request).seclog.record("permission_denied", actor=principal.actor, roles=principal.roles, status=403,
                                              detail={"needs": permission}, **_context(request))
@@ -93,9 +124,9 @@ def require_or_owner(permission: str):
         raise ValueError(f"unknown permission {permission!r}")
 
     def guard(request: Request) -> Principal:
-        principal = authenticate(request)
-        pid = (request.scope.get("path_params") or {}).get("project_id")
-        if permission in principal.permissions or (isinstance(pid, str) and _services(request).workspace.is_owner(pid, principal.sub)):
+        principal = _scoped(request, authenticate(request))
+        pid = _context(request)["project_id"]
+        if permission in principal.permissions or (pid is not None and _services(request).workspace.is_owner(pid, principal.sub)):
             return principal
         _services(request).seclog.record("permission_denied", actor=principal.actor, roles=principal.roles, status=403,
                                          detail={"needs": permission + " or owner"}, **_context(request))

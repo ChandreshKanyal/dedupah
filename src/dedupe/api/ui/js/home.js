@@ -7,13 +7,13 @@ function homeTodo(p) {
   const pr = p.progress || {};
   const todo = [];
   const step = {
-    data: can("sources.manage") ? ["database", "Add the data of " + p.name, "Its files or databases, to find the duplicates in.", "Add data", () => go(() => addDataPage(p.id))] : null,
-    rules: can("config.read") ? ["sliders", "Choose the rules of " + p.name, "When two records are the same customer, and how the one clean record is built.", "Choose rules",
+    data: can("sources.manage", p.id) ? ["database", "Add the data of " + p.name, "Its files or databases, to find the duplicates in.", "Add data", () => go(() => addDataPage(p.id))] : null,
+    rules: can("config.read", p.id) ? ["sliders", "Choose the rules of " + p.name, "When two records are the same customer, and how the one clean record is built.", "Choose rules",
       () => go(() => viewProject(p.id, "setup"))] : null,
-    run: can("runs.start") ? ["play", p.name + " is ready for its first run", "Its data and rules are set.", "Start run", () => quickRun(p.id)] : null,
+    run: can("runs.start", p.id) ? ["play", p.name + " is ready for its first run", "Its data and rules are set.", "Start run", () => quickRun(p.id)] : null,
     failed: p.latest_run ? ["alert", "The last run of " + p.name + " did not finish", "Open it to see what went wrong, then run again.", "Open run",
       () => go(() => viewRun(p.id, p.latest_run.id))] : null,
-    review: can("queue.read") ? ["inbox", plural(pr.open_review, "pair", "pairs") + " in " + p.name + " need your decision", "Same customer or not: the matching rules sent them to a person.",
+    review: can("queue.read", p.id) ? ["inbox", plural(pr.open_review, "pair", "pairs") + " in " + p.name + " need your decision", "Same customer or not: the matching rules sent them to a person.",
       "Review", () => go(() => viewInbox(p.id))] : null,
   }[pr.step];
   if (step) todo.push(step);

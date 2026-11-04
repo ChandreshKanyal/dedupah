@@ -9,7 +9,7 @@ from dedupe.review.service import ReviewPolicy, ReviewService
 from dedupe.store import JudgmentStore
 from dedupe.workspace import PROJECT_ID, RUN_ID, Project, Run
 
-from .guards import _services
+from .guards import _context, _services, in_project
 
 __all__ = ["PROJECT_ID", "RUN_ID", "ProjectScope", "RunScope", "project_scope", "run_scope", "can_see"]
 MAX_CACHED = 32
@@ -30,30 +30,21 @@ class RunScope(ProjectScope):
 
 
 def can_see(sv, principal, project_id: str) -> bool:
-    """Same rule as `_check_membership`, as a yes/no for lists (a members-only project does not appear for outsiders)."""
-    if "projects.all" in principal.permissions:
-        return True
-    members = sv.workspace.members(project_id)
-    return not members or any(g.subject == principal.sub for g in members)
+    """May this person open the project at all (a members-only project does not appear for outsiders)? See guards.in_project."""
+    return in_project(sv, principal, project_id) is not None
 
 
 def _check_membership(request: Request, project_id: str) -> None:
-    """Business-unit scoping: a project with no grants is open to anyone holding the matching global permission (today's
-    behaviour, unchanged). The moment a project has at least one grant, only its members may touch it - except
-    holders of the `projects.all` permission (platform_admin, auditor, admin), who always see every project. Called after the route's
-    own `require(...)` guard has already run and set `request.state.principal`."""
+    """Business-unit scoping for a project that is NOT the one in the address (the guard already checked that one): a project with members
+    is open only to them and to holders of `projects.all`. Uses the principal the route's guard put on the request."""
     principal = getattr(request.state, "principal", None)
     if principal is None:
         return
-    if "projects.all" in principal.permissions:
-        return
     sv = _services(request)
-    members = sv.workspace.members(project_id)
-    if not members or any(g.subject == principal.sub for g in members):
+    if can_see(sv, principal, project_id):
         return
     sv.seclog.record("permission_denied", actor=principal.actor, roles=sorted(principal.roles), status=403, detail={"needs": f"member of {project_id}"},
-                      method=request.method, route=getattr(request.scope.get("route"), "path", "") or "",
-                      request_id=request.scope["state"].get("request_id", ""), client_ip=request.scope["state"].get("client_ip", ""))
+                      **{**_context(request), "project_id": project_id})
     raise HTTPException(403, "You are not a member of this project.")
 
 

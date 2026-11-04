@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from dedupe.workspace import PROJECT_ID, RUN_ID, RunError, WorkspaceError
 
 from .auth import Principal
-from .guards import _context, _services, authenticated, require, require_or_owner
+from .guards import _context, _services, authenticated, in_project, require, require_or_owner
 from .routes_read import CONFIG_NAMES, PID, RID
 from .routes_write import _key
 from .scope import can_see, project_scope, run_scope
@@ -104,6 +104,7 @@ class ProjectView(BaseModel):
     runs: int = 0
     latest_run: RunView | None = None
     progress: dict | None = None                  # how far the project is (see _progress); filled in the projects list and on the start page
+    you_can: list[str] | None = None              # the caller's permissions inside this project (a member keeps only what their project role allows)
 
 
 def _run_view(run, replayed: bool = False, sv=None) -> RunView:
@@ -114,9 +115,10 @@ def _run_view(run, replayed: bool = False, sv=None) -> RunView:
 
 def _project_view(sv, proj, p: Principal | None = None, request: Request | None = None) -> ProjectView:
     runs = sv.jobs.recent(proj.id, limit=1000)
+    p = p and in_project(sv, p, proj.id)
     return ProjectView(**{**proj.__dict__, "second_approval": proj.second_approval}, you_own=bool(p and sv.workspace.is_owner(proj.id, p.sub)), runs=len(runs),
-                       latest_run=_run_view(runs[0], sv=sv) if runs else None,
-                       progress=_progress(request, sv, proj.id, p, runs[0] if runs else None) if request is not None and p is not None else None)
+                       latest_run=_run_view(runs[0], sv=sv) if runs else None, you_can=sorted(p.permissions) if p else None,
+                       progress=_progress(request, sv, proj.id, p, runs[0] if runs else None) if request is not None and p else None)
 
 
 def _progress(request: Request, sv, project_id: str, p: Principal, latest) -> dict:
@@ -162,7 +164,7 @@ def home(request: Request, p: Principal = ANY):
     if "queue.read" in p.permissions:
         out["open_review_items"] = sum(v.progress["open_review"] or 0 for v in views)
     if "judgment.approve" in p.permissions or "config.approve" in p.permissions:
-        out["pending_approvals"] = sum(v.progress["pending_approvals"] for v in views)
+        out["pending_approvals"] = sum(v.progress["pending_approvals"] or 0 for v in views)       # None where a project role does not approve
     return out
 
 
