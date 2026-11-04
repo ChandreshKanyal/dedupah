@@ -1,4 +1,4 @@
-"""The web screens: three static files served from this package (no build step, no third-party scripts). Public by design: the files contain no
+"""The web screens: static files served from this package (no build step, no third-party scripts). Public by design: the files contain no
 data; every call the page makes to the API is authenticated like any other. The page gets its own, still strict, content-security policy:
 only scripts and styles from this origin, no inline code, no framing, requests to this origin only."""
 from pathlib import Path
@@ -10,7 +10,10 @@ from .guards import public
 
 router = APIRouter()
 UI = Path(__file__).parent / "ui"
-FILES = {"": ("index.html", "text/html; charset=utf-8"), "app.js": ("app.js", "text/javascript; charset=utf-8"),
+# The portal script, one file per area of the portal. They share one scope and index.html loads them in this order: each may use what
+# the files before it define.
+SCRIPTS = ("core", "shell", "home", "projects", "runs", "rules", "data", "results", "review", "admin", "start")
+FILES = {"": ("index.html", "text/html; charset=utf-8"), **{f"js/{n}.js": (f"js/{n}.js", "text/javascript; charset=utf-8") for n in SCRIPTS},
          "style.css": ("style.css", "text/css; charset=utf-8"),
          **{n: (n, "image/png") for n in ("logo-light.png", "logo-dark.png", "wordmark-light.png", "wordmark-dark.png", "favicon.png")}}
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
@@ -30,9 +33,11 @@ def ui_index():
     return _serve("")
 
 
-@router.get("/ui/app.js", dependencies=[Depends(public())], include_in_schema=False)
-def ui_script():
-    return _serve("app.js")
+@router.get("/ui/js/{name}.js", dependencies=[Depends(public())], include_in_schema=False)
+def ui_script(name: str):
+    if f"js/{name}.js" not in FILES:
+        raise HTTPException(404, "Not found")
+    return _serve(f"js/{name}.js")
 
 
 @router.get("/ui/{name}.png", dependencies=[Depends(public())], include_in_schema=False)

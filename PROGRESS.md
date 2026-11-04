@@ -3,14 +3,14 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp plan waiting for decisions) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phase 0 done, phase 1 next) <<<
 
-**Where we are (2026-11-04).** Sections 69-75 are built and committed (projects/runs redesign, multi-file upload, one-table mapping, rules by
-columns with the score optional, review fixes round 1). **Next:** the whole-portal revamp in `docs/REVAMP_PLAN.md` (critique of every
-screen, new 4-item menu, project page as the journey Data > Rules > Run > Review > Results, glossary, phases 0-7). The plan asks the user
-five questions (section 6 of the plan): 4-item menu, one-click run with a confirm summary, hide versions/approvals when second approval is
-off, "connection" -> "data source", and whether to start with phase 0 (split app.js) or phase 1. My recommendation: yes to 1-4, phase 0 first.
-**Do not start building until the user answers.**
+**Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
+The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
+one-click run with a confirm summary, versions/approvals hidden when second approval is off, "connection" -> "data source", and phase 0
+first. **Phase 0 is done (section 76):** `app.js` is split into 11 files under `ui/js/` with no change in behaviour. **Next: phase 1**
+(4-item menu, Home as "what needs me now", Delete into More menus); the glossary and the page template from phase 0 are built with
+phase 1, where they are first used. Confirm with the user before starting each phase.
 
 **Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
 DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
@@ -38,6 +38,7 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Revamp phase 0:** the portal script split into 11 files per area (`ui/js/`), loaded in a fixed order, no change in behaviour | 76 |
 | session 4 | **Review fixes, round 1:** engine (insufficient-mode scores, default birth dates, big identifier blocks, more date formats), uploads (separators, title rows, sheets, short and wide rows, midnight dates), platform (idempotency per project, reused project id, workspace reads, Excel control characters), portal (Back, refresh timer, taken connection id, approvals link, activity wording), duckdb pinned below 2 | 75 |
 | session 4 | **Matching rules as columns that must agree** (the same when / ask a person when / never the same when / everything else, with the score optional and off for new projects); **golden record as one choice per column** | 74 |
 | session 4 | **Matching and golden-record rules as one short pre-filled form each**, one button (Use these rules / Save changes / Send for approval) | 73 |
@@ -351,6 +352,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp phase 0)** — `app.js` split into 11 files under `ui/js/`; tests, ruff and a 27-screen browser tour clean. Section 76.
 - **2026-11-04 (session 4, revamp plan)** — Whole-portal critique after a browser tour; plan in `docs/REVAMP_PLAN.md` (phases 0-7), waiting for the user's decisions.
 - **2026-10-23 (session 4, review fixes)** — First batch of the findings from the agent review fixed, each with a test. Section 75.
 - **2026-10-21 (session 4, rules by columns)** — Matching rules rebuilt around the columns that must agree, score optional (`use_score`, off for new projects); golden record one choice per column; checked in a browser. Section 74.
@@ -1840,3 +1842,15 @@ The user: "please start the fixing". Findings are in `~/agent-review/*/report-su
 - **Build:** `duckdb>=1.4,<2` in pyproject. A rebuilt image had pulled duckdb 2.0, which refuses the `x -> ...` lambda syntax used in the engine's SQL (migrate before allowing 2).
 - **Open, for the user's decision:** member role of a project grant is ignored (P1-02), cross-project DEDUPE_SRC/DST variables (P1-01), steward bulk unmask (P1-03),
   scoring-model rebuild (E1-02/03), second-approval gaps (P1-04/05/08), plus the medium and low findings not listed above.
+
+## 76. Revamp phase 0: the portal script split per area (2026-11-04, session 4)
+
+- **Why:** `app.js` had grown to 3,211 lines; every change risked an unrelated screen. Phase 0 of `docs/REVAMP_PLAN.md`.
+- **What:** the file is cut at its existing section markers into `src/dedupe/api/ui/js/`: core (state, helpers, messages, requests,
+  addresses), shell (sign-in, menu, building blocks, search), home, projects, runs, rules, data, results (and schedules), review (inbox,
+  compare, person, decisions), admin (approvals, audit, users, roles, account menu, Settings), start. They are classic scripts sharing one
+  scope (no build step, same CSP), loaded in the order of `routes_ui.SCRIPTS`; each may use what the earlier files define.
+- **How it was checked:** the files, joined in order, hold exactly the old lines (same checksum); each file loads in order in node without
+  errors; `/ui/js/<name>.js` serves only the listed files (`/ui/app.js` is gone, 404); the UI tests read all files in load order, and a new
+  test checks that the page loads every file in the right order. Tests and ruff clean; the 27-screen browser tour shows no script errors.
+- **Not done in phase 0, moved to phase 1:** the glossary file and the page template (they are built where they are first used).

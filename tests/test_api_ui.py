@@ -10,8 +10,15 @@ from fastapi.testclient import TestClient
 from dedupe.api import ApiSettings, create_app
 from dedupe.api.guards import api_routes
 from dedupe.api.roles import PERMISSIONS
+from dedupe.api.routes_ui import SCRIPTS as SCRIPTS_ORDER
 
 UI = Path("src/dedupe/api/ui")
+SCRIPTS = [UI / "js" / f"{n}.js" for n in SCRIPTS_ORDER]
+
+
+def script() -> str:
+    """The whole portal script: its files in the order the page loads them."""
+    return chr(10).join(p.read_text(encoding="utf-8") for p in SCRIPTS)
 
 
 @pytest.fixture
@@ -20,20 +27,28 @@ def app(tmp_path):
     return create_app(s)
 
 
-def test_the_page_and_its_two_files_are_served_with_a_strict_policy(app):
+def test_the_page_and_its_files_are_served_with_a_strict_policy(app):
     c = TestClient(app)
-    for path, kind in (("/ui", "text/html"), ("/ui/app.js", "text/javascript"), ("/ui/style.css", "text/css")):
+    for path, kind in (("/ui", "text/html"), ("/ui/style.css", "text/css"), *((f"/ui/js/{p.name}", "text/javascript") for p in SCRIPTS)):
         r = c.get(path)
         assert r.status_code == 200 and r.headers["content-type"].startswith(kind), path
         csp = r.headers["content-security-policy"]
         assert "script-src 'self'" in csp and "'unsafe-inline'" not in csp and "'unsafe-eval'" not in csp and "frame-ancestors 'none'" in csp
         assert r.headers["cache-control"] == "no-store" and r.headers["x-content-type-options"] == "nosniff" and r.headers["x-frame-options"] == "DENY"
-    assert c.get("/ui/other.js").status_code == 404 and c.get("/ui/..%2Fapp.py").status_code == 404           # only the three files exist
+    for bad in ("/ui/app.js", "/ui/other.js", "/ui/js/other.js", "/ui/js/..%2F..%2Froutes_ui.py", "/ui/..%2Fapp.py"):          # only the listed files exist
+        assert c.get(bad).status_code == 404, bad
+
+
+def test_the_page_loads_every_script_file_in_order():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    assert re.findall(r'<script src="/ui/js/([a-z]+)\.js"></script>', html) == list(SCRIPTS_ORDER)
+    assert sorted(p.stem for p in (UI / "js").glob("*.js")) == sorted(SCRIPTS_ORDER)                      # no file left out of the list
+    assert all(p.read_text(encoding="utf-8").startswith('"use strict";') for p in SCRIPTS)
 
 
 def test_nothing_in_the_page_or_script_can_inject_markup_or_leak_the_token():
     html = (UI / "index.html").read_text(encoding="utf-8")
-    lines = (UI / "app.js").read_text(encoding="utf-8").splitlines()
+    lines = script().splitlines()
     js = chr(10).join(x for x in lines if not x.lstrip().startswith("//"))      # code only, not comments
     assert re.findall(r"<script\b(?![^>]*\bsrc=)", html) == [] and not re.search(r"\son[a-z]+\s*=|style\s*=", html)          # no inline code or styles
     for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "sessionStorage", "document.cookie",
@@ -52,7 +67,7 @@ def test_nothing_in_the_page_or_script_can_inject_markup_or_leak_the_token():
 
 
 def test_the_script_only_calls_endpoints_and_permissions_that_exist(app):
-    js = (UI / "app.js").read_text(encoding="utf-8")
+    js = script()
     first_segments = {r.path.split("/")[1] for r in api_routes(app)}
     called = set(re.findall(r'api\("(?:GET|POST)", "/([a-z-]+)', js))
     assert called and called <= first_segments, called - first_segments
@@ -65,14 +80,15 @@ def test_the_script_only_calls_endpoints_and_permissions_that_exist(app):
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_the_script_is_valid_javascript():
-    r = subprocess.run([shutil.which("node"), "--check", str(UI / "app.js")], capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
+    for p in SCRIPTS:
+        r = subprocess.run([shutil.which("node"), "--check", str(p)], capture_output=True, text=True)
+        assert r.returncode == 0, (p.name, r.stderr)
 
 
 def test_the_screens_stay_flat_and_plain():
     """The look is a deliberate choice: neutral workspace, one accent colour, no decoration. These rules keep later edits from drifting."""
     css = re.sub(r"/\*.*?\*/", "", (UI / "style.css").read_text(encoding="utf-8"), flags=re.S)          # rules only, not the comments about them
-    text = css + (UI / "index.html").read_text(encoding="utf-8") + (UI / "app.js").read_text(encoding="utf-8")
+    text = css + (UI / "index.html").read_text(encoding="utf-8") + script()
     for decoration in ("gradient", "box-shadow", "text-shadow", "@keyframes", "animation", "blur(", "border-left", "border-inline-start", "::before", "::after", "backdrop-filter"):
         assert decoration not in css, decoration
     assert not [ch for ch in text if ord(ch) > 0x2000 and ch not in "—–‘’“”…"], "no emoji or symbol characters"
