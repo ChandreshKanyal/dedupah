@@ -14,7 +14,7 @@ import duckdb
 import numpy as np
 
 from .comparisons import COMPARISONS, DOB, STRONG_ID
-from .levels import level_counts, level_matrix, materialize, prepare_tf_tables
+from .levels import level_counts, level_matrix, materialize, prepare_tf_tables, tf_matrix
 from .model import Model
 from .unsupervised import fit_em, fixed_levels, readiness
 
@@ -96,17 +96,44 @@ def fit_logistic(X: np.ndarray, y: np.ndarray, l2: float = L2, iters: int = 40):
     return w[:-1], w[-1]
 
 
-def adjusted_weights(weights: dict, u_rand: dict, L: np.ndarray, TF: np.ndarray) -> np.ndarray:
-    """Natural-log contribution per pair and comparison, including the term-frequency adjustment."""
-    W = np.zeros(L.shape, dtype=np.float64)
+def tf_terms(u_rand: dict, L: np.ndarray, TF: np.ndarray) -> np.ndarray:
+    """Natural-log term-frequency adjustment per pair and comparison (0 where a level has none): log(u_random(level) / tf(value)), clipped."""
+    A = np.zeros(L.shape, dtype=np.float64)
     for j, c in enumerate(COMPARISONS):
-        tbl = np.append(np.array(weights[c.name]), 0.0)
-        W[:, j] = tbl[np.where(L[:, j] < 0, c.n_levels, L[:, j])]
         has_tf = ~np.isnan(TF[:, j]) & (L[:, j] >= 1)
         if has_tf.any():
             ur = np.array(u_rand[c.name])[L[has_tf, j]]
-            W[has_tf, j] += np.log(np.clip(ur / np.maximum(TF[has_tf, j], TF_FLOOR), 1 / TF_CLIP, TF_CLIP))
-    return W
+            A[has_tf, j] = np.log(np.clip(ur / np.maximum(TF[has_tf, j], TF_FLOOR), 1 / TF_CLIP, TF_CLIP))
+    return A
+
+
+def tf_centres(A: np.ndarray, L: np.ndarray, rows: np.ndarray) -> dict:
+    """The average adjustment per comparison and level over `rows` (the pairs the weights were fitted on). A logistic weight already holds
+    the average evidence of its level, so only the difference from that average may be added: otherwise the adjustment shifts the learned
+    weight itself (agent review E1-03: an exact phone went from +2.96 to -0.32 bits and exact duplicates without a PAN went to review)."""
+    out = {}
+    for j, c in enumerate(COMPARISONS):
+        for lv in range(1, c.n_levels):
+            at = (L[:, j] == lv) & (A[:, j] != 0)
+            pick = at & rows if (at & rows).sum() >= 5 else at
+            if pick.any():
+                out.setdefault(c.name, {})[str(lv)] = float(A[pick, j].mean())
+    return out
+
+
+def adjusted_weights(weights: dict, u_rand: dict, L: np.ndarray, TF: np.ndarray, centres: dict | None = None) -> np.ndarray:
+    """Natural-log contribution per pair and comparison, including the term-frequency adjustment (minus its average for the level when the
+    model was fitted discriminatively, see tf_centres)."""
+    W = np.zeros(L.shape, dtype=np.float64)
+    A = tf_terms(u_rand, L, TF)
+    for j, c in enumerate(COMPARISONS):
+        tbl = np.append(np.array(weights[c.name]), 0.0)
+        W[:, j] = tbl[np.where(L[:, j] < 0, c.n_levels, L[:, j])]
+        centre = (centres or {}).get(c.name)
+        if centre:
+            shift = np.array([centre.get(str(lv), 0.0) for lv in range(c.n_levels)] + [0.0])
+            A[:, j] = np.where(A[:, j] != 0, A[:, j] - shift[np.where(L[:, j] < 0, c.n_levels, L[:, j])], 0.0)
+    return W + A
 
 
 def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Model:
@@ -124,9 +151,12 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
         raise ValueError(f"AGE_M labels {sorted(AGE_M)} must all exist on the DOB comparison")
     age_total = sum(u_rand["dob"][lvl] for lvl in age_levels)
     age_w = {lvl: float(np.log(m / max(u_rand["dob"][lvl] / age_total, U_FLOOR))) for lvl, m in age_levels.items()}
-    info = {}
+    info, centres = {}, {}
     if mode == "unsupervised_em":
-        weights, bias, info = fit_em(L, u_rand, fixed_levels(STRONG_BITS, age_w))
+        weights, bias, info = fit_em(L, u_rand, fixed_levels(STRONG_BITS, age_w), pairs_total=n * (n - 1) / 2)
+        if info["likely_matches"] > 0.6 * len(L):          # a file of near-copies, or EM found a pattern that is not "same person": say so
+            mode_reason += (f"; note: {info['likely_matches']} of {len(L)} candidate pairs look like the same person, which is unusually many, "
+                            "so check a sample of the merges")
     else:
         weights = {c.name: [0.0] * c.n_levels for c in COMPARISONS}
         bias = 0.0
@@ -138,6 +168,7 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
             coef, bias = fit_logistic(X, y)
             for (j, l), w in zip(labels, coef, strict=True):
                 weights[COMPARISONS[j].name][l] = float(w)
+            centres = tf_centres(tf_terms(u_rand, L, tf_matrix(con, "cand_levels")), L, seeded)
         for name, bits in STRONG_BITS.items():
             for l, b in bits.items():
                 weights[name][l] = b * LN2
@@ -149,5 +180,5 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
                   meta={"random_pairs": random_pairs, "candidate_pairs": int(len(L)),
                         "seed_pairs": {"same_person": int(pos.sum()), "different_people": int(neg.sum())},
                         "scoring_mode": mode, "scoring_mode_reason": mode_reason, "em": info,
-                        "regularisation_l2": L2, "strong_id_bits": STRONG_BITS})
+                        "regularisation_l2": L2, "strong_id_bits": STRONG_BITS, "tf_centres": centres})
     return model

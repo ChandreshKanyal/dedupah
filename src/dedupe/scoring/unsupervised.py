@@ -9,7 +9,12 @@ maximisation), as in Splink and the record-linkage literature:
   weight of a level = log(m / u)
 
 EM starts from a rough guess at which candidate pairs are real matches (name sounds alike plus other agreeing fields), then alternates between
-"how likely is each pair a match given the current m" and "what is m given those likelihoods" until it settles. Weaknesses, stated plainly:
+"how likely is each pair a match given the current m" and "what is m given those likelihoods" until it settles.
+
+Two things keep it honest (agent review E1-02). The prior is the share of matches among ALL record pairs, not among the candidates: u is
+measured on random pairs, so judging candidates (already chosen because their names agree) against a candidate-level prior counted the name
+twice and let EM decide that nearly every candidate was a match, after which "different phone, different email" weighed nothing and
+namesakes merged. Weaknesses, stated plainly:
 the fields are treated as independent (name, address and phone are correlated, so confidence is somewhat too high: weights are tempered and
 capped for that reason); it needs enough candidate pairs and enough plausible matches to find the pattern; and it is only as good as the
 starting guess. It is tested on SYNTHETIC data only.
@@ -24,7 +29,7 @@ MIN_PLAUSIBLE = 15       # plausible matches in the starting guess
 ITERATIONS = 40
 SMOOTH = 0.5             # pseudo-count per level so an unseen level never gets weight -infinity
 WEIGHT_CAP_BITS = 9.0    # no single comparison can contribute more than this either way
-TEMPER = 0.8             # shrinks every learned weight: the independence assumption makes EM over-confident
+TEMPER = 0.9             # shrinks every learned weight a little: the independence assumption makes EM over-confident (0.8 cost recall once the prior became the random-pair prior)
 IX = {c.name: i for i, c in enumerate(COMPARISONS)}
 
 
@@ -48,10 +53,12 @@ def readiness(L: np.ndarray, pos: int, neg: int) -> tuple[str, str]:
                             f"{n_plausible} plausible matches, need {MIN_PAIRS} and {MIN_PLAUSIBLE})")
 
 
-def fit_em(L: np.ndarray, u_rand: dict, fixed: dict) -> tuple[dict, float, dict]:
+def fit_em(L: np.ndarray, u_rand: dict, fixed: dict, pairs_total: float | None = None) -> tuple[dict, float, dict]:
     """Returns (weights by comparison in natural log, bias in natural log, info). `fixed` holds the weights that are NOT learned
-    (identifier levels and age-based birth-date levels), as {comparison: {level: weight}}."""
+    (identifier levels and age-based birth-date levels), as {comparison: {level: weight}}. `pairs_total`: how many record pairs exist in
+    the data (n(n-1)/2), the population u was measured on; the bias is the log-odds of a match among them (default: the candidates)."""
     n = len(L)
+    total = float(pairs_total or n)
     resp = np.where(plausible_matches(L), 0.9, 0.02)
     free = {}
     for j, c in enumerate(COMPARISONS):
@@ -59,15 +66,13 @@ def fit_em(L: np.ndarray, u_rand: dict, fixed: dict) -> tuple[dict, float, dict]
         u = np.array([u_rand[c.name][l] for l in lv])
         free[j] = (lv, u / u.sum())
     log_ratio = {j: np.zeros(c.n_levels) for j, c in enumerate(COMPARISONS)}
-    for j, c in enumerate(COMPARISONS):
-        for l, w in fixed.get(c.name, {}).items():
-            log_ratio[j][l] = w
     fixed_part = np.zeros(n)
     for j, c in enumerate(COMPARISONS):
         for l, w in fixed.get(c.name, {}).items():
+            log_ratio[j][l] = w
             fixed_part[L[:, j] == l] += w
-    lam = float(resp.mean())
-    done = 0
+    cap = WEIGHT_CAP_BITS * np.log(2)
+    lam, done = 0.5, 0
     for _ in range(ITERATIONS):
         done += 1
         for j in range(len(COMPARISONS)):
@@ -77,10 +82,9 @@ def fit_em(L: np.ndarray, u_rand: dict, fixed: dict) -> tuple[dict, float, dict]
             in_scope = np.isin(L[:, j], lv)
             tot = resp[in_scope].sum() + SMOOTH * len(lv)
             m = np.array([(resp[L[:, j] == l].sum() + SMOOTH) / tot for l in lv])
-            w = np.clip(TEMPER * np.log(m / u), -WEIGHT_CAP_BITS * np.log(2), WEIGHT_CAP_BITS * np.log(2))
-            for l, wl in zip(lv, w, strict=True):
+            for l, wl in zip(lv, np.clip(TEMPER * np.log(m / u), -cap, cap), strict=True):
                 log_ratio[j][l] = wl
-        lam = float(np.clip(resp.mean(), 1e-3, 0.5))
+        lam = float(np.clip(resp.sum() / total, 1e-12, 0.5))          # matches among all pairs: matches outside the candidates are ~0
         logit = np.log(lam / (1 - lam)) + fixed_part
         for j in range(len(COMPARISONS)):
             lv, _ = free[j]
@@ -91,11 +95,11 @@ def fit_em(L: np.ndarray, u_rand: dict, fixed: dict) -> tuple[dict, float, dict]
         resp = new
         if moved < 1e-4:
             break
-    weights = {}
-    for j, c in enumerate(COMPARISONS):
-        weights[c.name] = [float(log_ratio[j][l]) for l in range(c.n_levels)]
-    return weights, float(np.log(lam / (1 - lam))), {"iterations": done, "match_share": round(lam, 4), "plausible_start": int(plausible_matches(L).sum()),
-                                                      "likely_matches": int((resp >= 0.5).sum())}
+    weights = {c.name: [float(log_ratio[j][l]) for l in range(c.n_levels)] for j, c in enumerate(COMPARISONS)}
+    likely = int((resp >= 0.5).sum())
+    return weights, float(np.log(lam / (1 - lam))), {"iterations": done, "match_share": round(float(resp.mean()), 4) if n else 0.0,
+                                                      "prior_bits": round(float(np.log2(lam / (1 - lam))), 2),
+                                                      "plausible_start": int(plausible_matches(L).sum()), "likely_matches": likely}
 
 
 def fixed_levels(strong_bits: dict, age_weights: dict) -> dict:

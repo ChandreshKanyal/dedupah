@@ -488,7 +488,6 @@
                       "comparison": "dob",
                       "in": [
                         "exact date",
-                        "exact date, but a 1-Jan default",
                         "day and month swapped"
                       ]
                     },
@@ -511,7 +510,10 @@
                       "all": [
                         {
                           "comparison": "dob",
-                          "is": "same year (partial or differing day/month)"
+                          "in": [
+                            "same year (partial or differing day/month)",
+                            "exact date, but a 1-Jan default"
+                          ]
                         },
                         {
                           "comparison": "address",

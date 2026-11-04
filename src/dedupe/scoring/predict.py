@@ -22,7 +22,7 @@ def score(con: duckdb.DuckDBPyConnection, model: Model, out_path: Path) -> dict:
         # exact duplicates below the review line. Identifier evidence still counts; every other pair sits at 50%, in the review band, and the
         # decision rules ('not enough evidence' and the others) separate what is worth a person's time.
         TF = np.full_like(TF, np.nan)
-    W = adjusted_weights(model.weights, model.u_random, L, TF) / np.log(2)  # bits
+    W = adjusted_weights(model.weights, model.u_random, L, TF, model.meta.get("tf_centres")) / np.log(2)  # bits
     prior_bits = model.bias / np.log(2)
     weight = W.sum(axis=1) + prior_bits
     prob = 1.0 / (1.0 + np.exp2(-np.clip(weight, -60, 60)))

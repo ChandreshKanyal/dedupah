@@ -143,10 +143,12 @@ def test_review_queue_workload_controls(run_a, tmp_path):
     con.execute(f"""CREATE TABLE cluster_map AS SELECT i.rid, c.cluster_id FROM read_parquet('{w / 'clusters' / 'clusters.parquet'}') c
                     JOIN read_parquet('{w / 'candidates.index.parquet'}') i USING (source_id, source_record_id)""")
     full = build_queue(con, tmp_path / "a.parquet")["queue_items"]
-    high = build_queue(con, tmp_path / "b.parquet", min_probability=0.5)["queue_items"]
+    lo, hi = duckdb.sql(f"select min(top_probability), max(top_probability) from '{tmp_path / 'a.parquet'}'").fetchone()
+    cut = (lo + hi) / 2                                                       # halfway through this queue's own scores
+    high = build_queue(con, tmp_path / "b.parquet", min_probability=cut)["queue_items"]
     top = build_queue(con, tmp_path / "c.parquet", cap=3)["queue_items"]
     assert full > high > 0 and top == 3
-    assert duckdb.sql(f"select min(top_probability) from '{tmp_path / 'b.parquet'}'").fetchone()[0] >= 0.5
+    assert duckdb.sql(f"select min(top_probability) from '{tmp_path / 'b.parquet'}'").fetchone()[0] >= cut
 
 
 def test_person_ids_are_stable_when_the_pipeline_is_rerun_with_new_data(tmp_path):

@@ -111,7 +111,60 @@ def test_em_learns_that_agreeing_fields_mean_a_match():
         agree = np.where(match, rng.random(n) < 0.9, rng.random(n) < 0.1)
         L[:, IX[name]] = np.where(agree, hi, lo)
     u = {c.name: [0.9] + [0.1 / (c.n_levels - 1)] * (c.n_levels - 1) for c in COMPARISONS}   # agreeing by chance is rare
-    weights, bias, info = un.fit_em(L, u, un.fixed_levels({}, {}))
+    weights, bias, info = un.fit_em(L, u, un.fixed_levels({}, {}), pairs_total=n)
     assert weights["name"][7] > 1.0 > -1.0 > weights["name"][0]
     assert weights["phone"][2] > 0 > weights["phone"][0]
     assert info["likely_matches"] > 0.1 * n
+
+
+FIRST = ["Rahul", "Anita", "Vikram", "Priya", "Arjun", "Meena", "Suresh", "Kavita", "Deepak", "Pooja", "Manoj", "Rekha", "Ajay", "Neha", "Sanjay", "Asha"]
+LAST = ["Sharma", "Verma", "Gupta", "Patel", "Iyer", "Reddy", "Nair", "Das", "Khan", "Singh", "Joshi", "Mehta", "Rao", "Pillai"]
+
+
+def _people(n, seed, pan_share=0.0):
+    """Many namesakes (16 x 14 names) in four towns of one PIN each, each person with their own phone and email; every 8th person is copied as a
+    true duplicate."""
+    import random
+    rnd = random.Random(seed)
+    rows = []
+    for i in range(n):
+        fn, ln = rnd.choice(FIRST), rnd.choice(LAST)
+        pan = "".join(rnd.choice("ABCDEFGHJKLMNPRSTUVWXYZ") for _ in range(3)) + "P" + rnd.choice("ABCDEFGH") + f"{rnd.randint(1000, 9999)}Z"
+        rows.append((f"O{i}", f"{fn} {ln}", f"{rnd.randint(1, 28):02d}-{rnd.randint(1, 12):02d}-{rnd.randint(1950, 2000)}", str(rnd.randint(6000000000, 9999999999)),
+                     f"{fn.lower()}{i}@example.com", *rnd.choice([("Pune", "411001"), ("Delhi", "110001"), ("Mumbai", "400053"), ("Chennai", "600028")]),
+                     pan if rnd.random() < pan_share else ""))
+    rows += [(r[0] + "d", *r[1:]) for r in rows[::8]]
+    return rows
+
+
+PEOPLE_COLS = ["id", "name", "dob", "phone", "mail", "city", "pin", "pan"]
+PEOPLE = {"full_name": "name", "dob": "dob", "mobile": "phone", "email": "mail", "city": "city", "pincode": "pin"}
+
+
+def _merged(tmp_path):
+    import duckdb
+    w = tmp_path / "work"
+    return duckdb.connect().execute(f"""SELECT i1.source_record_id, i2.source_record_id FROM '{w}/decisions.parquet' d
+        JOIN '{w}/candidates.index.parquet' i1 ON i1.rid = d.l_rid JOIN '{w}/candidates.index.parquet' i2 ON i2.rid = d.r_rid
+        WHERE d.decision = 'auto_merge'""").fetchall()
+
+
+def test_learning_from_the_data_itself_does_not_merge_namesakes(tmp_path):
+    """Agent review E1-02: EM judged candidates (chosen because their names agree) against a candidate-level prior, decided nearly all were
+    matches and learned that a different phone and email mean nothing: 28 of 238 automatic merges joined different people."""
+    s = _csv_run(tmp_path, _people(2000, 7), PEOPLE, PEOPLE_COLS)
+    assert s["scoring"]["mode"] == "unsupervised_em"
+    merged = _merged(tmp_path)
+    assert len(merged) >= 200 and all(a.rstrip("d") == b.rstrip("d") for a, b in merged)
+    assert s["scoring"]["em"]["likely_matches"] < 0.5 * s["blocking"]["candidate_pairs"]
+
+
+def test_exact_duplicates_without_an_identifier_merge_when_the_model_learned_from_identifiers(tmp_path):
+    """Agent review E1-03: the term-frequency adjustment was added on top of weights that already held the average evidence, so an exact
+    phone counted against a match and exact duplicates without a PAN went to review."""
+    s = _csv_run(tmp_path, _people(2000, 11, pan_share=0.5), {**PEOPLE, "pan": "pan"}, PEOPLE_COLS)
+    assert s["scoring"]["mode"] == "id_anchored"
+    merged = {(a, b) for a, b in _merged(tmp_path)}
+    dups = {(f"O{i}", f"O{i}d") for i in range(0, 2000, 8)}
+    assert all(a.rstrip("d") == b.rstrip("d") for a, b in merged)
+    assert len(dups & {tuple(sorted(p)) for p in merged}) >= 0.95 * len(dups)

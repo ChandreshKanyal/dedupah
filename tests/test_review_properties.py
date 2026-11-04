@@ -25,7 +25,7 @@ def sim(tmp_path_factory):
     (d / "sources.json").write_text(json.dumps(cfg), encoding="utf-8")
     run_pipeline(PipelineConfig(d / "sources.json", d / "work", truth=syn))
     run = load_run(d / "work", syn)
-    assert len(run.items) >= 20
+    assert len(run.items) >= 15                    # the review queue of 150 synthetic households (18 since the scoring rebuild, section 89)
     return run, d
 
 

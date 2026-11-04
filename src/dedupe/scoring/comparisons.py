@@ -65,7 +65,7 @@ DOB = Comparison(
     "dob", "(l_dob_year IS NULL AND l_birth_year_min IS NULL) OR (r_dob_year IS NULL AND r_birth_year_min IS NULL)",
     (
         Level(5, "exact date", "l_dob = r_dob AND NOT l_dob_placeholder", "l_dob"),
-        Level(4, "exact date, but a 1-Jan default", "l_dob = r_dob"),
+        Level(4, "exact date, but a 1-Jan default", "l_dob = r_dob", "l_dob"),      # weighed by how many records share that 1 January
         Level(3, "day and month swapped", "l_dob_year = r_dob_year AND l_dob_day = r_dob_month AND l_dob_month = r_dob_day"),
         Level(2, "same year (partial or differing day/month)", "l_dob_year = r_dob_year"),
         Level(1, "same day and month, different year", "l_dob_day = r_dob_day AND l_dob_month = r_dob_month"),

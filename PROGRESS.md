@@ -2113,3 +2113,29 @@ Done with measurements first, then fixes, then the same measurements again (scri
 - Deleting a run while an incremental run was reusing its work could break that run: deletion is refused (409, naming the run) until the
   run reusing it has ended (`RunJobs.delete`). SECURITY.md was updated in section 87. Tests in `tests/test_runs_queue_health.py`.
 - **The platform review (P1) is now closed:** P1-01..P1-15 fixed (sections 75, 84-88); P1-09 and P1-14 were already fixed in round 1.
+
+## 89. Review fixes E1-02 and E1-03: the scoring model rebuilt where it was wrong (2026-11-04, session 4)
+
+- **E1-02 (critical), learning from the data itself (EM):** u is measured on RANDOM record pairs, but EM judged the candidates (chosen
+  because their names agree) against the share of matches among the candidates, so the name counted twice; EM then decided nearly every
+  candidate was a match (match share pinned at the 0.5 clip, 2,107 of 2,116 "likely") and learned that a different phone or email weighs
+  -0.13 bits. Namesakes merged: 28 of 238 automatic merges in the agent's file. Now the prior is the share of matches among ALL pairs
+  (`fit_em(pairs_total=n(n-1)/2)`, no 0.5 clip; about -13.5 bits there), so a different phone and email weigh what they should (about -7
+  bits on that synthetic file). Result on the agent's file: **0 of 204 automatic merges wrong** (all 200 true duplicates and the owner's
+  variants merged). The tempering of EM weights went from 0.8 to 0.9 (0.8 cost recall against the new prior). A run whose EM still finds
+  more than 60% of candidates "same person" says so in its scoring note. A smoothing change that pulled unseen levels to negative weights
+  was tried and dropped (it penalised an alternate-number match).
+- **E1-03 (high), term frequencies on top of learned weights:** a logistic weight already holds the average evidence of its level, so adding
+  log(u/tf) shifted the weight itself (exact phone +2.96 -> -0.32 bits) and 193 of 375 exact duplicates without a PAN went to review.
+  The adjustment is now centred on its average over the pairs the weights were fitted on (`train.tf_centres`, kept in the model as
+  `meta.tf_centres`; older models have none and score as before). EM weights (log m/u) need no centring: there the adjustment is exact.
+  Result: **all 375 merged, 0 wrong.**
+- **1-January dates:** level 4 ("exact date, but a 1-Jan default") is weighed by how many records share that date (tf key), and the
+  default evidence rule counts it like a birth year (with the same PIN), no longer like an exact birth date. Saved project rules keep theirs.
+- **Synthetic benchmark** (`~/agent-review/scoring/bench.py`, 1,200 households, old -> new): with identifiers F1 0.903 -> 0.931, review
+  pairs 1,299 -> 671, wrong automatic merges 2 -> 11 of ~8,900; without identifiers wrong merges 60 -> 18 (precision 0.983 -> 0.994),
+  recall before review 0.883 -> 0.842 because ~270 more true pairs (mostly same name and birth date but no shared contact) go to a person
+  instead of merging on their own. Chosen on purpose: a wrong merge costs more than a review. SYNTHETIC data only.
+- **Tests:** `tests/test_scoring_modes.py` replays both findings (namesakes in four one-PIN towns; half the people with a PAN); both fail
+  on the code before. Two older tests followed the better calibration (the review fixture now has 18 items, the workload test cuts the
+  queue halfway through its own scores). Suite: 521 passed, 4 skipped; ruff clean.
