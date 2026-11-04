@@ -323,6 +323,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp plan)** — Whole-portal critique after a browser tour; plan in `docs/REVAMP_PLAN.md` (phases 0-7), waiting for the user's decisions.
 - **2026-10-23 (session 4, review fixes)** — First batch of the findings from the agent review fixed, each with a test. Section 75.
 - **2026-10-21 (session 4, rules by columns)** — Matching rules rebuilt around the columns that must agree, score optional (`use_score`, off for new projects); golden record one choice per column; checked in a browser. Section 74.
 - **2026-10-19 (session 4, rules forms)** — Matching and golden-record pages reduced to one pre-filled form each; checked in a browser. Section 73.
