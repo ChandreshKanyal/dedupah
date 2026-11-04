@@ -182,3 +182,24 @@ def test_the_schema_helper_adds_columns_to_existing_tables_and_refuses_unsafe_on
     Table("things", risky, Column("id", String(10), primary_key=True), Column("must", String(5), nullable=False))
     with pytest.raises(RuntimeError, match="NOT NULL"):
         create_and_upgrade(engine, risky)
+
+
+def test_each_project_says_how_far_it_is_and_home_lists_what_needs_doing(world):
+    """The projects list and the start page give each project its next step: data, then rules, then the first run."""
+    c, s, sv, tmp = world
+    alice = as_(s, ALICE)
+    c.post("/projects", json={"id": "steps", "name": "Steps"}, headers=alice)
+    step = lambda: next(x for x in c.get("/projects", headers=alice).json() if x["id"] == "steps")["progress"]["step"]  # noqa: E731
+    assert step() == "data"
+    c.post("/projects/steps/connections", json={"connection": csv_connection(small_csv(tmp / "s.csv")), "reason": "the CRM export"}, headers=alice)
+    assert step() == "data"                                                                          # proposed, not in use yet
+    c.post("/projects/steps/connections/crm/versions/1/activate", json={}, headers=alice)
+    assert step() == "rules"
+    for name in ("decision", "survivorship"):
+        content = c.get(f"/projects/steps/config/{name}/default", headers=alice).json()["content"]
+        v = c.post(f"/projects/steps/config/{name}/propose", json={"content": content, "reason": "the standard rules"}, headers=alice).json()["version"]
+        assert c.post(f"/projects/steps/config/{name}/versions/{v}/activate", json={}, headers=alice).status_code == 200
+        assert step() == ("rules" if name == "decision" else "run")                                  # both kinds of rules are needed
+    home = c.get("/home", headers=alice).json()
+    assert [(x["id"], x["progress"]["step"]) for x in home["project_list"]] == [("steps", "run")]
+    assert c.get("/home", headers=as_(s, BOB)).json()["project_list"] == []                          # never someone else's project

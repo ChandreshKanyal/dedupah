@@ -1,20 +1,43 @@
 "use strict";
 // Home. Part of the portal script: the files in js/ share one scope and load in the order of routes_ui.SCRIPTS.
 // ---- home --------------------------------------------------------------------------------------------------------------
+// Home answers "what needs me now?": one line per thing to do, each with the button that does it (the first is the main button), then every
+// project with how far it is. Nothing destructive is offered here.
+function homeTodo(p) {
+  const pr = p.progress || {};
+  const todo = [];
+  const step = {
+    data: can("sources.manage") ? ["database", "Add the data of " + p.name, "Its files or databases, to find the duplicates in.", "Add data", () => go(() => addDataPage(p.id))] : null,
+    rules: can("config.read") ? ["sliders", "Choose the rules of " + p.name, "When two records are the same customer, and how the one clean record is built.", "Choose rules",
+      () => go(() => viewProject(p.id, "setup"))] : null,
+    run: can("runs.start") ? ["play", p.name + " is ready for its first run", "Its data and rules are set.", "Start run", () => go(() => newRun(p.id))] : null,
+    failed: p.latest_run ? ["alert", "The last run of " + p.name + " did not finish", "Open it to see what went wrong, then run again.", "Open run",
+      () => go(() => viewRun(p.id, p.latest_run.id))] : null,
+    review: can("queue.read") ? ["inbox", plural(pr.open_review, "pair", "pairs") + " in " + p.name + " need your decision", "Same customer or not: the matching rules sent them to a person.",
+      "Review", () => go(() => viewInbox(p.id))] : null,
+  }[pr.step];
+  if (step) todo.push(step);
+  if (pr.pending_approvals) todo.push(["check", plural(pr.pending_approvals, "change", "changes") + " in " + p.name + " wait for your approval", "Another person proposed them.",
+    "Open approvals", link("/approvals")]);
+  return todo;
+}
 async function viewHome() {
   here("/");
-  const [h] = await Promise.all([api("GET", "/home"), refreshCache()]);
-  const stats = [stat("Projects", num(h.projects), link("/projects")), stat("Connections", num(h.connections))];
-  if (h.open_review_items != null) stats.push(stat("Pairs to review", num(h.open_review_items), link("/review")));
-  if (h.pending_approvals != null) stats.push(stat("Waiting for approval", num(h.pending_approvals), link("/approvals")));
-  const start = [];
-  if (can("projects.create")) start.push(tile("folder", "Create a project", "A project has its own data connections, decisions, person IDs and rules.", () => go(newProject)));
-  if (can("sources.manage")) start.push(tile("database", "Add data", "Connect a file, sheet or database, or upload a file, inside a project.", () => pickProject("Add data", "Choose the project this data belongs to.", (pid) => go(() => viewProject(pid, "connections")))));
-  if (can("runs.start")) start.push(tile("play", "Start a run", "Match and merge the records of chosen connections.", () => go(() => newRun())));
-  if (can("queue.read")) start.push(tile("inbox", "Review matches", "Every pair waiting for a person, across your projects.", link("/review")));
-  show(page("Welcome, " + me.username, "Find duplicate customers across your sources, review them and keep one golden record per person."),
-    el("div", { class: "stats" }, stats),
-    start.length ? el("h2", { class: "section" }, "Get started") : null, start.length ? el("div", { class: "tiles" }, start) : null,
-    can("runs.read") ? el("h2", { class: "section" }, "Recent runs") : null,
-    can("runs.read") ? runsTable(h.recent_runs, true) : null);
+  const h = await api("GET", "/home");
+  await refreshCache();
+  const projects = h.project_list || [];
+  const todo = projects.flatMap(homeTodo);
+  const create = can("projects.create") ? btn("New project", () => go(newProject), projects.length ? "" : "primary", "plus") : null;
+  const needs = todo.length
+    ? el("div", { class: "panel todo" }, todo.map(([ic, text, hint, action, fn], i) => el("div", { class: "todo-row" },
+      el("span", { class: "tile-icon" }, icon(ic)), el("div", {}, el("strong", {}, text), el("span", { class: "muted" }, hint)),
+      btn(action, fn, i === 0 ? "primary" : ""))))
+    : el("p", { class: "hint" }, projects.length ? "Nothing needs you right now." : "");
+  const list = projects.length
+    ? table(["Project", "Where it is", "Last run"], projects.map((p) => linkRow(p.name, () => viewProject(p.id), el("td", {}, progressTag(p.progress)),
+      el("td", {}, p.latest_run ? when(p.latest_run.started_at || p.latest_run.created_at) : el("span", { class: "muted" }, "no runs yet")))))
+    : empty(create ? "No projects yet. A project holds one piece of dedupe work: its data, its rules and its results." : "You are not in any project yet. Ask an administrator to add you to one.", create);
+  show(page("Welcome, " + me.username, "Find duplicate customers across your sources, check the doubtful ones and keep one clean record per customer.", projects.length ? [create] : []),
+    projects.length ? el("h2", { class: "section" }, "Needs you now") : null, projects.length ? needs : null,
+    el("h2", { class: "section" }, "Your projects"), list);
 }

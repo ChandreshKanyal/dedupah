@@ -1,12 +1,6 @@
 "use strict";
 // Runs: a new run and one run's page. Part of the portal script: the files in js/ share one scope and load in the order of routes_ui.SCRIPTS.
 // ---- runs --------------------------------------------------------------------------------------------------------------
-async function viewRuns() {
-  here("/runs");
-  await refreshCache();
-  show(page("Runs", "The latest runs of every project you can open. Open a run to see its results and review queue.", can("runs.start") ? [btn("New run", () => go(() => newRun()), "primary", "play")] : []),
-    runsTable(cache.runs, true));
-}
 async function cancelRun(pid, rid) {
   if (!(await confirmDialog("Stop this run?", "The run stops now and keeps no results. Nothing else is changed; you can start it again.", "Stop the run", true))) return;
   stopTimer();
@@ -35,7 +29,7 @@ async function newRun(pid) {
   await refreshCache();
   here(pid ? P(pid) + "/new-run" : "/new-run");
   if (!pid && cache.projects.length === 1) pid = cache.projects[0].id;
-  const trail = pid ? crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), "New run") : crumbs(crumb("Runs", "/runs"), "New run");
+  const trail = pid ? crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), "New run") : crumbs(crumb("Projects", "/projects"), "New run");
   const projSel = el("select", {}, pid ? null : el("option", { value: "" }, "Choose a project"), cache.projects.map((p) => el("option", { value: p.id, selected: p.id === pid }, p.name)));
   projSel.addEventListener("change", () => { if (projSel.value) go(() => newRun(projSel.value)); });
   const top = page("New run", "Choose what this run reads, which rules it uses and how it loads. Each choice is recorded with the run.", [], trail);
@@ -135,7 +129,7 @@ async function viewRun(pid, rid, tab) {
   if (going) actions.push(btn("Refresh", () => go(() => viewRun(pid, rid, tab)), "", "refresh"));
   if (going && can("runs.start")) actions.push(btn("Stop run", () => cancelRun(pid, rid), "danger"));
   if (again) actions.push(btn("Run again", () => startRun(pid, [], rid), "", "play"));
-  if (!going && can("data.delete")) actions.push(btn("Delete run", () => deleteRun(pid, rid), "danger", "trash"));
+  if (!going) actions.push(moreMenu([can("data.delete") ? ["Delete run", () => deleteRun(pid, rid), true] : null], "run " + rid));
   const top = page("Run " + rid, "Started " + when(r.started_at || r.created_at) + " by " + r.requested_by + (r.finished_at ? ". Finished " + when(r.finished_at) + "." : "."), actions,
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Runs", P(pid) + "/runs"), rid), runState(r));
   const used = runUsed(r);

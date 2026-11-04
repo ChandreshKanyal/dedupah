@@ -13,7 +13,7 @@ function runsTable(runs, withProject, pid) {
     el("td", { class: "num" }, num(r.summary.records)), el("td", { class: "num" }, num(r.summary.people)), el("td", { class: "num" }, num(r.summary.review_items)),
     el("td", {}, when(r.started_at || r.created_at)), el("td", {}, r.requested_by),
     del ? el("td", { class: "actions-cell" }, r.status === "running" || r.status === "queued" ? null
-      : btn("Delete", () => deleteRun(r.project_id, r.id), "small danger", "trash", { "aria-label": "Delete run " + r.id })) : null)));
+      : moreMenu([["Delete run", () => deleteRun(r.project_id, r.id), true]], "run " + r.id)) : null)));
 }
 
 // ---- projects ----------------------------------------------------------------------------------------------------------
@@ -22,13 +22,13 @@ async function viewProjects() {
   await refreshCache();
   const del = can("data.delete");
   const rows = cache.projects.map((p) => linkRow(p.name, () => viewProject(p.id),
-    el("td", {}, p.description || el("span", { class: "muted mono" }, p.id)), el("td", { class: "num" }, num(p.runs)),
-    el("td", {}, p.latest_run ? runState(p.latest_run) : el("span", { class: "muted" }, "no runs")),
-    el("td", {}, p.latest_run ? when(p.latest_run.started_at || p.latest_run.created_at) : ""), el("td", {}, p.you_own ? tag("You", "info") : p.created_by),
-    del ? el("td", { class: "actions-cell" }, btn("Delete", () => deleteProject(p), "small danger", "trash", { "aria-label": "Delete project " + p.name })) : null));
+    el("td", {}, progressTag(p.progress)), el("td", {}, p.description || el("span", { class: "muted mono" }, p.id)),
+    el("td", {}, p.latest_run ? when(p.latest_run.started_at || p.latest_run.created_at) : el("span", { class: "muted" }, "no runs yet")),
+    el("td", {}, p.you_own ? tag("You", "info") : p.created_by),
+    del ? el("td", { class: "actions-cell" }, moreMenu([["Delete project", () => deleteProject(p), true]], p.name)) : null));
   const create = can("projects.create") ? btn("New project", () => go(newProject), "primary", "plus") : null;
-  show(page("Projects", "A project is one piece of dedupe work with its own data connections, runs, decisions and rules. You see the projects you created or were added to.", [create]),
-    rows.length ? table(["Project", "Description", ["Runs"], "Latest run", "Last activity", "Owner", ...(del ? [""] : [])], rows)
+  show(page("Projects", "A project is one piece of dedupe work with its own data, rules, runs and decisions. You see the projects you created or were added to.", [create]),
+    rows.length ? table(["Project", "Where it is", "Description", "Last run", "Owner", ...(del ? [""] : [])], rows)
       : empty(create ? "No projects yet. Create the first one." : "You are not in any project yet. Ask an administrator to create one or to add you to one.", create));
 }
 // A new project is set up in five steps and nothing is chosen for the user: name it here, then add its data, choose the matching rules and the

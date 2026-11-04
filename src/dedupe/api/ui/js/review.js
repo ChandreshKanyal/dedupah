@@ -62,7 +62,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     btn("Search", apply, "", "search"), btn("Clear", () => { band.value = "all"; why.value = "any"; text.value = ""; return apply(); }, "ghost"));
   const actions = [
     cur.pending_approval ? btn("Waiting for a second person (" + num(cur.pending_approval) + ")", link("/approvals"), "", "check") : null,
-    cur.waiting_for_run ? btn("Decided, next run (" + num(cur.waiting_for_run) + ")", link("/review/decisions"), "", "list") : null,
+    btn(cur.waiting_for_run ? "Decided, next run (" + num(cur.waiting_for_run) + ")" : "Decisions made", link("/review/decisions"), "", "list"),
     cur.waiting_for_run && can("runs.start") ? btn("Run again", () => startRun(pid, [], rid, "apply the latest review decisions"), "", "play") : null,
     btn("", () => go(() => viewInbox(pid, status, older ? rid : null)), "icon", "refresh", { "aria-label": "Refresh", title: "Refresh" })];
   const count = older ? null : { open: cur.open, unsure: cur.unsure }[status];                  // the inbox counts the newest run only
@@ -424,7 +424,7 @@ async function viewPerson(pid, rid, person, reveal) {
 
 // ---- decisions: what was decided, what became of it, and undo -------------------------------------------------------------------
 async function viewDecisions() {
-  here("/review/decisions");
+  here("/review/decisions");      // reached from the Review screen (Decisions made); Back returns there
   await refreshCache();
   show(page("Decisions", "Every review decision in your projects, newest first, with what became of it. A decision changes people at the project's next run."),
     await decisionsPanel(cache.projects, { project: false }));

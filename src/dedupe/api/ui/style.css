@@ -50,12 +50,6 @@ a { color: var(--link); text-decoration-color: var(--border-strong); }
 #user-menu [role=menuitem]:hover, #user-menu [role=menuitem]:focus-visible { background: var(--bg-hover); outline: none; }
 #user-menu [role=menuitem] svg { color: var(--muted); }
 #nav { overflow-y: auto; padding: 6px 0; background: var(--chrome-nav); color: var(--chrome-text); }
-#new-btn { display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; margin: 0; padding: 0 14px; border: 0; border-radius: 0; background: none; color: var(--chrome-text); }
-#new-btn:hover { background: var(--chrome-hover); }
-#new-btn svg { color: var(--chrome-muted); }
-#new-menu { margin: 0 8px 6px; border: 1px solid var(--border-strong); border-radius: 0; background: var(--bg-panel); overflow: hidden; }
-#new-menu button { display: flex; gap: 10px; align-items: center; width: 100%; height: 34px; padding: 0 12px; border: 0; border-radius: 0; background: none; text-align: left; }
-#new-menu button:hover { background: var(--bg-hover); }
 #nav h2 { margin: 6px 0 0; padding: 8px 14px 2px; border-top: 1px solid var(--chrome-line); font-size: 11px; font-weight: 400; color: var(--chrome-muted); }
 #nav a { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 14px; border-radius: 0; color: var(--chrome-text); text-decoration: none; cursor: pointer; }
 #nav a svg { color: var(--chrome-muted); }
@@ -241,8 +235,6 @@ ul.plain li { margin: 3px 0; }
   #search-hint { display: none; }
   #nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--border); }
   #nav h2 { display: none; }
-  #new-btn { width: auto; margin: 0; height: 32px; }
-  #new-menu { position: absolute; z-index: 25; margin: 40px 0 0; }
   #content { padding: 16px; }
   #loading { right: 16px; }
   .page-head { flex-direction: column; }
@@ -416,7 +408,7 @@ button.tile.source { align-items: center; }
 .field > label svg { width: 12px; height: 12px; vertical-align: -1px; margin-right: 4px; color: var(--warn); }
 input.mono { font-family: var(--mono); font-size: 12px; }
 code { padding: 1px 5px; border-radius: 0; background: var(--bg-subtle); border: 1px solid var(--border); font-family: var(--mono); font-size: 12px; }
-#nav a svg, #new-menu svg { width: 16px; height: 16px; }
+#nav a svg { width: 16px; height: 16px; }
 @media (max-width: 520px) { img.logo-chip.big { width: 30px; height: 30px; } .source-facts a { margin-left: 0; } }
 
 /* filter bar: labelled fields in one row above a list (Informatica's search criteria) */
@@ -477,3 +469,20 @@ button.small.icon { width: 22px; }
 .run-used strong { color: var(--text); font-weight: 600; }
 .map-table select { min-width: 220px; }
 .map-table td { vertical-align: top; }
+/* More: the less used and destructive actions of a page or row, in a small menu */
+.more { position: relative; display: inline-block; }
+.more-menu { position: fixed; z-index: 40; min-width: 180px; padding: 4px 0; border: 1px solid var(--border-strong); background: var(--bg-panel); }
+.more-menu [role=menuitem] { display: block; width: 100%; height: 30px; padding: 0 12px; border: 0; border-radius: 0; background: none; text-align: left; white-space: nowrap; }
+.more-menu [role=menuitem]:hover, .more-menu [role=menuitem]:focus-visible { background: var(--bg-hover); outline: none; }
+.more-menu [role=menuitem].danger { color: var(--danger); }
+/* Home: what needs the person now, one row per thing with its button */
+.todo { padding: 0; }
+.todo-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border); }
+.todo-row:first-child { border-top: 0; }
+.todo-row > div { flex: 1; min-width: 0; }
+.todo-row strong { display: block; font-weight: 600; }
+.todo-row span.muted { display: block; margin-top: 2px; }
+.todo-row .tile-icon { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; flex: none; background: var(--bg-head); }
+.todo-row .tile-icon svg { width: 18px; height: 18px; }
+.tiles + .panel { margin-top: 12px; }
+@media (max-width: 640px) { .todo-row { flex-wrap: wrap; } .todo-row > button { margin-left: 42px; } }

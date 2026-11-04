@@ -68,16 +68,9 @@ function signOut(msg) {
 }
 
 // ---- navigation --------------------------------------------------------------------------------------------------------
-const NAV = [
-  ["", [["Home", "any", "home", "/"], ["Projects", "any", "folder", "/projects"], ["Runs", "runs.read", "play", "/runs"]]],
-  ["Review", [["Review inbox", "queue.read", "inbox", "/review"], ["Decisions", "queue.read", "list", "/review/decisions"]]],
-  ["Governance", [["Approvals", "config.read", "check", "/approvals"], ["Audit log", "logs.read", "shield", "/audit"]]],
-  ["Administration", [["Users", "users.manage", "users", "/users"], ["Roles", "roles.manage", "sliders", "/roles"]]],
-];
-const NEW_MENU = [
-  ["New project", "projects.create", "folder", () => newProject()], ["New run", "runs.start", "play", () => newRun()],
-  ["Add data", "sources.manage", "database", () => pickProject("Add data", "Choose the project this data belongs to.", (pid) => go(() => addDataPage(pid)))],
-];
+// Four places: the daily work (Home, Projects, Review) and, for the people who run the workspace, Admin. Everything else lives inside a project.
+const NAV = [["Home", "any", "home", "/"], ["Projects", "any", "folder", "/projects"], ["Review", "queue.read", "inbox", "/review"], ["Admin", "admin", "shield", "/admin"]];
+const canNav = (perm) => (perm === "admin" ? ADMIN_PAGES.some((x) => can(x[1])) : can(perm));
 function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
 function go(fn) {
   stopTimer();
@@ -87,27 +80,44 @@ function go(fn) {
   return run(fn);
 }
 function buildNav() {
-  const nav = $("nav");
-  nav.replaceChildren();
-  const items = NEW_MENU.filter((m) => can(m[1]));
-  if (items.length) {
-    const menu = el("div", { id: "new-menu", hidden: true });
-    const opener = el("button", { id: "new-btn", type: "button", "aria-expanded": "false", "aria-controls": "new-menu" }, icon("plus"), "New");
-    const toggle = (open) => { menu.hidden = !open; opener.setAttribute("aria-expanded", String(open)); if (open) menu.querySelector("button").focus(); };
-    opener.addEventListener("click", () => toggle(menu.hidden));
-    menu.append(...items.map(([text, , ic, fn]) => el("button", { type: "button", onclick: () => { toggle(false); go(fn); } }, icon(ic), text)));
-    menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { toggle(false); opener.focus(); } });
-    document.addEventListener("click", (e) => { if (!menu.hidden && !menu.contains(e.target) && e.target !== opener && !opener.contains(e.target)) toggle(false); });
-    nav.append(opener, menu);
-  }
-  for (const [group, entries] of NAV) {
-    const allowed = entries.filter((i) => can(i[1]));
-    if (!allowed.length) continue;
-    if (group) nav.append(el("h2", {}, group));
-    for (const [name, , ic, path] of allowed) {
-      nav.append(el("a", { href: "#" + path, "data-name": name, onclick: (e) => { e.preventDefault(); go(() => dispatch(path)); } }, icon(ic), name));
+  $("nav").replaceChildren(...NAV.filter((i) => canNav(i[1])).map(([name, , ic, path]) =>
+    el("a", { href: "#" + path, "data-name": name, onclick: (e) => { e.preventDefault(); go(() => dispatch(path)); } }, icon(ic), name)));
+}
+// "More": the less used and the destructive actions of a page or a row, out of the way of the main button. items: [text, action, danger?];
+// the empty ones (null) are left out, and with none left there is no menu. A real menu: arrow keys move, Escape and a click elsewhere close it.
+function moreMenu(items, name) {
+  const list = items.filter(Boolean);
+  if (!list.length) return null;
+  const opener = el("button", { type: "button", class: "small", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": name ? "More for " + name : "More" }, "More");
+  const menu = el("div", { class: "more-menu", role: "menu", hidden: true });
+  const wrap = el("div", { class: "more" }, opener, menu);
+  // the menu is placed on the screen under its button (fixed), so a table that scrolls sideways does not cut it off; scrolling closes it
+  const toggle = (open) => {
+    menu.hidden = !open; opener.setAttribute("aria-expanded", String(open));
+    if (open) {
+      const at = opener.getBoundingClientRect();
+      menu.style.top = Math.round(at.bottom + 2) + "px";
+      menu.style.right = Math.round(document.documentElement.clientWidth - at.right) + "px";
+      menu.firstChild.focus();
+      setTimeout(() => { document.addEventListener("click", away); window.addEventListener("scroll", shut, true); window.addEventListener("resize", shut); });
+    } else {
+      document.removeEventListener("click", away); window.removeEventListener("scroll", shut, true); window.removeEventListener("resize", shut);
     }
+  };
+  const shut = () => toggle(false);
+  const away = (e) => { if (!wrap.contains(e.target)) toggle(false); };
+  opener.addEventListener("click", (e) => { e.stopPropagation(); toggle(menu.hidden); });
+  for (const [text, action, danger] of list) {
+    menu.append(el("button", { type: "button", role: "menuitem", class: danger ? "danger" : null, onclick: (e) => { e.stopPropagation(); toggle(false); run(action); } }, text));
   }
+  menu.addEventListener("keydown", (e) => {
+    const all = [...menu.children];
+    const i = all.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); toggle(false); opener.focus(); return; }
+    const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: all.length - 1 }[e.key];
+    if (to !== undefined) { e.preventDefault(); all[(to + all.length) % all.length].focus(); }
+  });
+  return wrap;
 }
 
 // ---- page building blocks ------------------------------------------------------------------------------------------------

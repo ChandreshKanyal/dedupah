@@ -74,7 +74,8 @@ def test_the_script_only_calls_endpoints_and_permissions_that_exist(app):
     used = set(re.findall(r'can\("([a-z]+\.[a-z]+)"', js)) | set(re.findall(r'\["[A-Za-z ]+", "([a-z]+\.[a-z]+)"', js))
     assert used and used <= set(PERMISSIONS), used - set(PERMISSIONS)
     menu = re.findall(r'\["([A-Za-z ]+)", "(any|[a-z]+\.[a-z]+)", "([a-z]+)"', js)
-    assert {"Home", "Projects", "Runs", "Approvals", "Audit log", "Users", "Roles"} <= {m[0] for m in menu} and "Connections" not in {m[0] for m in menu}          # connections live inside projects
+    names = {m[0] for m in menu}
+    assert {"Home", "Projects", "Review", "Approvals", "Audit log", "Users", "Roles"} <= names and not names & {"Connections", "Runs", "Decisions", "Settings"}  # those live inside projects or Review
     assert {m[1] for m in menu} - {"any"} <= set(PERMISSIONS)
 
 

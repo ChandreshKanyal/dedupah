@@ -3,14 +3,15 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phase 0 done, phase 1 next) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0 and 1 done, phase 2 next) <<<
 
 **Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
 The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
 one-click run with a confirm summary, versions/approvals hidden when second approval is off, "connection" -> "data source", and phase 0
-first. **Phase 0 is done (section 76):** `app.js` is split into 11 files under `ui/js/` with no change in behaviour. **Next: phase 1**
-(4-item menu, Home as "what needs me now", Delete into More menus); the glossary and the page template from phase 0 are built with
-phase 1, where they are first used. Confirm with the user before starting each phase.
+first. **Phase 0 is done (section 76):** `app.js` is split into files under `ui/js/`. **Phase 1 is done (section 77):** the
+menu has 4 items (Home, Projects, Review, Admin), Home lists what needs the person now and each project's progress, Delete sits in
+"More" menus, the Runs, Decisions and Settings pages are gone (old links redirect), shared words live in `ui/js/words.js`. **Next:
+phase 2** (the project page as the journey Data > Rules > Run > Review > Results, with a "Next step" bar). Confirm with the user before starting each phase.
 
 **Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
 DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
@@ -38,6 +39,7 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Revamp phase 1:** 4-item menu (Home, Projects, Review, Admin); Home as "what needs you now" plus each project's progress (backend `progress` on projects and `/home`); Delete in More menus; Runs, Decisions and Settings pages removed (old links redirect); words file | 77 |
 | session 4 | **Revamp phase 0:** the portal script split into 11 files per area (`ui/js/`), loaded in a fixed order, no change in behaviour | 76 |
 | session 4 | **Review fixes, round 1:** engine (insufficient-mode scores, default birth dates, big identifier blocks, more date formats), uploads (separators, title rows, sheets, short and wide rows, midnight dates), platform (idempotency per project, reused project id, workspace reads, Excel control characters), portal (Back, refresh timer, taken connection id, approvals link, activity wording), duckdb pinned below 2 | 75 |
 | session 4 | **Matching rules as columns that must agree** (the same when / ask a person when / never the same when / everything else, with the score optional and off for new projects); **golden record as one choice per column** | 74 |
@@ -352,6 +354,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp phase 1)** — New menu, Home and More menus; tests, ruff and browser walk clean. Section 77.
 - **2026-11-04 (session 4, revamp phase 0)** — `app.js` split into 11 files under `ui/js/`; tests, ruff and a 27-screen browser tour clean. Section 76.
 - **2026-11-04 (session 4, revamp plan)** — Whole-portal critique after a browser tour; plan in `docs/REVAMP_PLAN.md` (phases 0-7), waiting for the user's decisions.
 - **2026-10-23 (session 4, review fixes)** — First batch of the findings from the agent review fixed, each with a test. Section 75.
@@ -1854,3 +1857,24 @@ The user: "please start the fixing". Findings are in `~/agent-review/*/report-su
   errors; `/ui/js/<name>.js` serves only the listed files (`/ui/app.js` is gone, 404); the UI tests read all files in load order, and a new
   test checks that the page loads every file in the right order. Tests and ruff clean; the 27-screen browser tour shows no script errors.
 - **Not done in phase 0, moved to phase 1:** the glossary file and the page template (they are built where they are first used).
+
+## 77. Revamp phase 1: four-item menu, Home as "what needs you now", Delete out of the way (2026-11-04, session 4)
+
+- **Menu:** Home, Projects, Review, Admin (Admin only for people who may open one of its pages). The "New" menu is gone: New project is on
+  Home and Projects; New run and Add data belong inside a project. Old addresses still work: `/runs` opens Projects, `/settings` opens
+  Admin (or My account for people without Admin), `/review/decisions` is reached from the Review screen ("Decisions made").
+- **Progress of a project (backend):** `progress` on every project in `/projects` and `/home` (`routes_projects._progress`): the one next step
+  it needs: data (no data in use), rules (matching or golden-record rules not in use), run (ready, never run), running, failed, review (pairs
+  open), done; plus the open pairs and the changes waiting for the caller's approval, each only when the caller's roles may see them.
+  `/home` also returns `project_list`. Test: `test_each_project_says_how_far_it_is_and_home_lists_what_needs_doing`.
+- **Home:** "Needs you now": one line per thing to do (add data, choose rules, first run, a failed run, pairs to review, approvals), each with
+  its button; the first is the main (black) button. Then "Your projects" with where each one is. No counters, tiles or Delete.
+- **Projects list:** a "Where it is" column; Delete project moved into a More menu. Runs tables and the run page: Delete run in a More menu.
+- **More menu** (`moreMenu` in shell.js): a real menu (arrow keys, Escape, click elsewhere), placed on the screen under its button so a
+  sideways-scrolling table does not cut it off; scrolling closes it.
+- **Admin page:** Users, Roles, Approvals, Audit log as tiles, plus the workspace sign-in facts. Keyboard shortcuts moved to My account. The
+  account menu has My account and Sign out.
+- **Words file** `ui/js/words.js` (phase 0 item): the state words moved there, plus the progress words. Later phases add the glossary.
+- **Checked:** UI and project tests, ruff, full suite; a browser walk (`~/agent-review/p1/p1.py`, screenshots in `~/agent-review/p1/s/`)
+  of Home, Projects with its More menu, old /runs and /settings links, Admin, My account, Review, a run's More menu and its delete
+  dialog, and Home at phone width: no script errors or failed requests. Phone width is still too wide on most screens (phase 7).

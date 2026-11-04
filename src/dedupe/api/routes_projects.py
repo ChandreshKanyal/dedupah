@@ -103,6 +103,7 @@ class ProjectView(BaseModel):
     you_own: bool = False
     runs: int = 0
     latest_run: RunView | None = None
+    progress: dict | None = None                  # how far the project is (see _progress); filled in the projects list and on the start page
 
 
 def _run_view(run, replayed: bool = False, sv=None) -> RunView:
@@ -111,10 +112,40 @@ def _run_view(run, replayed: bool = False, sv=None) -> RunView:
                    queue_position=sv.jobs.queue_position(run) if sv is not None else None)
 
 
-def _project_view(sv, proj, p: Principal | None = None) -> ProjectView:
+def _project_view(sv, proj, p: Principal | None = None, request: Request | None = None) -> ProjectView:
     runs = sv.jobs.recent(proj.id, limit=1000)
     return ProjectView(**{**proj.__dict__, "second_approval": proj.second_approval}, you_own=bool(p and sv.workspace.is_owner(proj.id, p.sub)), runs=len(runs),
-                       latest_run=_run_view(runs[0], sv=sv) if runs else None)
+                       latest_run=_run_view(runs[0], sv=sv) if runs else None,
+                       progress=_progress(request, sv, proj.id, p, runs[0] if runs else None) if request is not None and p is not None else None)
+
+
+def _progress(request: Request, sv, project_id: str, p: Principal, latest) -> dict:
+    """How far a project is, as the one next step it needs: "data" (no data in use), "rules" (no matching or golden-record rules in use),
+    "run" (ready, never run), "running", "failed" (the latest run did not succeed), "review" (pairs wait for a person), "done". With the
+    counts behind it: pairs still open and changes or decisions waiting for approval (each only when the caller's roles may see them)."""
+    configs = sv.workspace.stores(project_id)[1]
+    names = configs.names()
+    live = {n for n in names if any(v.status == "active" for v in configs.versions(n))}
+    review = open_items(request, project_id) if "queue.read" in p.permissions else None
+    waiting = None
+    if "judgment.approve" in p.permissions or "config.approve" in p.permissions:
+        waiting = (len(sv.workspace.stores(project_id)[0].pending_approval()) if "judgment.approve" in p.permissions else 0) + \
+            (sum(1 for n in names if configs.versions(n)[-1].status in ("proposed", "approved")) if "config.approve" in p.permissions else 0)
+    if not any(n.startswith("connection/") for n in live):
+        step = "data"
+    elif not {"decision", "survivorship"} <= live:
+        step = "rules"
+    elif latest is None:
+        step = "run"
+    elif latest.status in ("queued", "running"):
+        step = "running"
+    elif latest.status != "succeeded":
+        step = "failed"
+    elif review:
+        step = "review"
+    else:
+        step = "done"
+    return {"step": step, "open_review": review, "pending_approvals": waiting}
 
 
 # ---- home ----------------------------------------------------------------------------------------------------------------
@@ -123,17 +154,15 @@ def home(request: Request, p: Principal = ANY):
     """Counts and recent activity for the start page. Only what the caller's roles allow is filled in."""
     sv = _services(request)
     projects = [x for x in sv.workspace.list() if can_see(sv, p, x.id)]
+    views = [_project_view(sv, x, p, request) for x in projects]
     out = {"projects": len(projects), "connections": sum(len(sv.workspace.stores(x.id)[1].names("connection/")) for x in projects), "recent_runs": [],
-           "open_review_items": None, "pending_approvals": None}
+           "open_review_items": None, "pending_approvals": None, "project_list": views}
     if "runs.read" in p.permissions:
         out["recent_runs"] = [_run_view(r, sv=sv) for r in sv.jobs.recent(limit=50) if can_see(sv, p, r.project_id)][:8]
     if "queue.read" in p.permissions:
-        out["open_review_items"] = sum(open_items(request, x.id) or 0 for x in projects)
+        out["open_review_items"] = sum(v.progress["open_review"] or 0 for v in views)
     if "judgment.approve" in p.permissions or "config.approve" in p.permissions:
-        decisions = sum(len(sv.workspace.stores(x.id)[0].pending_approval()) for x in projects) if "judgment.approve" in p.permissions else 0
-        changes = sum(1 for x in projects for n in sv.workspace.stores(x.id)[1].names()
-                      if sv.workspace.stores(x.id)[1].versions(n)[-1].status in ("proposed", "approved")) if "config.approve" in p.permissions else 0
-        out["pending_approvals"] = decisions + changes
+        out["pending_approvals"] = sum(v.progress["pending_approvals"] for v in views)
     return out
 
 
@@ -153,7 +182,7 @@ def open_items(request: Request, project_id: str) -> int | None:
 @router.get("/projects", response_model=list[ProjectView])
 def list_projects(request: Request, p: Principal = ANY):
     sv = _services(request)
-    return [_project_view(sv, x, p) for x in sv.workspace.list() if can_see(sv, p, x.id)]
+    return [_project_view(sv, x, p, request) for x in sv.workspace.list() if can_see(sv, p, x.id)]
 
 
 @router.post("/projects", response_model=ProjectView, status_code=201)

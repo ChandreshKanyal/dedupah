@@ -95,16 +95,6 @@ const when = (t) => (t ? new Date(t).toLocaleString() : "");
 const num = (n) => (n == null ? "" : Number(n).toLocaleString());
 const label = (s) => String(s).replace(/_/g, " ");
 const plural = (n, one, many) => num(n) + " " + (n === 1 ? one : many);
-// One word for each state, everywhere: what people see never depends on which screen they are on.
-const STATUS_LABEL = { active: "In use", proposed: "Waiting for approval", approved: "Approved, not in use", superseded: "Replaced", declined: "Declined",
-  succeeded: "Succeeded", failed: "Failed", interrupted: "Interrupted", cancelled: "Cancelled", running: "Running", queued: "Queued", deleted: "Deleted",
-  open: "Open", unsure: "Not sure", decided: "Decided", in_force: "In force", waiting_for_run: "Waits for the next run",
-  pending_approval: "Waits for a second person", undone: "Undone" };
-const STATUS_KIND = { active: "success", succeeded: "success", in_force: "success", failed: "danger", declined: "danger", interrupted: "danger",
-  proposed: "info", approved: "info", running: "info", queued: "info", waiting_for_run: "info", pending_approval: "warn", unsure: "warn" };
-const KIND_LABEL = { same_person: "Same person", different_person: "Different people", unsure: "Not sure", split: "Split", field_override: "Corrected a field" };
-const statusTag = (s) => tag(STATUS_LABEL[s] || label(s), STATUS_KIND[s]);
-
 // ---- messages and dialogs ----------------------------------------------------------------------------------------------
 // One message at a time, fixed to the corner so it is seen wherever the page is scrolled. It may carry one action (for example Undo).
 // replaceChildren prints a null or false as text: fill() leaves them out, like el() does
@@ -233,20 +223,21 @@ function dispatch(path) {
     if (c === "new-run") return newRun(b);
     return viewProject(b, c, d);
   }
-  const top = { runs: viewRuns, "new-run": () => newRun(), "new-project": newProject, review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c, d)), approvals: viewApprovals,
-    audit: () => viewAudit(), users: viewUsers, roles: viewRoles, password: () => viewPassword(false), account: viewAccount, settings: viewSettings }[a];
+  // runs and settings were pages of their own before the four-item menu: their old links open where those things are now
+  const top = { runs: viewProjects, "new-run": () => newRun(), "new-project": newProject, review: () => (b === "decisions" ? viewDecisions() : viewInbox(b, c, d)), approvals: viewApprovals,
+    audit: () => viewAudit(), users: viewUsers, roles: viewRoles, password: () => viewPassword(false), account: viewAccount, admin: viewAdmin,
+    settings: () => (canNav("admin") ? viewAdmin() : viewAccount()) }[a];
   return top ? top() : viewHome();
 }
-const SECTIONS = [["/review/decisions", "Decisions"], ["/review", "Review inbox"], ["/runs", "Runs"], ["/new-run", "Runs"], ["/new-project", "Projects"], ["/approvals", "Approvals"],
-  ["/audit", "Audit log"], ["/users", "Users"], ["/roles", "Roles"], ["/projects", "Projects"]];
+const SECTIONS = [["/review", "Review"], ["/new-run", "Projects"], ["/new-project", "Projects"], ["/projects", "Projects"], ["/approvals", "Admin"],
+  ["/audit", "Admin"], ["/users", "Admin"], ["/roles", "Admin"], ["/admin", "Admin"]];
 // Every screen says where it is: the address (so Back works), the highlighted menu item and the window title (set by show()).
 function here(path) {
   writeAddress(path);
   const sec = path === "/" ? "Home" : (SECTIONS.find(([p]) => path.startsWith(p)) || [null, ""])[1];
-  sectionIcon = (NAV.flatMap(([, items]) => items).find(([name]) => name === sec) || [null, null, "home"])[2];
+  sectionIcon = (NAV.find(([name]) => name === sec) || [null, null, "home"])[2];
   if (/\/connections|\/add-data/.test(path)) sectionIcon = "plug";
   if (/^\/(account|password)/.test(path)) sectionIcon = "user";
-  if (path.startsWith("/settings")) sectionIcon = "sliders";
   for (const a of $("nav").querySelectorAll("a")) {
     if (a.dataset.name === sec) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }

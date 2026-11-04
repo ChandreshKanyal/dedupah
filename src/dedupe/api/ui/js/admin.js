@@ -220,7 +220,6 @@ function initUserMenu() {
   const pick = (fn) => () => { toggle(false); fn(); };
   opener.addEventListener("click", () => toggle(menu.hidden));
   $("menu-account").addEventListener("click", pick(() => go(viewAccount)));
-  $("menu-settings").addEventListener("click", pick(() => go(viewSettings)));
   $("menu-signout").addEventListener("click", pick(() => signOut("")));
   menu.addEventListener("keydown", (e) => {
     const all = items();
@@ -242,21 +241,23 @@ async function viewAccount() {
       el("div", { class: "panel" }, el("h3", {}, "Roles"), el("div", { class: "body" }, el("ul", { class: "plain" }, me.roles.map((r) => el("li", {}, label(r))))),
         el("details", { class: "advanced body" }, el("summary", {}, "What these roles allow (" + me.permissions.length + ")"),
           el("ul", { class: "plain" }, me.permissions.map((x) => el("li", { class: "mono" }, x)))))),
+    el("div", { class: "panel" }, el("h3", {}, "Keyboard shortcuts"), kv([["Ctrl + K", "Search projects and runs"],
+      ["S, D, U", "Review: Same person, Different people, Not sure"], ["N, P", "Review: next and previous pair"], ["Escape", "Close a menu or dialog"]])),
     el("p", { class: "hint" }, "Roles are given by an administrator under Users. " + (cfg.mode === "local" ? "Changing your password signs you out of every other session." : "")));
 }
-async function viewSettings() {
-  here("/settings");
+// Admin: running the workspace (people, roles, the audit log, approvals), apart from the daily work. Shown to people who may open one of them.
+const ADMIN_PAGES = [["Users", "users.manage", "users", "/users", "Add people, reset passwords, turn accounts off, give roles."],
+  ["Roles", "roles.manage", "sliders", "/roles", "Decide what each role may do."],
+  ["Approvals", "config.approve", "check", "/approvals", "Rules, data and decisions waiting for a second person."],
+  ["Approvals", "judgment.approve", "check", "/approvals", "Rules, data and decisions waiting for a second person."],
+  ["Audit log", "logs.read", "shield", "/audit", "Who did what and when: sign-ins, exports, shown identifiers, changes."]];
+async function viewAdmin() {
+  here("/admin");
   const cfg = await api("GET", "/auth/config");
-  const admin = [["Users", "users.manage", "users", "/users", "Add people, reset passwords, turn accounts off, give roles."],
-    ["Roles", "roles.manage", "sliders", "/roles", "Decide what each role may do."],
-    ["Approvals", "config.read", "check", "/approvals", "Rules, connections and decisions waiting for a second person."],
-    ["Audit log", "logs.read", "shield", "/audit", "Who did what and when: sign-ins, exports, shown identifiers, changes."]].filter((x) => can(x[1]));
-  show(page("Settings", "How this workspace is set up. How matching works is set per project, under its Rules tab."),
+  const pages = ADMIN_PAGES.filter((x, i) => can(x[1]) && ADMIN_PAGES.findIndex((y) => y[0] === x[0] && can(y[1])) === i);
+  show(page("Admin", "Running this workspace: who may sign in, what they may do, and the record of what was done."),
+    el("div", { class: "tiles" }, pages.map(([name, , ic, path, text]) => tile(ic, name, text, link(path)))),
     el("div", { class: "panel" }, el("h3", {}, "Workspace"), kv([["Sign-in", SIGN_IN_WORDS[cfg.mode] || label(cfg.mode)],
       ["Showing masked identifiers", me.unmask_reason_required ? "Allowed for permitted roles with a written reason; every view is logged"
-        : "Allowed for permitted roles; every view is logged"]])),
-    admin.length ? el("div", { class: "panel" }, el("h3", {}, "Administration"), table(["Page", "What it is for"], admin.map(([name, , ic, path, text]) =>
-      linkRow(el("span", { class: "type-cell" }, icon(ic), name), () => dispatch(path), el("td", {}, text))))) : null,
-    el("div", { class: "panel" }, el("h3", {}, "Keyboard shortcuts"), kv([["Ctrl + K", "Search projects and runs"],
-      ["S, D, U", "Review: Same person, Different people, Not sure"], ["N, P", "Review: next and previous pair"], ["Escape", "Close a menu or dialog"]])));
+        : "Allowed for permitted roles; every view is logged"]])));
 }
