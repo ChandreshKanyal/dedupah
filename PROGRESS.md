@@ -1,9 +1,37 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-10-19 (session 4, EC2 server)
+> Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: end of session 2, after review round 2) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp plan waiting for decisions) <<<
+
+**Where we are (2026-11-04).** Sections 69-75 are built and committed (projects/runs redesign, multi-file upload, one-table mapping, rules by
+columns with the score optional, review fixes round 1). **Next:** the whole-portal revamp in `docs/REVAMP_PLAN.md` (critique of every
+screen, new 4-item menu, project page as the journey Data > Rules > Run > Review > Results, glossary, phases 0-7). The plan asks the user
+five questions (section 6 of the plan): 4-item menu, one-click run with a confirm summary, hide versions/approvals when second approval is
+off, "connection" -> "data source", and whether to start with phase 0 (split app.js) or phase 1. My recommendation: yes to 1-4, phase 0 first.
+**Do not start building until the user answers.**
+
+**Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
+DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
+E1-02/03 scoring-model rebuild (namesakes auto-merge on a learned score; TF cancels weights), E2-02/03 wrong-merge bugs after steward
+decisions, plus medium/low items. Wave 3 of the review (UX agents X1-X3) never ran. Many portal findings are folded into the revamp plan.
+
+**Server state (shared EC2 box, reboots almost daily).** Since 2026-11-04 another user (`shankar`, project Data-Deduplication) runs uvicorn
+on 127.0.0.1:8000, so our live api container cannot bind 8000: do NOT stop his process. The preview container `dedupe-preview` on
+127.0.0.1:8001 (src mounted read-only, same database) is what the user uses now; it has all the latest code. Asked the user whether to move
+the live portal to another port (e.g. 8002, needs approval) or keep using 8001. Start after a reboot: `docker compose up -d postgres`, then
+the preview `docker run` (command in memory `ec2-server-constraints`). The live image (dedupah-api) is NOT rebuilt with the latest fixes.
+Auto-start after reboot offered several times, not approved yet. 8 commits not pushed to GitHub (push only when asked).
+
+**Working agreements this session:** no co-author lines in commits (author chandreshkanyal@gmail.com); short answers with one analogy;
+browser checks with `~/agent-review/lib/run_browser.sh sbx-ui <dir> <script>` (scripts kept in `~/agent-review/tour/`, because the
+/tmp scratchpad gets wiped); tests in Docker: `docker build -q --target test -t dedupe-test .` then pytest (full suite ~7 min, 479 passing).
+duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine SQL).
+
+---
+
+### Older resume notes (end of session 2)
 
 **One-line status:** a working, branded (Aurionpro) portal over the dedupe engine: private projects that own their connections, uploads, runs, decisions and rules; run queue and schedules; results export to files and databases; a dedicated Review section for the human in the loop; deleting runs and projects; local username/password sign-in with an admin and admin-defined roles (OIDC single sign-on still supported). **381 tests + 3 skipped, ruff and bandit clean, three live click-through scripts in Edge with 0 problems (section 53: golden-record rules, incremental runs, messy data; section 54: user review round 2).** EVERYTHING is validated on SYNTHETIC data only; nothing has run on real data; no independent security test or legal review has happened.
 
