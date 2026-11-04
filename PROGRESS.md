@@ -3,7 +3,7 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-2 done, phase 3 next) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-3 done, phase 4 next) <<<
 
 **Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
 The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
@@ -11,8 +11,9 @@ one-click run with a confirm summary, versions/approvals hidden when second appr
 first. **Phase 0 is done (section 76):** `app.js` is split into files under `ui/js/`. **Phase 1 is done (section 77):** the
 menu has 4 items (Home, Projects, Review, Admin), Home lists what needs the person now and each project's progress, Delete sits in
 "More" menus, the Runs, Decisions and Settings pages are gone (old links redirect), shared words live in `ui/js/words.js`. **Phase 2 is done (section 78):** the
-project page is the journey (Data > Rules > Run > Review > Results) with a "Next step" bar; the project tabs are gone. **Next: phase 3**
-(the Data step: source list first, upload first in Add data, unmapped uploads, a bad file in a batch). Confirm with the user before starting each phase.
+project page is the journey (Data > Rules > Run > Review > Results) with a "Next step" bar; the project tabs are gone. **Phase 3 is done (section 79):** the Data step (sources
+first, unmapped uploads as "Needs mapping", upload first in Add data, mapping screens with their own address, a bad file in a batch named,
+the source page without internals). **Next: phase 4** (one-click run with a confirm summary, run titles, Results step, Browse customers). Confirm with the user before starting each phase.
 
 **Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
 DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
@@ -40,6 +41,7 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Revamp phase 3:** the Data step: data sources first with unmapped uploads as Needs mapping (Map it), upload first on Add data, mapping screens at `/map/<upload>`, a bad file in a batch named while the others go in, the source page shows its fields with the internals under Details | 79 |
 | session 4 | **Revamp phase 2:** the project page as the journey Data > Rules > Run > Review > Results, with a Next step bar and one row per step; tabs replaced by pages under the project and a More menu | 78 |
 | session 4 | **Revamp phase 1:** 4-item menu (Home, Projects, Review, Admin); Home as "what needs you now" plus each project's progress (backend `progress` on projects and `/home`); Delete in More menus; Runs, Decisions and Settings pages removed (old links redirect); words file | 77 |
 | session 4 | **Revamp phase 0:** the portal script split into 11 files per area (`ui/js/`), loaded in a fixed order, no change in behaviour | 76 |
@@ -356,6 +358,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp phase 3)** — Data step rebuilt; tests, ruff and browser walks clean. Section 79.
 - **2026-11-04 (session 4, revamp phase 2)** — Project journey page; tests, ruff and both browser walks clean. Section 78.
 - **2026-11-04 (session 4, revamp phase 1)** — New menu, Home and More menus; tests, ruff and browser walk clean. Section 77.
 - **2026-11-04 (session 4, revamp phase 0)** — `app.js` split into 11 files under `ui/js/`; tests, ruff and a 27-screen browser tour clean. Section 76.
@@ -1896,3 +1899,24 @@ The user: "please start the fixing". Findings are in `~/agent-review/*/report-su
 - **Checked:** UI tests, ruff, full suite; both browser walks (`tour.py`, 27 screens, and `~/agent-review/p1/p2.py`: journey with pairs to
   review, a new empty project, the More menu, every page under the project, an old address, phone width): no script errors. The journey page
   fits a phone.
+
+## 79. Revamp phase 3: the Data step (2026-11-04, session 4)
+
+- **Data page** (`projectConnections`): one list of the project's data sources with their state in words (In use, Waiting for approval,
+  ...) and how many fields each gives; **uploaded files that no data source reads yet are in the same list as "Needs mapping"** with Map it
+  (and Delete file under More), plus a notice. Before, such a file could only be deleted. Add data (main button while the project has no
+  data), Copy from another project under More. The field-by-source table is folded ("Compare sources"), used uploads too. The catalogue tiles
+  left this page.
+- **Add data page:** the upload area first; databases, storage and applications below, folded under "Choose a source" with the search.
+- **Uploading** (`uploadFiles`, `uploadZone`): each file is sent on its own; a file that fails is named with the reason and the others go
+  in ("This file could not be read. broken.csv: the file is empty. The other files are in: map them now."). Before, the first bad file
+  stopped the batch without saying which.
+- **Mapping screens have an address:** `/projects/<id>/map/<upload id>` (`mapUpload`). The batch is rebuilt from the project's unmapped
+  uploads, so Back, reload and a shared link come back to the same file; an unknown or already mapped file opens the Data page with a note.
+- **Data source page** (`viewConnection`): "Fields it gives" (our field and the column it comes from), the row id and extra columns; a
+  waiting change is shown on top with its Approve / Put in use buttons; a failed last check is shown on top; settings, versions and checks
+  (with Test now) are folded under Details. Upload ids and version tables are no longer on the main view.
+- **Checked:** UI tests, ruff, full suite; a fresh sandbox through `m1.py` (now uploads from Add data), the 27-screen `tour.py` (updated for
+  the new Add data page) and `~/agent-review/p1/p3.py` (Data page, Add data, a good and an empty file uploaded together, reload while
+  mapping, Map it, an unknown upload address, the source page and its Details, phone width). The only failed request is the expected 422 for
+  the empty file.

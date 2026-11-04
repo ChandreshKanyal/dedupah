@@ -513,3 +513,4 @@ ol.journey li.on .n { border-color: var(--text); }
   .journey-row { grid-template-columns: 1fr; gap: 6px; }
   .journey-row > .row { justify-content: flex-start; }
 }
+.row.tight { margin: 0; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; }

@@ -220,6 +220,7 @@ function dispatch(path) {
     }
     if (c === "connections" && d) return viewConnection(b, d);
     if (c === "add-data") return addDataPage(b);
+    if (c === "map" && d) return mapUpload(b, d);
     if (c === "new-run") return newRun(b);
     return viewProject(b, c, d);
   }
@@ -236,7 +237,7 @@ function here(path) {
   writeAddress(path);
   const sec = path === "/" ? "Home" : (SECTIONS.find(([p]) => path.startsWith(p)) || [null, ""])[1];
   sectionIcon = (NAV.find(([name]) => name === sec) || [null, null, "home"])[2];
-  if (/\/connections|\/add-data/.test(path)) sectionIcon = "plug";
+  if (/\/connections|\/add-data|\/map\//.test(path)) sectionIcon = "plug";
   if (/^\/(account|password)/.test(path)) sectionIcon = "user";
   for (const a of $("nav").querySelectorAll("a")) {
     if (a.dataset.name === sec) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");

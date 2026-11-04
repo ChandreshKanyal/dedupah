@@ -19,16 +19,77 @@ function sourceTile(c, onpick) {
       el("span", { class: "tile-tags" }, t ? tag(t[0], t[1]) : null, c.installed ? null : tag("Driver not installed", "danger"))));
   return b;
 }
+// Uploading files: each file is sent and checked on its own, so one bad file is named and the others still go in. Each gets a data source id
+// from its name, never one the project already uses. Returns the uploaded files as a batch for the mapping screens (or null if none went in).
+const uploadLabel = (u) => u.filename + " (" + num(u.rows) + " rows, " + u.columns.length + " columns, stored encrypted)";
+function uploadId(filename, taken) {
+  const base = filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 36) || "upload";
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = base + "_" + n;
+  taken.add(id);
+  return id;
+}
+async function uploadFiles(pid, list, status) {
+  const files = [...list];
+  const taken = new Set((await api("GET", P(pid) + "/connections")).map((c) => c.id));
+  const done = [];
+  const failed = [];
+  for (const [i, f] of files.entries()) {
+    status.textContent = "Uploading and checking " + f.name + (files.length > 1 ? " (" + (i + 1) + " of " + files.length + ")" : "") + "...";
+    try {
+      const r = await api("POST", P(pid) + "/uploads?filename=" + encodeURIComponent(f.name), f, { "Content-Type": "application/octet-stream" }, true);
+      done.push({ upload_id: r.upload_id, id: uploadId(r.filename, taken), label: uploadLabel(r) });
+    } catch (e) { failed.push(f.name + ": " + e.message.replace(/[^.]$/, "$&.")); }
+  }
+  status.textContent = "";
+  const bad = failed.length ? (failed.length === 1 ? "This file could not be read. " : "These files could not be read. ") + failed.join(" ") : "";
+  if (!done.length) throw new Error(bad || "No file was uploaded.");
+  return { batch: { files: done, index: 0, memo: { reason: null } }, bad };
+}
+// The upload area: drop files or choose them; when they are in, the mapping screens open with the first file.
+function uploadZone(pid, firstId) {
+  const input = el("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx,.json,.jsonl,.ndjson,.parquet", multiple: true, hidden: true });
+  const status = el("div", { role: "status" });
+  const zone = el("div", { class: "dropzone" }, icon("upload"), el("strong", {}, "Drop files here"), btn("Choose files", () => input.click(), "small"),
+    el("div", { class: "muted" }, "One file or several at once: CSV, TSV, Excel (.xlsx), JSON, JSON Lines or Parquet. Each file becomes its own data source; " +
+      "with several, you map them one after another."), status);
+  const send = (list) => run(async () => {
+    if (list.length === 1 && firstId && firstId() && (await api("GET", P(pid) + "/connections")).some((c) => c.id === firstId())) {
+      throw new Error("This project already has a data source called " + firstId() + ". Choose another id, or open that one to change it.");
+    }
+    const { batch, bad } = await uploadFiles(pid, list, status);
+    if (batch.files.length === 1 && firstId && firstId()) batch.files[0].id = firstId();          // an id typed before the upload is kept
+    await connectionWizard(pid, "upload", null, 2, batch);
+    if (bad) say(bad + " The other files are in: map them now.", "bad");
+    else if (batch.files.length > 1) say(num(batch.files.length) + " files uploaded. Map them one at a time: this is the first.", "good");
+  });
+  input.addEventListener("change", () => { if (input.files.length) send(input.files); });
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+  zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("over"); if (e.dataTransfer.files.length) send(e.dataTransfer.files); });
+  return el("div", {}, zone, input);
+}
+// Files uploaded but not mapped yet (no data source reads them), oldest first, as a batch; `/map/<upload>` opens one of them, so a reload or
+// Back during mapping comes back to the same file.
+async function mapUpload(pid, uid) {
+  const [uploads, conns] = await Promise.all([api("GET", P(pid) + "/uploads"), api("GET", P(pid) + "/connections")]);
+  const taken = new Set(conns.map((c) => c.id));
+  const files = uploads.filter((u) => !u.used_by.length).reverse().map((u) => ({ upload_id: u.upload_id, id: uploadId(u.filename, taken), label: uploadLabel(u) }));
+  const index = files.findIndex((f) => f.upload_id === uid);
+  if (index < 0) { await viewProject(pid, "setup", "data"); say("That file is mapped already or was deleted.", "good"); return; }
+  await connectionWizard(pid, "upload", null, 2, { files, index, memo: { reason: null } });
+}
 async function addDataPage(pid) {
   here(P(pid) + "/add-data");
   const cat = await catalogue();
   const pick = (type) => run(() => connectionWizard(pid, type));
-  const q = el("input", { type: "search", placeholder: "Search sources: oracle, excel, s3, salesforce...", "aria-label": "Search sources", class: "source-search" });
+  const others = cat.catalogue.filter((c) => c.type !== "upload");
+  const q = el("input", { type: "search", placeholder: "Search: oracle, sql server, s3, sftp, salesforce...", "aria-label": "Search sources", class: "source-search" });
   const sections = cat.groups.map((g) => {
-    const items = cat.catalogue.filter((c) => c.group === g);
-    return el("section", { class: "source-group", "data-group": g }, el("h2", { class: "section" }, g, el("span", { class: "count-badge" }, String(items.length))),
-      el("div", { class: "tiles" }, items.map((c) => sourceTile(c, () => pick(c.type)))));
-  });
+    const items = others.filter((c) => c.group === g);
+    return items.length ? el("section", { class: "source-group", "data-group": g }, el("h3", { class: "section" }, g, el("span", { class: "count-badge" }, String(items.length))),
+      el("div", { class: "tiles" }, items.map((c) => sourceTile(c, () => pick(c.type))))) : null;
+  }).filter(Boolean);
   const none = el("p", { class: "muted", hidden: true }, "No source matches. Try another word, or use REST API or Other database (connection URL) for anything not listed.");
   q.addEventListener("input", () => {
     const words = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -42,43 +103,50 @@ async function addDataPage(pid) {
     none.hidden = shown > 0;
   });
   const legend = el("div", { class: "legend" }, Object.values(TESTED).map(([text, kind, help]) => el("span", {}, tag(text, kind), " ", el("span", { class: "muted" }, help))));
-  show(page("Add data", "Choose where the data comes from. " + cat.catalogue.length + " kinds of source: files, databases, warehouses, cloud storage and applications. "
-    + "Every source is read-only, and passwords are never typed here: they stay in environment variables on the server.",
-  [btn("Back to data", () => go(() => viewProject(pid, "setup", "data")), "", "prev")],
-  crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), "Add data")),
-  el("div", { class: "row" }, icon("search"), q), legend, none, sections);
-  q.focus();
+  show(page("Add data", "Upload files, or connect a database, cloud storage or an application. Every source is only read, never changed.",
+    [btn("Back to data", () => go(() => viewProject(pid, "setup", "data")), "", "prev")],
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), "Add data")),
+  el("h2", { class: "section" }, "Upload files"), uploadZone(pid),
+  el("h2", { class: "section" }, "Or connect a database, storage or an application"),
+  el("p", { class: "hint" }, others.length + " kinds of source. Passwords are never typed here: they stay in environment variables on the server."),
+  el("details", { class: "advanced" }, el("summary", {}, "Choose a source"), el("div", { class: "row" }, icon("search"), q), legend, none, sections));
 }
+// The Data step: the project's data sources first (files still to map among them), Add data, and the details folded away.
 async function projectConnections(p, connections) {
   const pid = p.id;
-  const uploads = can("sources.manage") ? await api("GET", P(pid) + "/uploads") : [];
   const manage = can("sources.manage");
-  const cat = manage ? await catalogue() : null;
-  const rows = connections.map((c) => linkRow(c.id, () => viewConnection(pid, c.id), el("td", {}, typeCell(c.type)),
-    el("td", { class: "num" }, c.fields_mapped), el("td", {}, c.live_version ? "Version " + c.live_version : el("span", { class: "muted" }, "Not in use")),
-    el("td", {}, c.latest_status === "active" ? "" : statusTag(c.latest_status)),
-    el("td", {}, c.last_check ? tag(c.last_check.ok ? "OK" : "Failed", c.last_check.ok ? "success" : "danger") : el("span", { class: "muted" }, "never")), el("td", {}, when(c.updated_at)),
-    manage ? el("td", { class: "actions-cell" }, btn("Edit", () => run(() => editConnection(pid, c.id)), "small", "edit", { "aria-label": "Edit connection " + c.id })) : null));
-  const copy = can("sources.manage") ? btn("Copy from another project", () => copyDialog(pid), "", "folder") : null;
+  const uploads = manage ? await api("GET", P(pid) + "/uploads") : [];
+  const unmapped = uploads.filter((u) => !u.used_by.length).reverse();          // oldest first, the order they are mapped in
   const removeUpload = async (u) => {
-    if (!(await confirmDialog("Delete " + u.filename + "?", "The uploaded file is erased for good. No connection uses it.", "Delete file", true))) return;
+    if (!(await confirmDialog("Delete " + u.filename + "?", "The uploaded file is erased for good. No data source uses it.", "Delete file", true))) return;
     await api("DELETE", P(pid) + "/uploads/" + u.upload_id);
-    await go(() => viewProject(pid, "connections"));
+    await go(() => viewProject(pid, "setup", "data"));
     say(u.filename + " was deleted.", "good");
   };
+  const state = (c) => (c.live_version ? (c.latest_status === "active" ? tag("In use", "success") : el("span", {}, tag("In use", "success"), " ", statusTag(c.latest_status)))
+    : statusTag(c.latest_status === "active" ? "proposed" : c.latest_status));
+  const rows = [
+    ...unmapped.map((u) => el("tr", {}, el("td", {}, el("strong", {}, u.filename)), el("td", {}, typeCell("upload")), el("td", {}, tag("Needs mapping", "warn")),
+      el("td", {}, num(u.rows) + " rows, uploaded " + when(u.created_at)),
+      el("td", { class: "actions-cell" }, el("div", { class: "row tight" }, btn("Map it", () => go(() => mapUpload(pid, u.upload_id)), "small"),
+        moreMenu([["Delete file", () => removeUpload(u), true]], u.filename))))),
+    ...connections.map((c) => linkRow(c.id, () => viewConnection(pid, c.id), el("td", {}, typeCell(c.type)), el("td", {}, state(c)),
+      el("td", {}, plural(c.fields_mapped, "field", "fields") + " mapped" + (c.last_check && !c.last_check.ok ? ". " : ""), c.last_check && !c.last_check.ok ? tag("Last check failed", "danger") : null),
+      manage ? el("td", { class: "actions-cell" }, btn("Change", () => run(() => editConnection(pid, c.id)), "small", null, { "aria-label": "Change data source " + c.id })) : el("td", {}))),
+  ];
+  const add = manage ? btn("Add data", () => go(() => addDataPage(pid)), rows.length ? "" : "primary", "plus") : null;
+  const more = manage ? moreMenu([cache.projects.length > 1 ? ["Copy a data source from another project", () => copyDialog(pid)] : null]) : null;
+  const used = uploads.filter((u) => u.used_by.length);
   return el("div", {},
-    manage ? el("div", { class: "title-row" }, el("h2", { class: "section" }, "Add data"),
-      btn("All " + cat.catalogue.length + " sources", () => go(() => addDataPage(pid)), "", "grid")) : null,
-    manage ? el("div", { class: "tiles" }, POPULAR.map((t) => cat.catalogue.find((c) => c.type === t)).filter(Boolean)
-      .map((c) => sourceTile(c, () => run(() => connectionWizard(pid, c.type))))) : null,
-    el("div", { class: "title-row" }, el("h2", { class: "section" }, "This project's connections"), copy),
-    rows.length ? table(["Connection", "Type", ["Fields"], "In use", "Waiting", "Last check", "Updated", ...(manage ? [""] : [])], rows)
-      : empty(can("sources.manage") ? "No connections yet. Add your first data source above; it belongs to this project only." : "No connections yet. Someone who manages data sources adds them."),
-    connections.length ? coverage(connections) : null,
-    uploads.length ? el("h2", { class: "section" }, "Uploaded files") : null,
-    uploads.length ? table(["File", ["Rows"], "Used by", "Uploaded", "By", ""], uploads.map((u) => el("tr", {}, el("td", {}, u.filename), el("td", { class: "num" }, num(u.rows)),
-      el("td", {}, u.used_by.length ? u.used_by.join(", ") : el("span", { class: "muted" }, "nothing")), el("td", {}, when(u.created_at)), el("td", {}, u.uploaded_by),
-      el("td", { class: "actions-cell" }, u.used_by.length ? null : btn("Delete", () => removeUpload(u), "small danger"))))) : null);
+    el("div", { class: "title-row" }, el("h2", { class: "section" }, "Data sources"), el("div", { class: "row tight" }, add, more)),
+    unmapped.length ? el("div", { class: "notice warn", role: "note" }, plural(unmapped.length, "uploaded file needs", "uploaded files need") +
+      " mapping before a run can read " + (unmapped.length === 1 ? "it" : "them") + ": press Map it.") : null,
+    rows.length ? table(["Data source", "Kind", "State", "", ""], rows)
+      : empty(manage ? "No data yet. Upload files or connect a database; the data belongs to this project only." : "No data yet. Someone who manages data adds it.", add),
+    connections.length > 1 ? el("details", { class: "advanced" }, el("summary", {}, "Compare sources: which field comes from which column"), coverage(connections)) : null,
+    used.length ? el("details", { class: "advanced" }, el("summary", {}, "Uploaded files (" + used.length + ")"),
+      table(["File", ["Rows"], "Read by", "Uploaded", "By"], used.map((u) => el("tr", {}, el("td", {}, u.filename), el("td", { class: "num" }, num(u.rows)),
+        el("td", {}, u.used_by.join(", ")), el("td", {}, when(u.created_at)), el("td", {}, u.uploaded_by))))) : null);
 }
 async function copyDialog(pid) {
   const others = cache.projects.filter((x) => x.id !== pid);
@@ -113,7 +181,7 @@ function coverage(connections) {
   const used = CANON_ORDER.filter((f) => connections.some((c) => (c.fields || {})[f]));
   if (!used.length) return null;
   const extra = connections.filter((c) => (c.extra_columns || []).length);
-  return el("div", {}, el("h2", { class: "section" }, "Which field comes from which source"),
+  return el("div", {},
     el("p", { class: "hint" }, "Each column shows the column of that source that fills the field (latest version). Records of all sources are matched with each other on these fields."),
     table(["Field", ...connections.map((c) => c.id)], [
       ...used.map((f) => el("tr", {}, el("td", {}, fieldTitle(f)), connections.map((c) => el("td", {}, (c.fields || {})[f] ? el("span", { class: "mono" }, c.fields[f]) : el("span", { class: "muted" }, "-"))))),
@@ -124,12 +192,6 @@ function coverage(connections) {
 async function editConnection(pid, cid) {
   const c = await api("GET", P(pid) + "/connections/" + cid);
   await connectionWizard(pid, c.latest.connector.type, JSON.parse(JSON.stringify(c.latest)), 2);
-}
-function mappingTables(content, title) {
-  const mapRows = Object.entries(content.fields || {}).map(([f, col]) => el("tr", {}, el("td", {}, label(f)), el("td", {}, typeof col === "string" ? col : JSON.stringify(col))));
-  const settings = Object.entries(content.connector).filter(([k]) => k !== "type").map(([k, v]) => [label(k), el("span", { class: "mono" }, String(v))]);
-  return el("div", { class: "cols" }, el("div", {}, el("h3", { class: "section" }, "Settings" + title), settings.length ? kv(settings) : empty("None.")),
-    el("div", {}, el("h3", { class: "section" }, "Field mapping" + title), table(["Field", "Source column"], mapRows)));
 }
 async function viewConnection(pid, cid) {
   here(P(pid) + "/connections/" + cid);
@@ -155,28 +217,37 @@ async function viewConnection(pid, cid) {
   ].filter(Boolean);
   const changes = pending && live ? await api("GET", base + "/diff?old=" + live.version + "&new=" + latest.version) : null;
   const shown = c.live || c.latest;
-  show(page(cid, typeTitle(shown.connector.type) + " connection. " + (live ? "Version " + live.version + " in use." : "Not in use yet."),
-    can("sources.manage") ? [btn("Edit", () => run(() => editConnection(pid, cid)), "", "edit")] : [],
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), cid), statusTag(latest.status),
-    logo(shown.connector.type, "big")),
-  pending ? el("div", { class: "notice", role: "note" }, el("strong", {}, "Version " + latest.version + " waits to be put in use. "),
-    live ? (changes && changes.length ? "Compared with version " + live.version + " in use" + ": " + changes.join("; ") + "." : "It reads the same as the version in use.") : "No version is in use yet.") : null,
-  el("h2", { class: "section" }, "Versions"),
-  table(["Version", "Status", "Proposed by", "Reason", "Approved by", ""], c.versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version),
-    el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")), el("td", { class: "actions-cell" }, buttons(v))))),
-  pending ? el("h2", { class: "section" }, "Version " + latest.version + " (waiting)") : null,
-  pending ? mappingTables(c.latest, "") : null,
-  live ? el("h2", { class: "section" }, "Version " + live.version + " (in use)") : null,
-  live ? mappingTables(c.live, "") : null,
-  el("div", { class: "title-row" }, el("h2", { class: "section" }, "Health"), can("sources.manage") ? btn("Test now", async () => {
+  // what the source gives: each of our fields and the column it comes from; everything technical under Details
+  const mapRows = CANON_ORDER.filter((f) => (shown.fields || {})[f]).concat(Object.keys(shown.fields || {}).filter((f) => !CANON_ORDER.includes(f)))
+    .map((f) => el("tr", {}, el("td", {}, fieldTitle(f)), el("td", { class: "mono" }, typeof shown.fields[f] === "string" ? shown.fields[f] : JSON.stringify(shown.fields[f]))));
+  const settings = Object.entries(shown.connector).filter(([k]) => k !== "type").map(([k, v]) => [label(k), el("span", { class: "mono" }, String(v))]);
+  const test = can("sources.manage") ? btn("Test now", async () => {
     const t = await api("POST", base + "/test");
     await go(() => viewConnection(pid, cid));
     say(t.ok ? "The source reads fine (" + num(t.rows) + " sample rows). " + driftText(t.drift) : "The source could not be read: " + t.error, t.ok ? "good" : "bad");
-  }, "", "refresh") : null),
-  c.health.length ? table(["When", "Check", "Version", "Result", ["Rows"], "Changes in the source", "By"], c.health.map((h) => el("tr", {}, el("td", {}, when(h.checked_at)),
-    el("td", {}, h.kind === "run" ? "A run" : "Test now"), el("td", {}, h.version == null ? "" : "Version " + h.version), el("td", {}, h.ok ? tag("OK", "success") : tag("Failed", "danger")),
-    el("td", { class: "num" }, h.rows == null ? "" : num(h.rows)), el("td", {}, h.ok ? driftText(h.drift) : (h.error || "")), el("td", {}, h.checked_by))))
-    : empty("Not checked yet. Press Test now, or start a run."));
+  }, "small", "refresh") : null;
+  const versions = table(["Version", "Status", "Proposed by", "Reason", "Approved by", ""], c.versions.slice().reverse().map((v) => el("tr", {}, el("td", {}, "Version " + v.version),
+    el("td", {}, statusTag(v.status)), el("td", {}, v.proposed_by), el("td", {}, v.reason), el("td", {}, v.approved_by.join(", ")), el("td", { class: "actions-cell" }, buttons(v)))));
+  const lastCheck = c.health[0];
+  show(page(cid, typeTitle(shown.connector.type) + ". " + (live ? "In use: runs read it." : "Not in use yet: runs do not read it."),
+    can("sources.manage") ? [btn("Change", () => run(() => editConnection(pid, cid)), "", "edit")] : [],
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), cid), null,
+    logo(shown.connector.type, "big")),
+  pending ? el("div", { class: "notice", role: "note" }, el("strong", {}, (live ? "A change" : "This data source") + " waits to be put in use. "),
+    live ? (changes && changes.length ? "Compared with what is in use: " + changes.join("; ") + "." : "It reads the same as what is in use.") : "",
+    el("div", { class: "row" }, buttons(latest))) : null,
+  lastCheck && !lastCheck.ok ? el("div", { class: "notice bad", role: "note" }, "The last check could not read this source: " + (lastCheck.error || "unknown error") + ".") : null,
+  el("h2", { class: "section" }, "Fields it gives"),
+  mapRows.length ? table(["Field", "From column"], mapRows) : empty("No field is mapped yet."),
+  el("p", { class: "hint" }, "Each row's own id: " + (shown.record_id || "the row number") + "." + ((shown.attributes || []).length ? " Extra columns kept: " + shown.attributes.join(", ") + "." : "")),
+  el("details", { class: "advanced" }, el("summary", {}, "Details: settings, versions and checks"),
+    el("h3", { class: "section" }, "Settings"), settings.length ? kv(settings) : el("p", { class: "muted" }, "None."),
+    el("h3", { class: "section" }, "Versions"), versions,
+    el("div", { class: "title-row" }, el("h3", { class: "section" }, "Checks"), test),
+    c.health.length ? table(["When", "Check", "Version", "Result", ["Rows"], "Changes in the source", "By"], c.health.map((h) => el("tr", {}, el("td", {}, when(h.checked_at)),
+      el("td", {}, h.kind === "run" ? "A run" : "Test now"), el("td", {}, h.version == null ? "" : "Version " + h.version), el("td", {}, h.ok ? tag("OK", "success") : tag("Failed", "danger")),
+      el("td", { class: "num" }, h.rows == null ? "" : num(h.rows)), el("td", {}, h.ok ? driftText(h.drift) : (h.error || "")), el("td", {}, h.checked_by))))
+      : el("p", { class: "muted" }, "Not checked yet. Press Test now, or start a run.")));
 }
 const driftText = (d) => ((d && ((d.added || []).length || (d.removed || []).length))
   ? [(d.added || []).length ? "Added: " + d.added.join(", ") : "", (d.removed || []).length ? "Removed: " + d.removed.join(", ") : ""].filter(Boolean).join(". ") : "");
@@ -262,6 +333,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     state.uploadName = f.label;
   }
   if (preset) preset.attributes = preset.attributes || [];
+  if (batch && !preset) here(root + "/map/" + batch.files[batch.index].upload_id);       // Back and reload come back to this file
   const original = preset ? JSON.stringify(preset) : null;            // opened again unchanged: Save only moves on
   const ofBatch = batch && batch.files.length > 1 ? " (file " + (batch.index + 1) + " of " + batch.files.length + ")" : "";
   const unsaved = () => (batch ? batch.files.filter((f) => !f.saved).length : 0);
@@ -286,7 +358,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     const header = page(batch ? "Add data: " + state.source.source_id + ofBatch : preset ? "Edit connection " + state.source.source_id : "Add data: " + (spec ? spec.title : typeTitle(type)),
       spec ? spec.summary : "", [btn(batch && batch.files.length > 1 ? "Stop here" : "Cancel", () => go(async () => {
         await (batch ? viewProject(pid, "setup", "data") : preset ? viewConnection(pid, state.source.source_id) : addDataPage(pid));
-        if (unsaved()) say(plural(unsaved(), "file is", "files are") + " not saved yet. They stay under Uploaded files on this page: delete them there if they are not needed.", "good");
+        if (unsaved()) say(plural(unsaved(), "file is", "files are") + " not saved yet. They wait on this page as Needs mapping: map them later, or delete them if they are not needed.", "good");
       }))],
       crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Data", P(pid) + "/setup/data"), preset ? state.source.source_id : "Add data"),
       null, logo(kind(), "big"));
@@ -324,38 +396,8 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
   function connectStep() {
     const parts = [el("div", { class: "fields" }, idField())];
     if (kind() === "upload") {
-      const input = el("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx,.json,.jsonl,.ndjson,.parquet", multiple: true, hidden: true });
-      const status = el("div", { role: "status" }, state.source.connector.upload_id ? "Uploaded " + (state.uploadName || state.source.connector.upload_id) + "."
-        : "One file or several at once: CSV, TSV, Excel (.xlsx), JSON, JSON Lines or Parquet. A text or Excel file's first row must hold the column names. " +
-          "Each file becomes its own connection; with several, you map them one after another.");
-      const zone = el("div", { class: "dropzone" }, icon("upload"), el("strong", {}, "Drop files here"), btn("Choose files", () => input.click(), "small"), status);
-      // every file is uploaded first; each gets a connection id from its name, never one this project already uses
-      const send = (list) => run(async () => {
-        const files = [...list];
-        const existing = new Set((await api("GET", root + "/connections")).map((c) => c.id));
-        const taken = new Set(existing);
-        if (files.length === 1 && state.source.source_id && existing.has(state.source.source_id)) {
-          throw new Error("This project already has a connection called " + state.source.source_id + ". Choose another id, or open that connection to change it.");
-        }
-        const done = [];
-        for (const [i, f] of files.entries()) {
-          status.textContent = "Uploading and checking " + f.name + (files.length > 1 ? " (" + (i + 1) + " of " + files.length + ")" : "") + "...";
-          const r = await api("POST", root + "/uploads?filename=" + encodeURIComponent(f.name), f, { "Content-Type": "application/octet-stream" }, true);
-          const base = r.filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 36) || "upload";
-          let id = base;
-          for (let n = 2; taken.has(id); n++) id = base + "_" + n;
-          taken.add(id);
-          done.push({ upload_id: r.upload_id, id, label: r.filename + " (" + num(r.rows) + " rows, " + r.columns.length + " columns, stored encrypted)" });
-        }
-        if (done.length === 1 && state.source.source_id) done[0].id = state.source.source_id;      // an id typed before the upload is kept
-        await connectionWizard(pid, "upload", null, 2, { files: done, index: 0, memo: { reason: null } });
-        if (done.length > 1) say(num(done.length) + " files uploaded. Map them one at a time: this is the first.", "good");
-      });
-      input.addEventListener("change", () => { if (input.files.length) send(input.files); });
-      zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
-      zone.addEventListener("dragleave", () => zone.classList.remove("over"));
-      zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("over"); if (e.dataTransfer.files.length) send(e.dataTransfer.files); });
-      parts.push(zone, input);
+      if (state.source.connector.upload_id) parts.push(el("p", {}, "Uploaded " + (state.uploadName || state.source.connector.upload_id) + "."));
+      else parts.push(uploadZone(pid, () => state.source.source_id));
     } else if (spec) {
       parts.push(...settingsForm(spec, state.source.connector, () => { state.info = null; }, () => render()));
     } else {                                     // a type the catalogue does not describe (an old connection): plain text settings
