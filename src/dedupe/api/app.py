@@ -36,6 +36,8 @@ from .routes_write import router as write_router
 from .seclog import EVENTS, SecurityLog
 from .settings import ApiSettings
 
+LIMITS = ("min_length", "max_length", "ge", "le", "gt", "lt")          # the parts of a validation error that are limits, never the value
+
 log = logging.getLogger("dedupe.api")
 
 
@@ -164,8 +166,14 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
 
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError):
-        # which fields are wrong, never the values: a rejected value may be personal data
-        fields = [{"field": ".".join(str(p) for p in e["loc"] if p != "body"), "problem": e["type"]} for e in exc.errors()]
+        # which fields are wrong, never the values: a rejected value may be personal data. The limit a value broke (a length, a lowest or
+        # highest number) is a setting, not data, and lets the screens say "needs at least 10 characters".
+        def limit(e):
+            ctx = e.get("ctx") or {}
+            return next((ctx[k] for k in LIMITS if isinstance(ctx.get(k), int | float) and not isinstance(ctx.get(k), bool)), None)
+
+        fields = [{"field": ".".join(str(p) for p in e["loc"] if p != "body"), "problem": e["type"], **({"limit": n} if (n := limit(e)) is not None else {})}
+                  for e in exc.errors()]
         body = {"error": {"code": "invalid_request", "message": "The request is not valid.", "fields": fields,
                           "request_id": request.scope.get("state", {}).get("request_id", "")}}
         return JSONResponse(body, status_code=422)

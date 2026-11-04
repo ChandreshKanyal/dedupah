@@ -47,9 +47,9 @@ async function rulesPanel(p, name, editing) {
   const dry = async (v) => {
     const r = await api("POST", base + "/versions/" + v.version + "/dry-run", {});
     const zones = ["auto_merge", "review", "reject"];
-    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Try-out of version " + v.version + " on the " + num(r.pairs) + " scored pairs of run " + r.run_id), closeResult()),
+    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Try-out on the " + num(r.pairs) + " scored pairs of the latest run"), closeResult()),
       el("p", { class: "hint" }, "Nothing is changed: this shows how the pairs of the latest run would have been decided with this version."),
-      table(["Decision", ["Now"], ["With this version"], ["Change"]], zones.map((z) => el("tr", {}, el("td", {}, label(z)), el("td", { class: "num" }, num(r.zones_before[z])),
+      table(["Decision", ["Now"], ["With this version"], ["Change"]], zones.map((z) => el("tr", {}, el("td", {}, { auto_merge: "Merged automatically", review: "Sent to a person", reject: "Kept apart" }[z]), el("td", { class: "num" }, num(r.zones_before[z])),
         el("td", { class: "num" }, num(r.zones_after[z])), el("td", { class: "num" }, (r.zones_after[z] - r.zones_before[z] > 0 ? "+" : "") + num(r.zones_after[z] - r.zones_before[z]))))),
       el("p", { class: "hint" }, Object.keys(r.moved).length ? "Moved: " + Object.entries(r.moved).map(([k, n]) => k + " " + num(n)).join(", ") : "No pair changes decision."));
     result.scrollIntoView({ block: "nearest" });
@@ -166,7 +166,7 @@ async function rulesPanel(p, name, editing) {
 function settingsSummary(content) {
   const entries = Object.entries(content || {});
   if (!entries.length) return empty("The built-in run settings are used.");
-  return kv(entries.map(([k, v]) => [label(k), v !== null && typeof v === "object" ? el("code", {}, JSON.stringify(v)) : String(v)]));
+  return kv(entries.map(([k, v]) => [label(k), v === null ? el("span", { class: "muted" }, "not set") : typeof v === "object" ? el("code", {}, JSON.stringify(v)) : String(v)]));
 }
 function jsonEditor(content, propose, cancel) {
   const editor = el("textarea", { spellcheck: "false", rows: "16", class: "code" });
@@ -556,7 +556,8 @@ function goldenSummary(content, guide) {
     : el("p", {}, "Ranked automatically: the source whose records are most complete comes first.");
   const groups = content.groups || {};
   const grouped = new Set(Object.values(groups).flat());
-  const units = [...Object.entries(groups).map(([g, m]) => [g, label(g) + " (" + m.map(label).join(", ") + ")"]), ...guide.fields.filter((f) => !grouped.has(f)).map((f) => [f, label(f)])];
+  const units = [...Object.entries(groups).map(([g, m]) => [g, g === "address_block" ? "Address, city, state and PIN code (kept together)" : label(g) + " (" + m.map(fieldTitle).join(", ") + ", kept together)"]),
+    ...guide.fields.filter((f) => !grouped.has(f)).map((f) => [f, fieldTitle(f)])];
   const def = content.default_strategy || "most_recent";
   const byRule = {};
   for (const [u, text] of units) {
@@ -609,7 +610,7 @@ function goldenForm(content, guide, propose, cancel, opts) {
   });
   const undated = last && last.sources_without_dates && last.sources_without_dates.length
     ? el("div", { class: "notice warn", role: "note" }, "In the latest run these sources had no usable record date, so 'Newest record' could not use them: " + last.sources_without_dates.join(", ") +
-      ". Map a record date on the connection, or pick a date column here.") : null;
+      ". Map a record date on the data source, or pick a date column here.") : null;
 
   // one row per column (or per group of columns that must come from the same record), each with its own explicit choice
   const groups = content.groups || {};
@@ -671,7 +672,7 @@ function goldenForm(content, guide, propose, cancel, opts) {
       guide.sources.length ? table(["Source", "Record date"], dateRows) : null,
       el("h3", { class: "section" }, "Your own columns"),
       el("label", { class: "check" }, carry, el("span", {}, "Carry the sources' extra columns into the golden record (columns with the same name in different sources become one field)")),
-      extraRows.length ? table(["Column", "Golden-record column", "Sources", "Rule"], extraRows) : el("p", { class: "hint" }, "No connection keeps extra columns."),
+      extraRows.length ? table(["Column", "Golden-record column", "Sources", "Rule"], extraRows) : el("p", { class: "hint" }, "No data source keeps extra columns."),
       el("h3", { class: "section" }, "Shared phones and emails"),
       field("A phone or email shared by more than this many people (an office line, an agent) is used only when nothing else exists", shared)),
     saveBar(why, err, save, cancel, opts));

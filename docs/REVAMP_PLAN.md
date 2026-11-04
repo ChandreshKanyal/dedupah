@@ -1,5 +1,8 @@
 # Platform revamp: critique and plan (2026-11-04)
 
+> **Status: complete.** Built in phases 0-7 on 2026-11-04 (PROGRESS sections 76-83). The owner's five decisions were taken as recommended:
+> yes to the 4-item menu, one-click run, governance only when on, "data source", and phase 0 first.
+
 Based on a full walk through the portal in a browser (fresh project, two uploaded files, rules, a run, results, review, every menu page,
 phone width), plus the findings of the review agents (`~/agent-review`). Screenshots: `~/agent-review/tour/s/`.
 

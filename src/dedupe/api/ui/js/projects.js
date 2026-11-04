@@ -6,7 +6,7 @@ function runsTable(runs, withProject, pid) {
   if (!runs.length) return empty("No runs yet." + (can("runs.start") ? "" : " Someone who can start runs starts the first one."),
     can("runs.start") ? btn("Start a run", () => (pid ? quickRun(pid) : go(() => newRun())), "primary", "play") : null);
   const del = can("data.delete");
-  const cols = ["Run", ...(withProject ? ["Project"] : []), "Status", "Connections", ["Records"], ["People"], ["In review queue"], "Started", "By", ...(del ? [""] : [])];
+  const cols = ["Run", ...(withProject ? ["Project"] : []), "Status", "Data", ["Records"], ["Customers"], ["Sent to a person"], "Started", "By", ...(del ? [""] : [])];
   return table(cols, runs.map((r) => linkRow(withProject ? r.id : runTitle(r, runs), () => viewRun(r.project_id, r.id),
     withProject ? el("td", {}, projectName(r.project_id)) : null, el("td", {}, runState(r)),
     el("td", {}, r.connections.map((c) => c.id).join(", ") || el("span", { class: "muted" }, "imported")),
@@ -200,9 +200,9 @@ async function projectJourney(p, runs, connections) {
       notInUse ? el("div", { class: "muted" }, plural(notInUse, "source is", "sources are") + " added but not in use yet.") : null, records]
       : [el("span", { class: "muted" }, "Your role cannot see the data of this project.")],
     [st ? btn(st.data.length ? "Open" : "Add data", () => go(() => viewProject(pid, "setup", "data")), "", st.data.length ? null : "database") : null]),
-    row(2, "Rules", st ? [dec ? sameWhenShort(dec) : tag("Matching rules not chosen", "warn"), gold ? el("div", { class: "muted" }, "Clean record: " + goldenWords(gold)) : tag("Golden-record rules not chosen", "warn"),
+    row(2, "Rules", st ? [dec ? sameWhenShort(dec) : tag("Matching rules not chosen", "warn"), gold ? el("div", { class: "muted" }, "Golden record: " + goldenWords(gold)) : tag("Golden-record rules not chosen", "warn"),
       st.cfg.decision.waiting.length + st.cfg.survivorship.waiting.length ? el("div", { class: "muted" }, "Changes wait for approval.") : null] : [],
-    [st ? btn("Matching rules", () => go(() => viewProject(pid, "setup", "matching"))) : null, st ? btn("Clean record", () => go(() => viewProject(pid, "setup", "golden"))) : null]),
+    [st ? btn("Matching rules", () => go(() => viewProject(pid, "setup", "matching"))) : null, st ? btn("Golden record", () => go(() => viewProject(pid, "setup", "golden"))) : null]),
     row(3, "Run", [latest ? (latest.status === "succeeded" ? runTitle(latest, runs) + ": " + num(latest.summary.records) + " records became " + num(latest.summary.people) + " customers."
       : el("div", {}, runTitle(latest, runs) + ": ", runState(latest))) : "No run yet.",
     runs.length > 1 ? el("div", { class: "muted" }, plural(runs.length, "run", "runs") + " so far.") : null],
@@ -227,7 +227,7 @@ async function setupPart(p, sub, connections, guided) {
   return el("div", {}, guided && i >= 0 ? setupSteps(SETUP_STEP[sub], p.id) : null, body, nav);
 }
 async function activityPanel(pid) {
-  const ACTIONS = { propose: "Saved a connection version", activate: "Put a version in use", approve: "Approved a version", decline: "Declined a version", copy: "Copied a connection",
+  const ACTIONS = { propose: "Saved a data source", activate: "Put a version in use", approve: "Approved a version", decline: "Declined a version", copy: "Copied a data source",
     source_inspect: "Looked inside a source", source_preview: "Previewed a mapping", upload: "Uploaded a file", create_project: "Created the project", grant_access: "Added a member",
     revoke_access: "Removed a member", set_second_approval: "Changed the approval setting", rename_project: "Renamed the project", start: "Started a run", cancel: "Cancelled a run",
     delete_run: "Deleted a run", delete_upload: "Deleted an uploaded file", approve_match: "Decided: same person", reject_match: "Decided: different people",
@@ -244,7 +244,8 @@ async function activityPanel(pid) {
   const target = (e) => {
     const ref = (e.object_ref || "").replace(pid + "/", "").replace(/^connection\//, "");
     const rules = configOf(e);
-    return rules ? ref.replace(/^[^:]+:/, "version ") : ref;
+    const FILES = { golden_records: "customers file", person_records: "record map", households: "households file" };
+    return rules ? ref.replace(/^[^:]+:/, "version ") : ref.replace(/\/(golden_records|person_records|households)$/, (m, f) => ": " + FILES[f]);
   };
   const rowOf = (e) => el("tr", {}, el("td", {}, when(e.created_at)), el("td", {}, e.actor), el("td", {}, what(e)), el("td", { class: "mono" }, target(e)),
     el("td", { class: "num" }, e.status == null ? "" : e.status));
@@ -281,7 +282,7 @@ function settingsPanel(p) {
       kv([["Project id", el("span", { class: "mono" }, p.id)], ["Created by", p.created_by], ["Created", when(p.created_at)]])),
     el("h3", { class: "section" }, "Approvals"),
     el("label", { class: "check" }, second, el("span", {}, "Require a second person to approve changes", el("span", { class: "muted" },
-      "When on, a connection or rule change is approved by someone other than whoever proposed it, and sensitive decisions need a second person too. It needs at least two people in the project. When off, one person can do everything."))),
+      "When on, a change to a data source or the rules is approved by someone other than whoever proposed it, and sensitive decisions need a second person too. It needs at least two people in the project. When off, one person can do everything."))),
     err, el("div", { class: "row" }, btn("Save settings", save, "primary")),
     can("data.delete") ? el("div", { class: "panel danger-zone" }, el("h3", {}, "Delete this project"), el("div", { class: "body" },
       el("p", { class: "muted" }, "Erases everything in the project. Only its owner or an administrator can do it once the project has members."),
@@ -292,7 +293,7 @@ async function deleteProject(p) {
   const why = el("textarea", { class: "plain", maxlength: "300" });
   const e2 = errBox();
   const ok = await dialog("Delete project " + p.name + "?", el("div", {},
-    el("p", {}, "This erases the project for good: its runs and results, uploaded files, person IDs, steward decisions, rules, connections and schedules. The audit log keeps who deleted it, when and why. This cannot be undone."),
+    el("p", {}, "This erases the project for good: its runs and results, uploaded files, person IDs, review decisions, rules, data sources and schedules. The audit log keeps who deleted it, when and why. This cannot be undone."),
     field("Type the project id (" + p.id + ") to confirm", typed), field("Why is it deleted? (at least 10 characters)", why), e2), "Delete project", async () => {
     try { return await api("POST", P(p.id) + "/delete", { confirm: typed.value.trim(), reason: why.value.trim() }); } catch (e) { fail(e2, e.message); return undefined; }
   }, true);

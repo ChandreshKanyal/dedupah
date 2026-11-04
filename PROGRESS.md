@@ -3,7 +3,7 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp phases 0-6 done, phase 7 next) <<<
+## >>> RESUME HERE (latest state: 2026-11-04, session 4: the revamp plan is complete (phases 0-7)) <<<
 
 **Where we are (2026-11-04).** Sections 69-75 are built and committed. **The whole-portal revamp in `docs/REVAMP_PLAN.md` has started.**
 The user said "start" without answering the plan's five questions one by one, so we go with the recommendations: yes to the 4-item menu,
@@ -17,8 +17,9 @@ the source page without internals). **Phase 4 is done (section 80):** one-click 
 runs named "Run 3 · 4 Nov, 06:40", the run page as one sentence with details folded, one Download menu per file, Customers search (name,
 id, whole mobile or email). **Phase 5 is done (section 81):** Review with plain reasons, no score on
 rule-flagged pairs, field titles, live counts, a Decided tab and folded filters. **Phase 6 is done (section 82):** governance out of the way in
-one-person projects, a warning before leaving unsaved rule changes, the decline reason shown to the proposer. **Next: phase 7** (polish:
-phone layout, messages that hide by themselves, empty states, a glossary pass, plain validation messages). Confirm with the user before starting each phase.
+one-person projects, a warning before leaving unsaved rule changes, the decline reason shown to the proposer. **Phase 7 is done (section 83): the revamp plan is complete.**
+**Next (not started, ask the user):** the open review findings (P1-01 cross-project variables first), the scoring rebuild (namesakes
+merged on a learned score), wave 3 of the UX review on the new portal. Confirm with the user before starting each phase.
 
 **Still open from the agent review** (section 75, last list; summaries in `~/agent-review/*/report-summary.txt`): P1-01 cross-project
 DEDUPE_SRC/DST variables (most serious), P1-02 member role ignored, P1-03 steward bulk unmask, P1-04/05/08 second-approval gaps,
@@ -46,6 +47,7 @@ duckdb is pinned below 2 (2.0 refuses the `x -> ...` lambdas used in the engine 
 ### DONE (newest first; details in the numbered sections)
 | Commit | What | Section |
 |---|---|---|
+| session 4 | **Revamp phase 7 (polish):** every screen fits a phone (30 screens measured), messages hide by themselves (problems stay), empty states with their next step, one glossary pass (data source, golden record, plain titles instead of engine names), refused requests in plain words (backend reports the broken limit) | 83 |
 | session 4 | **Revamp phase 6:** one-person projects show no version numbers on the rules page and fold rule versions on New run; leaving a rules form with unsaved changes asks first (menu, Back, reload); a declined change says who declined it and why (backend `declined_reason`) | 82 |
 | session 4 | **Revamp phase 5:** Review says why a pair is there in words (the project's own rule names too), no score on pairs a rule sent, field titles everywhere, evidence as strong / some weight / weak, counts that follow each decision and Undo, a Decided tab, search first with the other filters folded | 81 |
 | session 4 | **Revamp phase 4:** one-click run with a confirm box (Change options opens the full form, now pre-ticked); run titles by number and time; run page with one summary sentence, engine details folded; tabs Overview, Results, Customers (review queue = Review screen); one Download menu per file; customers searchable by name, id, whole mobile or email (backend) | 80 |
@@ -366,6 +368,7 @@ Still planned (not built): ONNX Runtime + PaddleOCR (documents), FAISS/hnswlib (
 
 ## 8. Session log
 
+- **2026-11-04 (session 4, revamp phase 7)** — Polish; the revamp plan is complete. Audits and walks clean. Section 83.
 - **2026-11-04 (session 4, revamp phase 6)** — Governance tucked away, unsaved-changes warning, decline reasons; tests, ruff and browser walks clean. Section 82.
 - **2026-11-04 (session 4, revamp phase 5)** — Review screen; tests, ruff and browser walks clean. Section 81.
 - **2026-11-04 (session 4, revamp phase 4)** — Run and Results rebuilt; tests, ruff and browser walks clean. Section 80.
@@ -1990,3 +1993,30 @@ The user: "please start the fixing". Findings are in `~/agent-review/*/report-su
 - **Checked:** governance and UI tests, ruff, full suite; `~/agent-review/p1/p6.py` (status line, leaving without changes, leaving with a
   change and staying, Back with a change, leaving for real, a change proposed and declined through the API, New run in a one-person
   project): no script errors or failed requests.
+
+## 83. Revamp phase 7: polish; the revamp plan is complete (2026-11-04, session 4)
+
+Done with measurements first, then fixes, then the same measurements again (scripts in `~/agent-review/p7/`).
+- **Phones:** `phone.py` opens 30 screens at 390 px and reports any element past the screen edge and any content cut off inside a
+  panel. Before: all 30 were 451 px wide. The cause was one rule: the frame's single column (`1fr`) could not shrink below the top bar's
+  content. Fix: `minmax(0, 1fr)`, the product name hidden and a long user name shortened on phones, the search hint shortened to "Search".
+  After: 0 of 30. Then each screen's screenshot was looked at (contact sheets): page titles and buttons are left-aligned now (they were
+  centred), the project's step bar shows the five step names (the numbers hide on a phone; before, every name hid once a project was
+  done).
+- **Messages** (`say` in core.js): good news and notes hide after 6 seconds (10 with an action such as Undo), never while the pointer or the
+  keyboard focus is on them (checked again 2 seconds later); a problem stays until dismissed. Checked in `msg.py`.
+- **Empty states:** every empty list says what it means and offers the next step where there is one (Review before any run: "Go to
+  projects"; a data source with no mapped fields: "Map the columns"). Review with no pairs shows one message across the width, without the
+  tick-box tools, the pager or a second empty pane.
+- **Glossary pass:** "connection" became "data source" in every place it meant one (New run, schedules, approvals, activity, copy dialog,
+  mapping screens, role description, catalogue); "connection URL" stays (the database term). "Golden record" is the one name for the clean
+  record (explained as "one clean record per customer"); field names, comparisons, connector types and the try-out table use titles
+  instead of engine names; the compare page says why a pair is there instead of the rule id and links back to Review; Technical settings
+  show "not set" instead of null; Activity names result files in words. `words.py` scans the visible text of every screen: what remains
+  is the customer's own source and column names, the run log, the audit log and the role name "steward".
+- **Refused requests in plain words:** the server's validation error now also gives the limit a value broke (`min_length`, `max_length`,
+  `ge`, `le`, `gt`, `lt`; never the value; `app.py`, test in `test_api_security.py`), and the portal turns field + problem + limit into a
+  sentence (`problemWords` in words.js): "The reason needs at least 10 characters." instead of "The request is not valid. reason
+  (string_too_short)".
+- **Checked:** UI and security tests, ruff, full suite; `tour.py`, `p3.py`-`p6.py` again (p5 on a fresh sandbox: the old one had no open
+  pairs left), `phone.py` 0 of 30, `words.py`, `msg.py`, `empty.py`: no script errors or unexpected failed requests.

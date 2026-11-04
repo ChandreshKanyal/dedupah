@@ -159,14 +159,14 @@ async function copyDialog(pid) {
     which.replaceChildren();
     try {
       const list = await api("GET", P(from.value) + "/connections");
-      which.append(...list.filter((c) => c.type !== "upload").map((c) => el("option", { value: c.id }, c.id + " (" + label(c.type) + ")")));
-      fail(err, which.children.length ? "" : "That project has no connection that can be copied (uploaded files stay with their project).");
+      which.append(...list.filter((c) => c.type !== "upload").map((c) => el("option", { value: c.id }, c.id + " (" + typeTitle(c.type) + ")")));
+      fail(err, which.children.length ? "" : "That project has no data source that can be copied (uploaded files stay with their project).");
     } catch (e) { fail(err, e.message); }
   };
   from.addEventListener("change", load);
   await load();
-  const done = await dialog("Copy a connection", el("div", {}, el("p", { class: "hint" }, "The copy is independent: later changes to either one do not affect the other. It starts as a proposal in this project."),
-    field("From project", from), field("Connection", which), field("New id here (leave empty to keep the same)", newId), err), "Copy", async () => {
+  const done = await dialog("Copy a data source", el("div", {}, el("p", { class: "hint" }, "The copy is independent: later changes to either one do not affect the other. It starts as a proposal in this project."),
+    field("From project", from), field("Data source", which), field("New id here (leave empty to keep the same)", newId), err), "Copy", async () => {
     try {
       return await api("POST", P(pid) + "/connections/copy", { from_project: from.value, connection_id: which.value, new_id: newId.value.trim() || null });
     } catch (e) { fail(err, e.message); return undefined; }
@@ -239,7 +239,8 @@ async function viewConnection(pid, cid) {
     el("div", { class: "row" }, buttons(latest))) : null,
   lastCheck && !lastCheck.ok ? el("div", { class: "notice bad", role: "note" }, "The last check could not read this source: " + (lastCheck.error || "unknown error") + ".") : null,
   el("h2", { class: "section" }, "Fields it gives"),
-  mapRows.length ? table(["Field", "From column"], mapRows) : empty("No field is mapped yet."),
+  mapRows.length ? table(["Field", "From column"], mapRows)
+    : empty("No field is mapped yet: runs cannot match its records.", can("sources.manage") ? btn("Map the columns", () => run(() => editConnection(pid, cid)), "primary", "columns") : null),
   el("p", { class: "hint" }, "Each row's own id: " + (shown.record_id || "the row number") + "." + ((shown.attributes || []).length ? " Extra columns kept: " + shown.attributes.join(", ") + "." : "")),
   el("details", { class: "advanced" }, el("summary", {}, "Details: settings, versions and checks"),
     el("h3", { class: "section" }, "Settings"), settings.length ? kv(settings) : el("p", { class: "muted" }, "None."),
@@ -356,7 +357,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
   };
   const render = () => {
     const bar = steps(["Connect", "Map columns", "Preview and save"], state.step, (n) => run(() => goStep(n)));
-    const header = page(batch ? "Add data: " + state.source.source_id + ofBatch : preset ? "Edit connection " + state.source.source_id : "Add data: " + (spec ? spec.title : typeTitle(type)),
+    const header = page(batch ? "Add data: " + state.source.source_id + ofBatch : preset ? "Change " + state.source.source_id : "Add data: " + (spec ? spec.title : typeTitle(type)),
       spec ? spec.summary : "", [btn(batch && batch.files.length > 1 ? "Stop here" : "Cancel", () => go(async () => {
         await (batch ? viewProject(pid, "setup", "data") : preset ? viewConnection(pid, state.source.source_id) : addDataPage(pid));
         if (unsaved()) say(plural(unsaved(), "file is", "files are") + " not saved yet. They wait on this page as Needs mapping: map them later, or delete them if they are not needed.", "good");
@@ -370,14 +371,14 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
   const idField = () => {
     const i = el("input", { type: "text", value: state.source.source_id, maxlength: "40", placeholder: "For example bank_crm", disabled: preset ? true : null });
     i.addEventListener("input", () => { state.source.source_id = i.value.trim(); });
-    return field("Connection id (stamped on every record it delivers: letters, digits, _ and -)", i);
+    return field("Name of this data source (stamped on every record it delivers: letters, digits, _ and -)", i);
   };
   const inspectUrl = () => root + "/connections/inspect" + (state.reason ? "?" + unmaskQuery(state.reason) : "");
   const openSource = async (target) => {
-    if (!/^[A-Za-z0-9_-]{1,40}$/.test(state.source.source_id)) throw new Error("Give the connection an id of letters, digits, _ or -.");
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(state.source.source_id)) throw new Error("Give the data source a name of letters, digits, _ or - (no spaces).");
     if (kind() === "upload" && !state.source.connector.upload_id) throw new Error("Upload a file first.");
     if (!preset && !batch && (await api("GET", root + "/connections")).some((c) => c.id === state.source.source_id)) {
-      throw new Error("This project already has a connection called " + state.source.source_id + ". Choose another id, or open that connection to change it.");
+      throw new Error("This project already has a data source called " + state.source.source_id + ". Choose another name, or open that one to change it.");
     }
     state.info = await api("POST", inspectUrl(), { connector: state.source.connector });
     if (!Object.keys(state.source.fields).length) {
@@ -473,7 +474,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     drawMissing();
     return el("div", {},
       el("p", { class: "hint" }, "Choose what each column of your file holds. Suggestions from the values are already filled in: check them and change any that are wrong. " +
-        "Whether an identifier such as PAN decides on its own is set in Setup, Matching rules."),
+        "Whether an identifier such as PAN decides on its own is set in the project's matching rules."),
       warnName,
       table(["Your column", "Examples", "Values look like", "Use as"], rows, "map-table"),
       missing,
@@ -488,7 +489,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       const r = await api("POST", root + "/connections/preview" + (state.reason ? "?" + unmaskQuery(state.reason) : ""), state.source);
       const cols = Object.keys(r.rows[0] || {}).filter((c) => c !== "attributes" && r.rows.some((row) => row[c] != null));
       fill(out, el("h3", { class: "section" }, "Fields filled in " + r.sample_size + " sample rows"),
-        table(["Field", ["Rows filled"]], Object.entries(r.filled).map(([f, n]) => el("tr", {}, el("td", {}, label(f)), el("td", { class: "num" }, n + " of " + r.sample_size)))),
+        table(["Field", ["Rows filled"]], Object.entries(r.filled).map(([f, n]) => el("tr", {}, el("td", {}, fieldTitle(f)), el("td", { class: "num" }, n + " of " + r.sample_size)))),
         r.rows.length ? el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your rows as the engine reads them (" + (r.unmasked ? "actual values" : "values shortened") + ")"),
           revealButton(async () => doPreview())) : null,
         r.rows.length ? wide(cols, r.rows.map((row) => el("tr", {}, cols.map((c) => el("td", {}, row[c] == null ? "" : row[c]))))) : null);
@@ -501,8 +502,8 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       let why = solo ? (again ? "Changed the mapping of " : "Added from ") + (kind() === "upload" ? "uploaded file " : "source ") + state.source.source_id
         : batch ? batch.memo.reason : null;
       if (!why) {
-        why = await askReason(many ? "Save the uploaded files" : "Save connection " + state.source.source_id,
-          many ? "Why add these " + batch.files.length + " files? (asked once for all of them)" : "Why add or change it?", 10, "Save connection");
+        why = await askReason(many ? "Save the uploaded files" : "Save " + state.source.source_id,
+          many ? "Why add these " + batch.files.length + " files? (asked once for all of them)" : "Why add or change it?", 10, "Save");
         if (why === null) return;
         if (batch) batch.memo.reason = why;
       }
@@ -518,7 +519,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
         if (now) await api("POST", root + "/connections/" + res.id + "/versions/" + res.version + "/activate", { reason: why });
         if (me1) me1.saved = true;
         saved = "Saved " + res.id + " as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
-          : ". Someone who can put connections in use does that next.");
+          : ". Someone who can put data sources in use does that next.");
       }
       if (many) {
         const n = batch.files.length;
@@ -537,7 +538,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     };
     setTimeout(doPreview, 0);
     return el("div", {},
-    el("div", { class: "row" }, btn("Back", () => goStep(2), "", "prev"), btn("Preview again", doPreview, "", "refresh"), btn("Save connection", save, "primary", "check")));
+    el("div", { class: "row" }, btn("Back", () => goStep(2), "", "prev"), btn("Preview again", doPreview, "", "refresh"), btn("Save data source", save, "primary", "check")));
   }
   render();
   if ((preset || batch) && startStep && startStep > 1) await goStep(startStep);

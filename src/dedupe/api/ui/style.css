@@ -228,8 +228,9 @@ ul.plain li { margin: 3px 0; }
 #login img.logo { display: block; width: 240px; max-width: 100%; height: auto; margin: 0 0 20px; }
 
 @media (max-width: 860px) {
-  #app { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
-  #topbar { grid-template-columns: auto 1fr auto; gap: 8px; padding: 8px 0; }
+  #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr; }      /* minmax: the column may be narrower than its content */
+  #topbar { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; padding: 8px 0; }
+  #content { min-width: 0; }
   #brand { padding: 0 0 0 12px; }
   #account { padding: 0 12px 0 0; gap: 4px; }
   #search-hint { display: none; }
@@ -237,11 +238,14 @@ ul.plain li { margin: 3px 0; }
   #nav h2 { display: none; }
   #content { padding: 16px; }
   #loading { right: 16px; }
-  .page-head { flex-direction: column; }
+  .page-head { flex-direction: column; align-items: stretch; gap: 8px; }
   .actions { justify-content: flex-start; }
   table.kv th { width: 40%; }
 }
 @media (max-width: 520px) {
+  #product { display: none; }
+  #brand { gap: 0; }
+  #user-btn { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #search { padding-right: 12px; }
   #brand img { height: 18px; }
   th, td { padding: 8px 10px; }
@@ -506,9 +510,8 @@ ol.journey li.on .n { border-color: var(--text); }
 .journey-row .jbody > div + div { margin-top: 2px; }
 .journey-row > .row { margin: 0; justify-content: flex-end; }
 @media (max-width: 640px) {
-  ol.journey li { padding: 8px; font-size: 12px; }
-  ol.journey li:not(.on) { flex: none; }
-  ol.journey li:not(.on) .n + * { display: none; }
+  ol.journey li { justify-content: center; padding: 8px 2px; font-size: 12px; }
+  ol.journey .n { display: none; }                        /* five names fit a phone; the numbers do not */
   .next-step { flex-wrap: wrap; }
   .journey-row { grid-template-columns: 1fr; gap: 6px; }
   .journey-row > .row { justify-content: flex-start; }
@@ -521,3 +524,5 @@ ol.journey li.on .n { border-color: var(--text); }
 .card-head p { margin: 0; }
 .pane-head p.why { margin: 4px 0 0; }
 [role=search] > .row > select { width: auto; max-width: 260px; }
+.work.no-pairs { grid-template-columns: minmax(0, 1fr); }
+.work.no-pairs .list-pane { border-right: 1px solid var(--border-strong); }

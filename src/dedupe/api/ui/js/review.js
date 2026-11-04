@@ -40,7 +40,8 @@ async function viewInbox(pidArg, statusArg, ridArg) {
   here(cur ? "/review/" + cur.project_id + (status !== "open" || chosenRun !== newest ? "/" + status : "") + (chosenRun !== newest ? "/" + chosenRun : "") : "/review");
   if (!cur) {
     show(page("Review", "Pairs that need a person appear here after a project's first finished run."),
-      empty(rows.length ? "No project has a finished run yet." : "You are not in any project yet."));
+      empty(rows.length ? "No project has a finished run yet. Pairs to check appear here after a project's first run." : "You are not in any project yet.",
+        rows.length ? btn("Go to projects", link("/projects"), "primary", "folder") : null));
     return;
   }
   const pid = cur.project_id;
@@ -102,8 +103,9 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     chosen.clear();
     at = Math.min(Math.max(select || 0, 0), Math.max(items.length - 1, 0));
     drawList();
+    detail.hidden = !items.length;                           // with nothing listed, the list alone says so, across the whole width
+    if (listPane.parentElement) listPane.parentElement.classList.toggle("no-pairs", !items.length);
     if (items.length) await openPair(at);
-    else detail.replaceChildren(el("div", { class: "pane-empty" }, filtered() ? "No pairs match these filters." : status === "open" ? "Nothing to review here." : "No pairs in this view."));
   }
   function drawList() {
     const selCount = el("span", { class: "sel-count" }, num(chosen.size) + " selected");
@@ -128,17 +130,19 @@ async function viewInbox(pidArg, statusArg, ridArg) {
             it.state !== "open" ? [" · ", statusTag(it.state)] : null)));
     });
     const last = ctx.offset + items.length;
-    listPane.replaceChildren(
-      el("div", { class: "pane-tool" }, selCount,
+    const some = items.length > 0;                      // an empty list has nothing to tick or to page through
+    fill(listPane,
+      some && writer ? el("div", { class: "pane-tool" }, selCount,
         writer ? btn("Same person", () => bulk("approve"), "small", null, { title: "Same person for the ticked pairs" }) : null,
         writer ? btn("Different people", () => bulk("reject"), "small", null, { title: "Different people for the ticked pairs" }) : null,
-        el("span", { class: "grow" })),
-      items.length ? el("div", { class: "wl" }, rowsEl) : el("div", { class: "pane-empty" }, filtered() ? "No pairs match these filters." : "No pairs."),
-      el("div", { class: "pane-foot" },
+        el("span", { class: "grow" })) : null,
+      items.length ? el("div", { class: "wl" }, rowsEl) : el("div", { class: "pane-empty" }, filtered() ? "No pairs match these filters."
+        : status === "open" ? "Nothing to review here: every pair of this run is decided." : status === "unsure" ? "No pair is marked Not sure." : "No pairs in this view."),
+      some || ctx.offset ? el("div", { class: "pane-foot" },
         btn("", () => loadList(ctx.offset - QUEUE_PAGE, 0), "small icon", "prev", { "aria-label": "Previous page", disabled: ctx.offset === 0 }),
         btn("", () => loadList(ctx.offset + QUEUE_PAGE, 0), "small icon", "next", { "aria-label": "Next page", disabled: items.length < QUEUE_PAGE }),
         el("span", { class: "grow" }),
-        items.length ? (ctx.offset + 1) + " - " + last + (count != null && !filtered() ? " of " + num(count) : "") : ""));
+        items.length ? (ctx.offset + 1) + " - " + last + (count != null && !filtered() ? " of " + num(count) : "") : "") : null);
   }
 
   async function openPair(i, reveal) {
@@ -314,13 +318,13 @@ async function viewCompare(pid, rid, l, r, reveal) {
   }
   const position = ctx.index == null ? "" : "Pair " + num(ctx.index + 1) + (ctx.status === "open" && ctx.band === "all" && summary && summary.open_now != null ? " of " + num(summary.open_now) : "") + ". ";
   const [A, Bp] = c.persons;
-  const why = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, label(x.comparison) + ": " + x.level + " (" + x.bits.toFixed(1) + " bits)")))
+  const why = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, comparisonTitle(x.comparison) + ": " + x.level + " (" + strength(x.bits) + ")")))
     : el("p", { class: "muted" }, "None."));
   const stale = runInfo.latest_run_id && runInfo.latest_run_id !== rid ? el("div", { class: "notice warn", role: "note" },
     "This pair comes from an older run. Your decision still counts, but the newest run may already show these people differently.",
-    el("div", { class: "row" }, btn("Open the newest run's queue", () => go(() => viewRun(pid, runInfo.latest_run_id, "review")), "small"))) : null;
-  show(page("Compare people", position + "Match score " + pct(c.probability) + (c.decided_by ? ". Decided by rule: " + c.decided_by : "") + ".", actions,
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run " + rid, R(pid, rid)), crumb("Review queue", R(pid, rid) + "/review"), l + " and " + r)),
+    el("div", { class: "row" }, btn("Review the newest run", () => go(() => viewInbox(pid)), "small"))) : null;
+  show(page("Compare people", position + (c.decided_by ? "Why it is here: " + (RULE_TITLE[c.decided_by] || label(c.decided_by)) : "Match score " + pct(c.probability)) + ".", actions,
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Review", "/review/" + pid), l + " and " + r)),
   stale, scoringNotice(runInfo.summary),
   c.unmasked ? el("p", { class: "hint" }, "Identifiers are shown in full. This view is logged.") : el("p", { class: "hint" }, "Identifiers are masked. Masked values that look the same may still differ."),
   c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(fieldTitle).join(", ") + ". These are probably two different people.") : null,
@@ -388,7 +392,7 @@ async function viewPerson(pid, rid, person, reveal) {
   show(page("Customer " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run", R(pid, rid)), crumb("Customers", R(pid, rid) + "/customers"), person)),
   v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map(fieldTitle).join(", ") + ". The golden record shows the best-supported value.") : null,
-  el("h2", { class: "section" }, "Clean record (golden record)"), golden.length ? kv(golden) : empty("No values."),
+  el("h2", { class: "section" }, "Golden record"), golden.length ? kv(golden) : empty("No values."),
   Object.keys(v.extra || {}).length ? [el("h3", { class: "section" }, "Other columns from the sources"), kv(Object.entries(v.extra).map(([k, val]) => [label(k), String(val)]))] : null,
   el("h2", { class: "section" }, "Source records"),
   table([...(writer && v.records.length > 1 ? [""] : []), "Source", "Record", "Name as written", "Date of birth", "Mobile", "Email", "City"], rows),
@@ -428,7 +432,7 @@ async function decisionsPanel(projects, opts, state) {
     return el("button", { type: "button", class: "link mono", onclick: () => go(go2) }, d.persons.join(" and "));
   };
   const lines = rows.map((d) => el("tr", {}, el("td", {}, when(d.created_at)), opts.project ? null : el("td", {}, d.project.name),
-    el("td", {}, (KIND_LABEL[d.kind] || label(d.kind)) + (d.field ? ": " + label(d.field) : "")), el("td", {}, who(d)), el("td", {}, d.yours ? tag("You", "info") : d.actor),
+    el("td", {}, (KIND_LABEL[d.kind] || label(d.kind)) + (d.field ? ": " + fieldTitle(d.field) : "")), el("td", {}, who(d)), el("td", {}, d.yours ? tag("You", "info") : d.actor),
     el("td", {}, d.reason || el("span", { class: "muted" }, "none")), el("td", {}, statusTag(d.status)),
     el("td", { class: "actions-cell" }, can("judgment.write") && d.action_id && ["in_force", "waiting_for_run", "pending_approval"].includes(d.status) ? btn("Undo", () => undo(d), "small", "undo") : null)));
   add(box, el("div", { class: "row" }, el("label", { class: "check" }, mine, "Only my decisions"), field("Status", status)),

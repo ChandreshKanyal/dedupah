@@ -33,3 +33,24 @@ function declinedNotice(versions, live) {
   return el("div", { class: "notice warn", role: "note" }, el("strong", {}, (v.proposed_by === me.sub ? "Your change" : "The change by " + v.proposed_by) + " was declined"),
     " by " + v.declined_by + (v.declined_reason ? ": \u201c" + v.declined_reason + "\u201d" : "") + ". Change it and save again, or keep what is in use.");
 }
+
+// A refused request in words: "The reason needs at least 10 characters." instead of "reason (string_too_short)". The server names the field,
+// the kind of problem and the limit it broke, never the value.
+const FIELD_WORDS = { reason: "the reason", name: "the name", id: "the id", description: "the description", username: "the username", password: "the password",
+  new_password: "the new password", current_password: "the current password", display_name: "the name", table: "the table name", schema_name: "the schema",
+  source_id: "the data source name", record_id: "the row id column", confirm: "the confirmation", new_id: "the new name", at_time: "the time",
+  value: "the new value", q: "the search", limit: "the page size", destination: "the destination", url_env: "the environment variable name",
+  when: "a rule's condition", rules: "the rules", after_id: "the starting point", mode: "the choice", format: "the file format", frequency: "how often",
+  timezone: "the time zone", connections: "the data sources", fields: "the mapping", connector: "the source settings" };
+function problemWords(f) {
+  const parts = String(f.field || "").split(".").filter((x) => x && !/^\d+$/.test(x) && !["query", "path", "body"].includes(x));
+  const last = parts[parts.length - 1] || "";
+  const what = FIELD_WORDS[last] || (last ? "the " + label(last) : "a value");
+  const n = f.limit;
+  const how = { missing: "is missing", string_too_short: n === 1 ? "is empty" : "needs at least " + n + " characters", string_too_long: "can have at most " + n + " characters",
+    too_short: "needs at least " + n + " entries", too_long: "can have at most " + n + " entries", string_pattern_mismatch: "has characters that are not allowed",
+    greater_than_equal: "must be " + n + " or more", less_than_equal: "must be " + n + " or less", greater_than: "must be more than " + n, less_than: "must be less than " + n,
+    int_parsing: "must be a whole number", float_parsing: "must be a number", bool_parsing: "must be yes or no", literal_error: "is not one of the choices",
+    enum: "is not one of the choices", extra_forbidden: "is not expected here" }[f.problem] || "is not valid";
+  return what.charAt(0).toUpperCase() + what.slice(1) + " " + how + ".";
+}

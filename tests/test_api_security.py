@@ -350,6 +350,7 @@ def test_validation_errors_name_the_field_but_never_echo_the_value(tmp_path):
     body = r.text
     assert "ABCDE1234F" not in body and "-5" not in body and "input" not in r.json()["error"]
     assert {f["field"] for f in r.json()["error"]["fields"]} == {"query.limit", "query.after_id"}
+    assert {f["field"]: f.get("limit") for f in r.json()["error"]["fields"]}["query.after_id"] == 0          # the broken limit, so screens can say it
 
 
 def test_unexpected_errors_are_generic_and_logged_without_their_message(tmp_path):

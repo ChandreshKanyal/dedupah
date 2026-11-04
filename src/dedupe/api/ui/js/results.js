@@ -195,15 +195,15 @@ async function schedulesPanel(p, connections) {
       btn("Delete", () => remove(s), "small danger")] : null)));
   const create = manage ? btn("New schedule", () => scheduleDialog(p, connections), "primary", "plus") : null;
   return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Scheduled runs"), create),
-    el("p", { class: "hint" }, "A schedule starts an ordinary run of the chosen connections at the times you set, using the versions in use at that moment: an incremental load (only new and changed records are processed again) or a full reload. It never starts a new run while its last one is still going, runs once (not once per missed slot) after the server was off, and pauses itself after three failed runs in a row."),
-    rows.length ? table(["Name", "Connections", "When", "Load", "Next run", "Last run", "State", ""], rows) : empty("No schedules yet." + (manage ? "" : " Someone who can start runs creates them."), create));
+    el("p", { class: "hint" }, "A schedule starts an ordinary run of the chosen data sources at the times you set, using the versions in use at that moment, and processes only what changed or everything again. It never starts a new run while its last one is still going, runs once (not once per missed slot) after the server was off, and pauses itself after three failed runs in a row."),
+    rows.length ? table(["Name", "Data", "When", "Processes", "Next run", "Last run", "State", ""], rows) : empty("No schedules yet." + (manage ? "" : " Someone who can start runs creates them."), create));
 }
 async function scheduleDialog(p, connections, existing) {
   const live = connections.filter((c) => c.live_version);
-  if (!live.length) { say("This project has no live connection to run yet.", "bad"); return; }
+  if (!live.length) { say("This project has no data source in use yet.", "bad"); return; }
   const s = existing || {};
   const name = el("input", { type: "text", maxlength: "100", placeholder: "for example Nightly sweep", value: s.name || "" });
-  const picks = checkList(live.map((c) => ({ name: c.id, description: label(c.type) + ", version " + c.live_version })), new Set(s.connections || live.map((c) => c.id)), () => true, false);
+  const picks = checkList(live.map((c) => ({ name: c.id, description: typeTitle(c.type) })), new Set(s.connections || live.map((c) => c.id)), () => true, false);
   const freq = el("select", {}, [["daily", "Every day"], ["weekly", "Every week"], ["hourly", "Every hour"]].map(([v, t]) => el("option", { value: v, selected: v === s.frequency }, t)));
   const at = el("input", { type: "text", maxlength: "5", value: s.at_time || "02:00", placeholder: "02:00" });
   const day = el("select", {}, WEEKDAYS.map((d, i) => el("option", { value: String(i), selected: i === s.weekday }, d)));
@@ -222,7 +222,7 @@ async function scheduleDialog(p, connections, existing) {
   setLabels();
   const body = { name: () => name.value.trim(), connections: () => picks.values(), frequency: () => freq.value, at_time: () => at.value.trim(),
     weekday: () => (freq.value === "weekly" ? Number(day.value) : null), timezone: () => zone.value.trim(), mode: () => mode.value() };
-  const saved = await dialog(existing ? "Edit schedule " + s.name : "New schedule", el("div", {}, field("Name", name), el("h3", { class: "section" }, "Connections to read"), picks.node,
+  const saved = await dialog(existing ? "Edit schedule " + s.name : "New schedule", el("div", {}, field("Name", name), el("h3", { class: "section" }, "Data sources to read"), picks.node,
     el("h3", { class: "section" }, "How to load"), mode.node,
     field("How often", freq), dayField, atField, field("Time zone (a name such as Asia/Kolkata)", zone), zones, err), "Save schedule", async () => {
     try {

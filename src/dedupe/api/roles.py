@@ -45,7 +45,7 @@ ROLES: dict[str, frozenset] = {
 BUILTIN_DESCRIPTIONS = {
     "viewer": "Reads the review queue, people, rules and runs (masked).",
     "steward": "Decides pairs, splits and overrides; can see unmasked identifiers (logged).",
-    "approver": "Gives the second approval on decisions and rule or connection changes, and makes them live.",
+    "approver": "Gives the second approval on decisions and on changes to rules and data sources, and makes them live.",
     "rule_admin": "Proposes rule and setting changes.",
     "auditor": "Reads everything including logs and unmasked identifiers; changes nothing.",
     "platform_admin": "Starts, cancels and deletes runs, connects sources, controls who works in each project, deletes projects.",

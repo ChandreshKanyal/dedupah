@@ -29,15 +29,15 @@ async function viewApprovals() {
   if (decisionRows.length) {
     sections.push(el("h2", { class: "section" }, "Review decisions waiting for a second person"),
       table(["Project", "Decision", "People", ["Score"], "Main evidence", "Made by", "Reason", ""], decisionRows.map(({ p, i }) => el("tr", {}, el("td", {}, p.name),
-        el("td", {}, (KIND_LABEL[i.kind] || label(i.kind)) + (i.field ? ": " + label(i.field) : "")), el("td", {}, people(p, i)), el("td", { class: "num" }, pct(i.probability)),
-        el("td", {}, (i.top_evidence || []).map((x) => label(x.comparison) + ": " + x.level).join("; ")), el("td", {}, i.yours ? tag("You", "info") : i.actor), el("td", {}, i.reason),
+        el("td", {}, (KIND_LABEL[i.kind] || label(i.kind)) + (i.field ? ": " + fieldTitle(i.field) : "")), el("td", {}, people(p, i)), el("td", { class: "num" }, pct(i.probability)),
+        el("td", {}, (i.top_evidence || []).map((x) => comparisonTitle(x.comparison) + ": " + x.level).join("; ")), el("td", {}, i.yours ? tag("You", "info") : i.actor), el("td", {}, i.reason),
         el("td", { class: "actions-cell" }, i.yours ? tag("Someone else approves it", "warn") : can("judgment.approve")
           ? [btn("Approve", () => act(p, i, "approve"), "small primary"), btn("Decline", () => act(p, i, "decline"), "small danger")] : null)))));
   }
   const conn = per.flatMap(({ p, connections }) => connections.map((c) => ({ p, c })));
   if (conn.length) {
-    sections.push(el("h2", { class: "section" }, "Connection changes"), table(["Connection", "Project", "Type", "Version", "Status", "Proposed by"], conn.map(({ p, c }) =>
-      linkRow(c.id, () => viewConnection(p.id, c.id), el("td", {}, p.name), el("td", {}, label(c.type)), el("td", {}, "Version " + c.latest_version), el("td", {}, statusTag(c.latest_status)),
+    sections.push(el("h2", { class: "section" }, "Data source changes"), table(["Data source", "Project", "Type", "Version", "Status", "Proposed by"], conn.map(({ p, c }) =>
+      linkRow(c.id, () => viewConnection(p.id, c.id), el("td", {}, p.name), el("td", {}, typeTitle(c.type)), el("td", {}, "Version " + c.latest_version), el("td", {}, statusTag(c.latest_status)),
         el("td", {}, c.updated_by)))));
   }
   const rules = per.flatMap(({ p, rules: rs }) => rs.map((v) => ({ p, v })));
@@ -50,7 +50,7 @@ async function viewApprovals() {
     sections.push(el("h2", { class: "section" }, "Database destinations"), table(["Destination", "Project", "Version", "Status", "Proposed by"], dests.map(({ p, d }) =>
       linkRow(d.id, () => viewProject(p.id, "results"), el("td", {}, p.name), el("td", {}, "Version " + d.latest_version), el("td", {}, statusTag(d.latest_status)), el("td", {}, d.updated_by)))));
   }
-  show(page("Approvals", "Everything waiting for someone across your projects: review decisions that need a second person, and changes to connections, rules and destinations."),
+  show(page("Approvals", "Everything waiting for someone across your projects: review decisions that need a second person, and changes to data sources, rules and database destinations."),
     ...(sections.length ? sections : [empty("Nothing waits for approval.")]));
 }
 

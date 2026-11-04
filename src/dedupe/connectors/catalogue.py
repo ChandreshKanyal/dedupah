@@ -73,7 +73,7 @@ add("upload", "Upload a file", "Upload", "upload", "CSV, Excel, JSON or Parquet 
 add("csv", "CSV", "Files on the server", "csv", "Comma-separated text (also ; or | separated).", [PATH, DELIM, ENCODING], tested="live",
     docs="https://arrow.apache.org/docs/python/csv.html")
 add("tsv", "TSV", "Files on the server", "tsv", "Tab-separated text.", [PATH, ENCODING], tested="live")
-add("xlsx", "Excel workbook (.xlsx)", "Files on the server", "xlsx", "Excel 2007 or later. One sheet per connection.", [PATH, SHEET], tested="live",
+add("xlsx", "Excel workbook (.xlsx)", "Files on the server", "xlsx", "Excel 2007 or later. One sheet per data source.", [PATH, SHEET], tested="live",
     aliases=["excel"], docs="https://openpyxl.readthedocs.io/")
 add("xls", "Old Excel workbook (.xls)", "Files on the server", "xls", "Excel 97-2003 files, still common in older systems.", [PATH, SHEET],
     module="xlrd", extra="files", tested="live", docs="https://xlrd.readthedocs.io/")

@@ -229,6 +229,7 @@ function initSearch() {
   const box = $("search");
   const out = $("search-results");
   const hint = $("search-hint");
+  if (window.matchMedia("(max-width: 520px)").matches) box.placeholder = "Search";        // the long hint does not fit a phone
   hint.textContent = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "Cmd + K" : "Ctrl + K";
   let active = -1;
   const options = () => [...out.querySelectorAll("[role=option]")];

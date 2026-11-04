@@ -15,7 +15,7 @@ async function deleteRun(pid, rid) {
   await api("POST", R(pid, rid) + "/delete", { reason: why });
   await refreshCache();
   await go(() => viewProject(pid, "runs"));
-  say("Run " + rid + " was deleted.", "good");
+  say("The run was deleted.", "good");
 }
 async function startRun(pid, connections, fromRun, reason, key, full, rules) {
   const r = await api("POST", P(pid) + "/runs", { connections, from_run: fromRun || null, reason: reason || "", full_rerun: !!full, rules: rules || null }, { "Idempotency-Key": key || uuid() });
@@ -31,7 +31,7 @@ async function quickRun(pid) {
   const full = el("input", { type: "checkbox" });
   const key = uuid();
   const ver = (n) => "the ones in use (version " + st.cfg[n].live.version + ")";
-  const body = el("div", {}, kv([["Data", st.data.map((c) => c.id).join(", ")], ["Matching rules", ver("decision")], ["Clean record", ver("survivorship")],
+  const body = el("div", {}, kv([["Data", st.data.map((c) => c.id).join(", ")], ["Matching rules", ver("decision")], ["Golden record", ver("survivorship")],
     ["Technical settings", st.cfg.settings.live ? ver("settings") : "standard values"]]),
   el("label", { class: "check" }, full, el("span", {}, "Process everything again", el("span", { class: "muted" },
     "Slower. Otherwise only what changed since the last run is processed again; customers are still formed from all records."))));
@@ -67,7 +67,7 @@ async function newRun(pid) {
   });
   const usable = boxes.filter(([c]) => c.live_version);
   const pickAll = usable.length > 1 ? btn("Choose all in use", () => { for (const [c, cb] of usable) { cb.checked = true; chosen.add(c.id); } }, "small") : null;
-  const dataPart = all.length ? table(["", "Connection", "Type", "Version in use", ["Records last read"]], boxes.map(([c, cb]) => el("tr", {}, el("td", {}, cb), el("td", {}, el("strong", {}, c.id)),
+  const dataPart = all.length ? table(["", "Data source", "Kind", "Version in use", ["Records last read"]], boxes.map(([c, cb]) => el("tr", {}, el("td", {}, cb), el("td", {}, el("strong", {}, c.id)),
     el("td", {}, typeTitle(c.type)), el("td", {}, c.live_version ? "Version " + c.live_version : tag(c.latest_status === "proposed" || c.latest_status === "approved" ? "Waiting for approval" : "Not in use", "warn")),
     el("td", { class: "num" }, c.last_check && c.last_check.rows != null ? num(c.last_check.rows) : ""))))
     : empty("This project has no data yet.", btn("Add data", () => go(() => viewProject(pid, "setup", "data")), "primary", "database"));
@@ -106,8 +106,8 @@ async function newRun(pid) {
   const key = uuid();                              // one key for this form: a second press replays the first start instead of starting twice
   const start = () => {
     fail(err, "");
-    if (!chosen.size) { fail(err, "Choose at least one connection to read."); return; }
-    if (can("config.read") && (!pickers.decision || !pickers.survivorship)) { fail(err, "Choose the matching rules and the golden-record rules first (Setup)."); return; }
+    if (!chosen.size) { fail(err, "Tick at least one data source to read."); return; }
+    if (can("config.read") && (!pickers.decision || !pickers.survivorship)) { fail(err, "Choose the matching rules and the golden-record rules first (the Rules step of the project)."); return; }
     const rules = Object.fromEntries(Object.entries(pickers).filter(([, s]) => s.value).map(([n, s]) => [n, Number(s.value)]));
     return startRun(pid, [...chosen], null, reason.value, key, load.value() === "full", can("config.read") ? rules : null);
   };
@@ -295,7 +295,7 @@ function runDetails(r) {
         "rejected values failed a check (a phone with too few digits, a PAN of the wrong shape) and were not used."),
       table(["Source", ["Records"], ...cols.map(([, t]) => [t]), "Rejected values"], Object.entries(q).map(([src, x]) => el("tr", {}, el("td", { class: "mono" }, src),
         el("td", { class: "num" }, num(x.records)), cols.map(([k]) => el("td", { class: "num" }, pct(x.filled[k] || 0, x.records))),
-        el("td", {}, Object.entries(x.invalid || {}).map(([f, n]) => label(f) + " " + num(n)).join(", ") || "None")))));
+        el("td", {}, Object.entries(x.invalid || {}).map(([f, n]) => fieldTitle(f) + " " + num(n)).join(", ") || "None")))));
     const oddRows = Object.entries(q).flatMap(([src, x]) => Object.entries(x.oddities || {}).map(([k, n]) => el("tr", {}, el("td", { class: "mono" }, src),
       el("td", {}, (ODDITY[k] || [label(k), ""])[0]), el("td", { class: "num" }, num(n)), el("td", {}, (ODDITY[k] || ["", ""])[1]))));
     for (const [src, n] of Object.entries(s.duplicate_record_ids || {})) {
@@ -311,7 +311,7 @@ function runDetails(r) {
   if (g && g.trust_order) {
     parts.push(el("h2", { class: "section" }, "How the golden records were chosen"),
       kv([["Source trust order", g.trust_order.join(" > ")],
-        g.auto_ranked_sources && g.auto_ranked_sources.length ? ["Ranked automatically", g.auto_ranked_sources.join(", ") + " (by how complete their records are; set the order in Rules, Clean record)"] : null,
+        g.auto_ranked_sources && g.auto_ranked_sources.length ? ["Ranked automatically", g.auto_ranked_sources.join(", ") + " (by how complete their records are; set the order in Rules, Golden record)"] : null,
         g.sources_without_dates && g.sources_without_dates.length ? ["No record date", el("span", { class: "bad" }, g.sources_without_dates.join(", ") + ": 'newest record' could not use them")] : null,
         ["Fields where sources disagreed", num(g.values_with_source_conflict)],
         g.shared_values_passed_over ? ["Shared phones or emails passed over", num(g.shared_values_passed_over)] : null]));

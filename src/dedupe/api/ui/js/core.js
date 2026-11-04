@@ -100,8 +100,19 @@ const plural = (n, one, many) => num(n) + " " + (n === 1 ? one : many);
 // replaceChildren prints a null or false as text: fill() leaves them out, like el() does
 const fill = (node, ...kids) => node.replaceChildren(...kids.flat(3).filter((k) => k != null && k !== false));
 const add = (node, ...kids) => node.append(...kids.flat(3).filter((k) => k != null && k !== false));
+// Good news and notes hide by themselves (6 seconds, 10 with an action such as Undo; never while the pointer or the keyboard is on the message);
+// a problem stays until it is dismissed, so it can be read.
+let sayTimer = null;
+function sayLater(ms) {
+  clearTimeout(sayTimer);
+  sayTimer = ms ? setTimeout(() => {
+    const b = $("banner");
+    if (b.matches(":hover") || b.contains(document.activeElement)) sayLater(2000); else say("");     // being read or used: wait
+  }, ms) : null;
+}
 function say(msg, kind, action) {
   const b = $("banner");
+  sayLater(msg && kind !== "bad" ? (action ? 10000 : 6000) : 0);
   b.hidden = !msg;
   b.className = kind || "";
   b.setAttribute("role", kind === "bad" ? "alert" : "status");
@@ -176,8 +187,8 @@ async function api(method, path, body, extra, raw) {
   if (r.status === 401) { signOut("Your session ended. Sign in again."); throw new Error("unauthorised"); }
   if (!r.ok) {
     const e = (data && data.error) || {};
-    const fields = (e.fields || []).map((f) => f.field + " (" + f.problem + ")").join(", ");
-    throw new Error((e.message || "The request failed.") + (fields ? " " + fields : ""));
+    const fields = [...new Set((e.fields || []).map(problemWords))];
+    throw new Error(fields.length ? fields.join(" ") : e.message || "The request failed.");
   }
   return data;
 }
