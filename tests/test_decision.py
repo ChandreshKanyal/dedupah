@@ -101,7 +101,11 @@ def test_condition_compiler_forms_and_errors():
     assert compile_condition({"comparison": "pan", "is": "same PAN"}) == "(lv_pan = 1)"
     assert compile_condition({"comparison": "pan", "missing": True}) == "(lv_pan = -1)"
     assert "IN (" in compile_condition({"comparison": "name", "in": ["identical cleaned name", "different"]})
-    assert "abs(l_dob_year - r_dob_year) > 10" in compile_condition({"field": "dob_year", "op": "abs_diff_gt", "value": 10})
+    gap = compile_condition({"field": "dob_year", "op": "abs_diff_gt", "value": 10})
+    rows = "(VALUES (1980, NULL, NULL, 1995, NULL, NULL), (1980, NULL, NULL, 1985, NULL, NULL), (1980, NULL, NULL, NULL, 1996, 2000), " \
+           "(1980, NULL, NULL, NULL, 1986, 1992), (NULL, NULL, NULL, 1990, NULL, NULL))"
+    got = duckdb.sql(f"SELECT {gap} FROM {rows} t(l_dob_year, l_birth_year_min, l_birth_year_max, r_dob_year, r_birth_year_min, r_birth_year_max)").fetchall()
+    assert [bool(g[0]) for g in got] == [True, False, True, False, False]   # an age range counts (E1-13); nothing on one side: never fires
     assert compile_condition({"score": "probability", "op": ">=", "value": 0.9}) == "(probability >= 0.9)"
     assert compile_condition({"not": {"any": [{"comparison": "pan", "is": "same PAN"}, {"field": "gender", "op": "same"}]}}).startswith("(NOT (")
     bad = [{"comparison": "nope", "is": "x"}, {"comparison": "pan", "is": "no such level"}, {"field": "dob; DROP TABLE x", "op": "same"},

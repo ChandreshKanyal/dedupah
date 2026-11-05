@@ -29,6 +29,7 @@ def ingest(config_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
         plans.append((src, conn))
 
     stats: dict = {}
+    late: dict = {}                 # fields a stream showed only after its first records: not read (named, never dropped silently)
     con = crypto.connect()
     with crypto.open_writer(out_path, SCHEMA) as writer:
         for src, conn in plans:
@@ -40,6 +41,8 @@ def ingest(config_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
                 writer.write_table(res.cast(SCHEMA))
                 offset += batch.num_rows
             stats[src.source_id] = offset
+            if getattr(conn, "late_fields", None):
+                late[src.source_id] = sorted(conn.late_fields)[:20]
 
     dupes = con.execute(
         f"SELECT source_id, count(*) - count(DISTINCT source_record_id) AS d FROM {crypto.rp_param()} "
@@ -63,7 +66,7 @@ def ingest(config_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
             tmp.unlink(missing_ok=True)
             raise ValueError("record ids repeat inside a source and could not be made unique: check the record id column")
         tmp.replace(out_path)
-    return {"records": stats, "total": sum(stats.values()), "duplicate_source_record_ids": dict(dupes),
+    return {"records": stats, "total": sum(stats.values()), "duplicate_source_record_ids": dict(dupes), "fields_not_read": late,
             "output": str(out_path)}
 
 

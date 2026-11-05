@@ -87,6 +87,16 @@ def aadhaar(raw: str | None):
     return token, s[-4:]
 
 
+def aadhaar_last4(raw, bare: bool = False) -> str | None:
+    """The last four digits of a MASKED Aadhaar ("XXXX XXXX 1234", "********1234"); with `bare`, also a column holding only the four digits
+    ("1234", "1234.0" from a spreadsheet). Anything else is not a last-4 (a leading zero lost in a spreadsheet cannot be told back)."""
+    s = str(raw or "").strip().upper()
+    if bare and re.fullmatch(r"\d{4}(?:\.0+)?", s):
+        return s[:4]
+    m = re.fullmatch(r"(?:[X*]{4}[\s\-]?){2}(\d{4})|[X*]{8}(\d{4})" if not bare else r"(?:[X*]{4}[\s\-]?){0,2}(\d{4})|[X*]{8}(\d{4})", s)
+    return (m.group(1) or m.group(2)) if m else None
+
+
 def customer_number(raw) -> str | None:
     """An organisation's own customer number (CIF, UCIC, client id): upper case, no spaces or separators; leading zeros dropped from
     all-digit numbers (a spreadsheet often drops them); placeholders and very short values refused."""

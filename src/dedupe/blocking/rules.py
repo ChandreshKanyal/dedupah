@@ -41,8 +41,10 @@ DEFAULT_RULES = [
     Rule("surname_initial_birthyear",
          _combo("name_last_phon || '|' || substr(name_first, 1, 1) || '|' || dob_year", "name_last_phon", "name_first", "dob_year"),
          "surname sound + first initial + birth year; survives initials"),
-    Rule("name_pin3", _combo("name_first_phon || '|' || name_last_phon || '|' || substr(address_pin, 1, 3)",
-                             "name_first_phon", "name_last_phon", "address_pin"), "first+last sound + PIN prefix"),
+    Rule("name_pin3", _combo("least(name_first_phon, name_last_phon) || '|' || greatest(name_first_phon, name_last_phon) || '|' || substr(address_pin, 1, 3)",
+                             "name_first_phon", "name_last_phon", "address_pin"), "first+last sound in either order + PIN prefix"),
+    Rule("initial_surname_pin", _combo("name_last_phon || '|' || substr(name_first, 1, 1) || '|' || address_pin", "name_last_phon", "name_first", "address_pin"),
+         "surname sound + first initial + the same PIN: 'R. Iyer' and 'Ravi Iyer' at one address (E1-11)"),
     Rule("dob_pin", _combo("dob || '|' || address_pin", "dob", "address_pin"), "full DOB + PIN"),
     Rule("name_city_age",
          "SELECT rid, name_first_phon || '|' || name_last_phon || '|' || city || '|' || b AS key FROM ("

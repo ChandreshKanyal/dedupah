@@ -353,3 +353,26 @@ def test_uploads_take_json_lines_and_parquet(tmp_path):
     pq.write_table(pa.table({"id": ["C1"], "score": [42]}), raw)
     r = up.store(raw, "scores.parquet", "tester")
     assert r["kind"] == "parquet" and r["columns"] == ["id", "score"] and Path(up.path(r["upload_id"])).is_file()
+
+
+def test_a_field_that_first_appears_late_is_read_from_a_file_and_named_from_a_stream(tmp_path, monkeypatch):
+    """Agent review E1-15: fields first seen after record 1000 were dropped without a word."""
+    import json as _json
+
+    from dedupe.connectors import create
+    from dedupe.connectors.records import RecordSource
+    monkeypatch.setenv("DEDUPE_DATA_ROOTS", str(tmp_path))
+    recs = [{"id": i, "name": f"Person {i}"} for i in range(1500)]
+    recs[1200]["branch"] = "PUN01"
+    f = tmp_path / "late.json"
+    f.write_text(_json.dumps(recs), encoding="utf-8")
+    conn = create({"type": "json", "path": str(f)})
+    assert "branch" in conn.columns()
+    assert sum(b.num_rows for b in conn.read_batches(500)) == 1500
+
+    class Stream(RecordSource):
+        def _records(self):
+            return iter(recs)
+    s = Stream()
+    list(s.read_batches(500))
+    assert "branch" not in s.columns() and s.late_fields == {"branch"}

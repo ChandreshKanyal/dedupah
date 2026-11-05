@@ -5,7 +5,8 @@ Nodes:
     {"comparison": "pan", "is": "same PAN"}              level label equals
     {"comparison": "name", "is_not": "...", "in": [...]}  (also "not_in"); labels are those printed in the model file
     {"comparison": "phone", "missing": true}             value missing on either side ("not comparable")
-    {"field": "dob_year", "op": "abs_diff_gt", "value": 10}  numeric difference (both sides present)
+    {"field": "dob_year", "op": "abs_diff_gt", "value": 10}  numeric difference (both sides present; for dob_year an age-based birth-year
+                                                                range counts, by the distance between the two ranges)
     {"field": "gender", "op": "differs" | "same"}        both sides present and different / equal
     {"field": "dob_year", "op": "both_gte" | "both_lte", "value": 2008}  both sides at least / at most the value
     {"field": "dob_year", "op": "both_born_within_last", "value": 18}  both born in the last N years (relative to today, so it
@@ -76,6 +77,11 @@ def compile_condition(node: dict) -> str:
             return f"({both} AND l_{f} <> r_{f})"
         if op == "same":
             return f"({both} AND l_{f} = r_{f})"
+        if op == "abs_diff_gt" and f == "dob_year":
+            # a record with only an age has a birth-year RANGE: the gap is the distance between the two ranges (E1-13: such records were skipped)
+            lo, hi = ("coalesce({0}_dob_year, {0}_birth_year_min)", "coalesce({0}_dob_year, {0}_birth_year_max)")
+            gap = f"greatest({lo.format('l')} - {hi.format('r')}, {lo.format('r')} - {hi.format('l')})"
+            return f"({lo.format('l')} IS NOT NULL AND {lo.format('r')} IS NOT NULL AND {gap} > {_num(node['value'])})"
         if op == "abs_diff_gt":
             return f"({both} AND abs(l_{f} - r_{f}) > {_num(node['value'])})"
         if op == "both_gte":

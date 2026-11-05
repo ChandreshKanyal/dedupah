@@ -117,7 +117,9 @@ GOV_ID = Comparison(
 )
 
 ADDRESS = Comparison(
-    "address", "(l_address_pin IS NULL AND l_city IS NULL) OR (r_address_pin IS NULL AND r_city IS NULL)",
+    # not comparable when either side has nothing, or when they share no part to compare (one has only a PIN, the other only a city: E1-12)
+    "address", "(l_address_pin IS NULL AND l_city IS NULL) OR (r_address_pin IS NULL AND r_city IS NULL)"
+               " OR ((l_address_pin IS NULL OR r_address_pin IS NULL) AND (l_city IS NULL OR r_city IS NULL))",
     (
         Level(4, "same PIN + house number + similar text",
               "l_address_pin = r_address_pin AND l_address_house = r_address_house AND jaro_winkler_similarity(l_address_norm, r_address_norm) >= 0.85"),

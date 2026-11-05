@@ -17,6 +17,9 @@ from dedupe.standardise.run import standardise_row
     ("9812345670.0", ["9812345670"], None),                 # a number column read as decimals
     ("9.81234567E9", ["9812345670"], None),                 # scientific notation with all the digits
     ("9.81235E+09", [], "phone_digits_lost"),               # rounded by a spreadsheet: never guess the missing digits
+    ("98123  45670", ["9812345670"], None),                 # a double space inside ONE number (E1-17)
+    ("+91  98123 45670", ["9812345670"], None),
+    ("9812345670  9123456780", ["9812345670", "9123456780"], "multi_phone"),     # a double space between two numbers still separates them
 ])
 def test_phones_in_any_shape(raw, want, flag):
     got, flags = o.phones(raw)
@@ -32,6 +35,20 @@ def test_placeholders_companies_joint_names_and_relations():
     assert o.name("Rahul & Anita Sharma")[:2] == ("Rahul Sharma", None)
     assert o.name("Rahul S/O Ramesh Kumar")[:2] == ("Rahul", "Ramesh Kumar")
     assert o.name("Customer Name")[2] == {"header_row"}
+
+
+
+def test_review_round_e1_cleaning_cases():
+    """Agent review E1-09, E1-10, E1-17."""
+    from dedupe.standardise import identifiers as ids
+    from dedupe.standardise.names import parse_name
+    for marker in ("W/O.", "D/O.", "w / o", "S.O."):
+        assert o.name(f"Sunita {marker} Ramesh Yadav")[:2] == ("Sunita", "Ramesh Yadav"), marker            # the relative never becomes a surname
+    assert o.email("sunita yadav@gmail.com") == (None, {"email_with_space"})                               # never yadav@gmail.com
+    assert o.email("a@x.com, b@y.com")[0] == "a@x.com"
+    assert parse_name("Ramesh Yadav (Late)").clean == "ramesh yadav" and parse_name("Sunita Yadav Mrs").clean == "sunita yadav"
+    assert [ids.aadhaar_last4(v) for v in ("XXXX XXXX 1234", "********1234", "1234", "4321 8765 1234")] == ["1234", "1234", None, None]
+    assert [ids.aadhaar_last4(v, bare=True) for v in ("1234", "1234.0", "XXXX1234", "123")] == ["1234", "1234", "1234", None]
 
 
 @pytest.mark.parametrize("raw, iso", [("17-May-90", "1990-05-17"), ("1990-05-17 00:00:00", "1990-05-17"), ("May 17, 1990", "1990-05-17"),

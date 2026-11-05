@@ -37,7 +37,8 @@ SCHEMA = pa.schema([
     ("address_norm", S), ("address_pin", S), ("address_house", S), ("address_alt_norm", S), ("city", S), ("state", S),
     ("record_date", S), ("supplied_fields", S), ("invalid_fields", S), ("oddities", S), ("skip_matching", B),
 ])
-_GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O"}
+_GENDER = {"m": "M", "male": "M", "man": "M", "f": "F", "female": "F", "woman": "F", "o": "O", "other": "O", "t": "O", "tg": "O", "transgender": "O",
+           "third gender": "O"}   # 1 / 2 stay unknown: which number means which differs between systems
 _RAW_FIELDS = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "email", "address", "address_alt",
                "city", "state", "pincode", "customer_number", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key", "passport_no", "dl_no", "voter_id",
                "related_name", "party_role", "relation_to_proposer", "age", "record_date", "source_id", "source_record_id"]
@@ -72,9 +73,8 @@ def standardise_row(r: dict) -> dict:
     tok, last4 = ids.aadhaar(r["aadhaar"])
     if not tok:                       # the customer's vault reference key: same strength as the keyed token, separate namespace
         tok = ids.aadhaar_reference(r.get("aadhaar_reference_key"))
-    if not last4:
-        last4 = (r["aadhaar_last4"] or "").strip()
-        last4 = last4 if len(last4) == 4 and last4.isdigit() else None
+    if not last4:                     # a masked number (XXXX XXXX 1234) in the Aadhaar column, or the last-4 column (1234.0 from a spreadsheet)
+        last4 = ids.aadhaar_last4(r["aadhaar"]) or ids.aadhaar_last4(r["aadhaar_last4"], bare=True)
     addr = parse_address(r["address"], r["city"], r["state"], r["pincode"])
     alt = parse_address(r["address_alt"])
     return {

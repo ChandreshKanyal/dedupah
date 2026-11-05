@@ -183,6 +183,7 @@ def _dig(doc, path: str | None):
 class JsonConnector(RecordSource, _FileConnector):
     """A JSON file holding a list of records ([{...}, {...}]), or an object with the list inside (records_path, e.g. "data.customers").
     Also JSON Lines (.jsonl: one record per line), read as a stream. Nested fields become dotted columns (address.city)."""
+    discover_all = True
     types = ("json", "jsonl")
 
     def _records(self):
@@ -212,6 +213,7 @@ class JsonConnector(RecordSource, _FileConnector):
 class XmlConnector(RecordSource, _FileConnector):
     """An XML file with one element per record (record_tag, e.g. "Customer"). Child elements become columns, nested ones dotted
     (Address.City), attributes are prefixed with @. Parsed with defusedxml: no external entities, no entity expansion bombs."""
+    discover_all = True
     types = ("xml",)
 
     def _records(self):

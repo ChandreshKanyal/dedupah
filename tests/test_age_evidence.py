@@ -129,7 +129,7 @@ def test_age_compatible_name_and_city_is_worth_a_look_but_never_an_automatic_mer
     assert got[0] == ("review", "score")                                       # enough evidence to ask a person (score 0.85)
     assert got[4] == ("reject", "not_enough_evidence")                          # but below a score of 0.8 such pairs are almost never the same person
     assert got[1] == ("review", "review_age_only_evidence")                     # a high score alone may not merge it automatically
-    assert got[2] == ("reject", "not_enough_evidence")                          # an incompatible age is not evidence
+    assert got[2] == ("reject", "veto_birth_year_far_apart")                    # an incompatible age keeps them apart (an age range counts, E1-13)
     assert got[3] == ("auto_merge", "score"), got[3]                                            # a shared phone is real corroboration
 
 

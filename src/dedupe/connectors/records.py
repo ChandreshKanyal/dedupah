@@ -3,6 +3,8 @@
 Nested objects become dotted column names ("address.city"); lists of plain values are joined with " | "; lists of objects are kept as JSON text,
 because a person's record rarely needs them for matching and a fixed set of columns is what the mapping step works with. The column set is
 taken from the first records read (DISCOVER records), and every later batch is conformed to it, so the mapping never meets a surprise column.
+A file is scanned whole for its fields (`discover_all`); for a stream that cannot be read twice (an API, MongoDB), a field that first appears
+later is named in the run summary (`late_fields`), never dropped silently (agent review E1-15).
 """
 import importlib
 import itertools
@@ -44,8 +46,9 @@ def discover_columns(records: list[dict]) -> list[str]:
     return list(cols)
 
 
-def batches_of(records: Iterable[dict], batch_size: int, columns: list[str] | None = None) -> Iterator[pa.Table]:
-    """Flattened records as string tables with one fixed column list (discovered from the first records unless given)."""
+def batches_of(records: Iterable[dict], batch_size: int, columns: list[str] | None = None, late: set | None = None) -> Iterator[pa.Table]:
+    """Flattened records as string tables with one fixed column list (discovered from the first records unless given). `late` collects
+    the names of fields that are not in that list."""
     it = iter(records)
     head: list[dict] = []
     if columns is None:
@@ -59,8 +62,11 @@ def batches_of(records: Iterable[dict], batch_size: int, columns: list[str] | No
     while len(buf) >= batch_size:
         yield to_string_table(columns, buf[:batch_size])
         buf, sent = buf[batch_size:], True
+    known = set(columns)
     for r in it:
         f = flatten(r)
+        if late is not None and len(late) < MAX_COLUMNS:
+            late.update(k for k in f if k not in known)
         buf.append([f.get(c) for c in columns])
         if len(buf) >= batch_size:
             yield to_string_table(columns, buf)
@@ -107,11 +113,21 @@ class RecordSource:
 
     _cols: list[str] | None = None
     _pending: tuple | None = None
+    discover_all = False            # a file: every record is looked at for its fields (it can be read again for the data)
+    late_fields: set | None = None  # fields first seen after the discovery, filled while reading
 
     def _records(self):
         raise NotImplementedError
 
     def columns(self) -> list[str]:
+        if self._cols is None and self.discover_all:
+            cols: dict[str, None] = {}
+            for r in self._records():
+                for k in flatten(r):
+                    cols.setdefault(k, None)
+                if len(cols) > MAX_COLUMNS:
+                    raise ValueError(f"the records have more than {MAX_COLUMNS} different fields")
+            self._cols = list(cols)
         if self._cols is None:
             it = iter(self._records())
             head = list(itertools.islice(it, DISCOVER))
@@ -123,4 +139,5 @@ class RecordSource:
         cols = self.columns()
         pending, self._pending = self._pending, None
         records = itertools.chain(pending[0], pending[1]) if pending else self._records()
-        yield from batches_of(records, batch_size, cols)
+        self.late_fields = set()
+        yield from batches_of(records, batch_size, cols, self.late_fields)

@@ -211,7 +211,7 @@ function describeRule(node, cat) {
   if (node.not) return "not " + describeRule(node.not, cat);
   if (node.comparison) {
     const t = title(node.comparison);
-    if (node.missing) return t + " is missing on one side";
+    if (node.missing) return t + " is missing on one or both sides";
     if (node.is) return t + ": " + q(node.is);
     if (node.is_not) return t + " is not " + q(node.is_not);
     if (node.in) return t + ": " + node.in.map(q).join(" or ");
@@ -509,7 +509,7 @@ function ruleBuilder(cat, existing) {
     };
     const fillOps = () => {
       const s = subject.value;
-      const ops = s.startsWith("c:") ? [["is", "is"], ["is_not", "is not"], ["missing", "is missing on one side"]]
+      const ops = s.startsWith("c:") ? [["is", "is"], ["is_not", "is not"], ["missing", "is missing on one or both sides"]]
         : s === "score" ? [[">=", "is at least (%)"], ["<", "is below (%)"]] : [["abs_diff_gt", "differ by more than (years)"]];
       op.replaceChildren(...ops.map(([v, t]) => el("option", { value: v }, t)));
       fillVal();

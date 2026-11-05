@@ -93,7 +93,8 @@ const projectOf = (path) => (/^\/(?:projects|review)\/([a-z0-9-]+)/.exec(path) |
 const can = (perm, pid = projectOf(shownPath)) => perm === "any" ||
   (!!me && ((cache.projects.find((p) => p.id === pid) || {}).you_can || me.permissions).includes(perm));
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9_-]/g, "");
-const pct = (x) => (x == null ? "" : (x * 100).toFixed(1) + "%");
+// rounded DOWN: a score of 0.8996 shows 89.9%, never "90.0%" for a pair just below the 90% line (agent review E1-16)
+const pct = (x) => (x == null ? "" : (Math.floor(x * 1000 + 1e-9) / 10).toFixed(1) + "%");
 const when = (t) => (t ? new Date(t).toLocaleString() : "");
 const num = (n) => (n == null ? "" : Number(n).toLocaleString());
 const label = (s) => String(s).replace(/_/g, " ");

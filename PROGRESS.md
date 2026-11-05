@@ -2190,3 +2190,25 @@ Done with measurements first, then fixes, then the same measurements again (scri
 - **The engine merge-side review (E2) is closed**: E2-01 (section 74), E2-02..E2-15 (sections 90-92).
 - Tests in `test_identity.py`, `test_runs_queue_health.py`, `test_survivorship.py`, `test_incremental.py`, `test_households.py`. Suite: 535
   passed, 4 skipped; ruff clean.
+
+## 93. Review fixes E1-09..E1-13, E1-15..E1-17: cleaning, address, rules, blocking, JSON fields, score display (2026-11-05, session 4)
+
+- **E1-09:** a masked Aadhaar ("XXXX XXXX 1234", "********1234") in the Aadhaar column and "1234.0" from a spreadsheet in the last-4 column keep
+  their last four digits (`identifiers.aadhaar_last4`); a lost leading zero cannot be told back and stays unknown.
+- **E1-10:** "W/O.", "D/O.", "w / o", "S.O." are recognised: the relative's name no longer becomes the surname.
+- **E1-11:** blocking missed reversed names and initials when only the address was shared: `name_pin3` is order-free (first/last either way),
+  and a new default rule `initial_surname_pin` (surname sound + first initial + the same full PIN). Benchmark (600 households): candidates +1.3%,
+  results unchanged to slightly better (with identifiers 12 -> 11 wrong merges).
+- **E1-12:** a record with only a PIN against one with only a city was scored "different address": nothing comparable is now "not comparable".
+  (This changes the comparison fingerprint: each project's next run is a full run once.)
+- **E1-13:** "birth years more than N apart" ignored records with only an age: the gap between the two birth-year RANGES counts now. The rule
+  builder said "missing on one side" for a condition that also fires when both are missing: it says "on one or both sides". "Ask a person" winning
+  over "the same when" is by design and explained on the page.
+- **E1-15:** fields that first appeared after record 1000 were dropped silently: JSON and XML files are scanned whole for their fields; streams
+  that cannot be read twice (APIs, MongoDB) name such fields in the run summary and on the run page ("Not read this run").
+- **E1-16:** scores are rounded DOWN for display: 0.8996 shows 89.9%, never "90.0%" for a pair below the 90% line.
+- **E1-17:** a double space inside one phone number no longer splits it; "sunita yadav@gmail.com" is no longer read as yadav@gmail.com (no email,
+  flagged); T / TG / transgender are read as gender "O" (1 / 2 stay unknown: systems disagree on which is which); "(Late)", "Mrs" at the end
+  of a name are dropped.
+- Tests in `test_oddities.py`, `test_decision.py`, `test_connectors_remote.py`; one age test now expects the more specific reason
+  (`veto_birth_year_far_apart` instead of `not_enough_evidence`, still "kept apart"). Suite: 540 passed, 4 skipped; ruff clean.

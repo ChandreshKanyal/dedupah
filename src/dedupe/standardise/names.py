@@ -2,6 +2,7 @@
 import re
 from dataclasses import dataclass, field
 
+TRAILING_TITLES = {"late", "mr", "mrs", "ms", "smt", "dr", "miss"}   # only words that are never a name's last part
 HONORIFICS = {"mr", "mrs", "ms", "miss", "mister", "shri", "shree", "sri", "smt", "sh", "kumari", "km", "dr", "late",
               "master", "prof", "er"}
 ALIASES = {"mohd": "mohammed", "md": "mohammed", "muhammad": "mohammed", "mohammad": "mohammed",
@@ -58,6 +59,8 @@ def _tokens(raw: str) -> list[str]:
         out.append(t)
     while out and out[0] in HONORIFICS:
         out.pop(0)
+    while len(out) > 1 and out[-1] in TRAILING_TITLES:          # "Ramesh Yadav (Late)", "Sunita Yadav Mrs"
+        out.pop()
     return [ALIASES.get(t, t) for t in out]
 
 

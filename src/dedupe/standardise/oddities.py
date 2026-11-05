@@ -20,6 +20,7 @@ from .dates import reference_date
 
 _SPLIT_PHONES = re.compile(r"[,;/|&]|\s{2,}|\s+(?:or|and)\s+", re.I)
 _SPLIT_EMAILS = re.compile(r"[,;\s/|]+")
+_ONE_PHONE = re.compile(r"(?:\+?91|0)?[6-9]\d{9}")
 _SCI = re.compile(r"\d(?:\.\d+)?[eE]\+?\d{1,2}")
 PLACEHOLDER_NAMES = {"test", "testing", "unknown", "na", "n a", "not available", "nil", "null", "none", "customer", "dummy", "xxx", "xx", "x",
                      "abc", "sample", "no name", "noname", "name", "self", "demo", "tbd", "nan", "not known", "unk"}
@@ -30,7 +31,7 @@ ORGANISATION_WORDS = {"pvt", "ltd", "limited", "llp", "inc", "incorporated", "co
                       "society", "hospital", "clinic", "school", "college", "university", "bank", "motors", "logistics", "constructions", "builders",
                       "pharma", "pharmaceuticals", "textiles", "jewellers", "electricals", "electronics", "stores", "mart", "huf"}
 HEADER_NAMES = {"name", "full name", "full_name", "customer name", "party name", "party_name", "applicant name", "name of customer", "customer_name"}
-_RELATION = re.compile(r"\s+(?:s/o|d/o|w/o|c/o|s\.o\.|d\.o\.|w\.o\.|son of|daughter of|wife of|husband of|care of)\s+", re.I)
+_RELATION = re.compile(r"\s+(?:[sdwc]\s?/\s?o\.?|[sdwc]\.o\.?|son of|daughter of|wife of|husband of|care of)\s+", re.I)   # W/O, W/O., W.O., w / o
 _JOINT = re.compile(r"\s*(?:&|\band\b|\+)\s*", re.I)
 _MON = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
 
@@ -46,6 +47,9 @@ def phones(raw) -> tuple[list[str], set]:
     if not s:
         return [], flags
     out = []
+    whole = re.sub(r"[\s\-().]", "", s)
+    if _ONE_PHONE.fullmatch(whole):                   # "98765  43210": spaces inside ONE number (a double space otherwise separates two)
+        s = whole
     parts = [p for p in _SPLIT_PHONES.split(s) if p and p.strip()]
     for p in parts:
         p = p.strip().lstrip("'")
@@ -74,6 +78,9 @@ def email(raw) -> tuple[str | None, set]:
     if not s:
         return None, flags
     s = re.sub(r"\s*([.@])\s*", r"\1", s)            # 'name@example. com': a stray space around a dot or the @
+    if "@" in s and not re.search(r"[,;/|]", s) and s.count("@") == 1 and " " in s.partition("@")[0].strip():
+        flags.add("email_with_space")                 # "sunita yadav@gmail.com": the address cannot be known; never guess "yadav@gmail.com"
+        return None, flags
     found = [p for p in _SPLIT_EMAILS.split(s) if "@" in p]
     if len(found) > 1:
         flags.add("multi_email")

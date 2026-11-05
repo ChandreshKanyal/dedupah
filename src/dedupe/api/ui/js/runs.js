@@ -307,6 +307,10 @@ function runDetails(r) {
       oddRows.push(el("tr", {}, el("td", { class: "mono" }, src), el("td", {}, "The same record id used more than once"), el("td", { class: "num" }, num(n)),
         el("td", {}, "Later copies were renamed <id>#2, #3... so none is lost. Fix the id column in the source")));
     }
+    for (const [src, names] of Object.entries(s.fields_not_read || {})) {
+      oddRows.push(el("tr", {}, el("td", { class: "mono" }, src), el("td", {}, "Fields that appeared only after the first records: " + names.join(", ")),
+        el("td", { class: "num" }, num(names.length)), el("td", {}, "Not read this run. Add them to the source's mapping if they matter")));
+    }
     if (oddRows.length) {
       parts.push(el("h2", { class: "section" }, "Unusual data found and how it was handled"),
         table(["Source", "What", ["Records"], "What was done"], oddRows));
