@@ -2170,3 +2170,23 @@ Done with measurements first, then fixes, then the same measurements again (scri
   `largest_person` in the run summary) and says what to do; the setting's description says "flagged for a person to check".
 - Tests: `test_incremental.py` (token key, drift adding up), `test_judgment_clustering.py` (newer wins, both ways), `test_runs_queue_health.py`
   (summary); the first three fail on the code before. Suite: 527 passed, 4 skipped; ruff clean.
+
+## 92. Review fixes E2-08, E2-09, E2-10, E2-12, E2-13, E2-14: person IDs, one run per project, stable column names, households (2026-11-05, session 4)
+
+- **E2-08, person IDs:** a merge kept the BIGGER group's ID, against the documented "oldest ID survives": groups that hold most of an old person's
+  records now take the oldest such ID first (`identity.ids` order). An undone merge whose person also gained new records failed the Jaccard test,
+  so the ID stayed retired, pointing at the wrong person: an old ID returns when most of its last records are together again. A retired ID is now
+  visible: `identity.successor` follows merges, and opening a merged person's page says "This customer was merged into P...".
+- **E2-09:** with room for several runs, two runs of one project raced on its person-ID registry: the queue never starts two runs of one project at
+  once (`RunJobs._dispatch`); other projects still run alongside.
+- **E2-10:** golden-record names of extra columns depended on which other columns a run had ("branch_code" became extra_branch_code_2 once a
+  source brought "Branch Code"). Names that differ only in spelling are one column, as the screen already promised (values from either).
+- **E2-12:** the same flat counted as "same home" AND "neighbours", so one address match alone reached the household threshold; "neighbours" now
+  needs a different or missing flat number.
+- **E2-13:** changing the household threshold, the review queue or the oversize flag forced a full run: only the settings that decide which pairs
+  exist (`incremental.REUSE_SETTINGS`: blocking rules and cap) must match now (`reuse_hash`; runs from before compare as before, so one full run).
+- **E2-14:** policy evidence for households read only a column named exactly `policy_no`; "Policy No", "policy_number", "Policy ID" and the like
+  are read too.
+- **The engine merge-side review (E2) is closed**: E2-01 (section 74), E2-02..E2-15 (sections 90-92).
+- Tests in `test_identity.py`, `test_runs_queue_health.py`, `test_survivorship.py`, `test_incremental.py`, `test_households.py`. Suite: 535
+  passed, 4 skipped; ruff clean.

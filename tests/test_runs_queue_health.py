@@ -60,13 +60,25 @@ def test_runs_wait_in_order_and_start_by_themselves(tmp_path):
 def test_several_runs_can_go_at_once_when_the_machine_allows_and_the_queue_has_a_limit(tmp_path):
     gate = tmp_path / "go"
     c, s, sv = world(tmp_path, waiting(gate), max_concurrent_runs=2, max_queued_runs=1)
-    runs = [start(c, s) for _ in range(3)]
-    assert [r.json()["status"] for r in runs] == ["running", "running", "queued"]
+    sv.workspace.create("other", "Other", "", "setup")
+    make_live(c, s, csv_connection(small_csv(tmp_path / "other.csv")), project="other")
+    runs = [start(c, s), c.post("/projects/other/runs", json={"connections": ["crm"]}, headers=hdr(s, *ADMIN)), start(c, s)]
+    assert [r.json()["status"] for r in runs] == ["running", "running", "queued"]                 # two projects at once, never two runs of one
     full = start(c, s)
     assert full.status_code == 409 and "queue is full" in full.json()["error"]["message"]
     gate.write_text("x")
     for r in runs:
-        assert sv.jobs.wait(PROJECT, r.json()["id"], 30).status == "succeeded"
+        assert sv.jobs.wait(r.json()["project_id"], r.json()["id"], 30).status == "succeeded"
+
+
+def test_two_runs_of_one_project_never_go_at_once(tmp_path):
+    """Agent review E2-09: with room for several runs, two runs of one project raced on its person-ID registry."""
+    gate = tmp_path / "go"
+    c, s, sv = world(tmp_path, waiting(gate), max_concurrent_runs=3)
+    runs = [start(c, s).json() for _ in range(2)]
+    assert [r["status"] for r in runs] == ["running", "queued"]
+    gate.write_text("x")
+    assert all(sv.jobs.wait(PROJECT, r["id"], 30).status == "succeeded" for r in runs)
 
 
 def test_a_restart_keeps_waiting_runs_and_ends_the_ones_that_were_going(tmp_path):

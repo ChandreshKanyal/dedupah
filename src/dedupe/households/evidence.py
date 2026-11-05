@@ -4,6 +4,8 @@ distinct people linked by evidence such as living together, sharing a policy, or
 Each evidence type contributes at most once per pair of people (its strongest instance), so ten records sharing one
 phone count the same as two. Weights are transparent defaults, editable later by business users.
 """
+import re
+
 import duckdb
 
 from dedupe import crypto
@@ -21,13 +23,19 @@ WEIGHTS = {
 }
 GENERIC_LIMIT = 8     # a phone/email used by more than this many people is generic (agent, call centre): ignored
 PIN_BLOCK_LIMIT = 300  # skip address joins for PINs with more records than this
+POLICY_KEYS = {"policyno", "policynumber", "policyid", "policynum"}   # source column names (lower case, letters and digits only) holding a policy number
 NAME_POP_LIMIT = 50    # a relative name shared by more people than this is too common to link on (its weight would be < w/50 anyway)
 
 
 def build(con: duckdb.DuckDBPyConnection, std: str, clusters: str, canonical: str) -> int:
     """Creates tables `rc` (records with cluster) and `evidence(ca, cb, ev, w)`. Returns evidence row count."""
+    # the policy number may be called "Policy No", "policy_number", "POLICY ID"... in the source (E2-14: only `policy_no` was read)
+    keys = [r[0] for r in con.execute(f"SELECT DISTINCT unnest(json_keys(attributes::JSON)) FROM {crypto.rp(canonical)} "
+                                      "WHERE attributes IS NOT NULL AND json_valid(attributes)").fetchall()]
+    names = sorted(k for k in keys if re.sub(r"[^a-z0-9]", "", k.lower()) in POLICY_KEYS and "'" not in k and '"' not in k)
+    policy = "coalesce(" + ", ".join(f"""json_extract_string(k.attributes, '$."{n}"')""" for n in names) + ")" if names else "NULL::VARCHAR"
     con.execute(f"""CREATE OR REPLACE TABLE rc AS
-        SELECT s.*, c.cluster_id, json_extract_string(k.attributes, '$.policy_no') AS policy_no
+        SELECT s.*, c.cluster_id, {policy} AS policy_no
         FROM {crypto.rp(std)} s
         JOIN {crypto.rp(clusters)} c USING (source_id, source_record_id)
         JOIN {crypto.rp(canonical)} k USING (source_id, source_record_id)""")
@@ -45,7 +53,8 @@ def build(con: duckdb.DuckDBPyConnection, std: str, clusters: str, canonical: st
     parts.append(f"""SELECT a.cluster_id, b.cluster_id, 'same_area_text', {w['same_area_text']}
         FROM rc a JOIN rc b ON a.address_pin = b.address_pin AND a.cluster_id < b.cluster_id
         JOIN pin_n p ON p.address_pin = a.address_pin
-        WHERE p.n <= {PIN_BLOCK_LIMIT} AND jaro_winkler_similarity(a.address_norm, b.address_norm) >= 0.85""")
+        WHERE p.n <= {PIN_BLOCK_LIMIT} AND jaro_winkler_similarity(a.address_norm, b.address_norm) >= 0.85
+          AND (a.address_house IS NULL OR b.address_house IS NULL OR a.address_house <> b.address_house)""")    # not the same flat again (E2-12)
     for ev, expr in (("shared_phone", "unnest([mobile, mobile_alt])"), ("shared_email", "email_key")):
         parts.append(f"""WITH v AS (SELECT DISTINCT cluster_id, {expr} AS v FROM rc), v2 AS (SELECT * FROM v WHERE v IS NOT NULL),
             n AS (SELECT v, count(DISTINCT cluster_id) n FROM v2 GROUP BY v)

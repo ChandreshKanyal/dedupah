@@ -135,3 +135,10 @@ def test_the_model_is_learned_again_once_the_changes_since_it_was_learned_add_up
     assert out[0][1] == "reused" and "learned" in [m for _, m in out]          # but together they go over it
     learned = json.loads((tmp_path / "r2" / "model.json").read_text())["meta"]
     assert learned["reused_from_run"] == "r1" and learned["changed_since_learned"] == pytest.approx(out[0][0], abs=0.01)
+
+
+def test_settings_that_do_not_change_which_records_are_compared_keep_reuse(first, tmp_path):
+    """Agent review E2-13: changing the household threshold, the review queue or the oversize flag forced a full run."""
+    tmp, _, src, _ = first
+    s = _run(tmp_path, src, "hh", prev=tmp / "r1", household_threshold=7.0, review_cap=10, max_cluster_size=9)
+    assert s["incremental"]["used"] and s["incremental"]["model"] == "reused"

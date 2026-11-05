@@ -28,6 +28,7 @@ from .standardise.identifiers import _token_key
 from .standardise.run import SCHEMA as STD_SCHEMA
 from .standardise.run import STANDARDISE_VERSION
 
+REUSE_SETTINGS = ("blocking_rules", "blocking_cap")   # the run settings that decide which pairs exist: only these must match for reuse (E2-13)
 MAX_CHANGE_FOR_MODEL = 0.3          # more than this share of records new, changed or removed: learn the model again
 HASHES = "record_hashes.parquet"
 NEEDED = ("standardised.parquet", HASHES, "candidates.parquet", "candidates.index.parquet", "scored_pairs.parquet", "pipeline_summary.json")
@@ -62,8 +63,9 @@ def check(prev: Path | None, model: Path | None, settings_hash: str) -> tuple[bo
         return False, "the key that turns Aadhaar numbers into tokens changed since the earlier run"
     if old != now:
         return False, "the earlier run was made by a different version of the cleaning or comparison logic"
-    if ((s.get("configs") or {}).get("effective_settings") or {}).get("hash") != settings_hash:
-        return False, "the run settings changed since the earlier run"
+    used = (s.get("configs") or {}).get("effective_settings") or {}
+    if used.get("reuse_hash", used.get("hash")) != settings_hash:          # runs before reuse_hash existed: compare as before (no reuse)
+        return False, "the settings that decide which records are compared changed since the earlier run"
     return True, ""
 
 

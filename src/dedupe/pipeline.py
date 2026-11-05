@@ -148,7 +148,8 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         cfg = dataclasses.replace(cfg, **res_cfg.settings.model_dump())
     effective = {k: getattr(cfg, k) for k in MatchingSettings.model_fields}
     effective["blocking_rules"] = effective["blocking_rules"] or [r.name for r in DEFAULT_RULES]
-    summary["configs"] = {**res_cfg.used, "effective_settings": {**effective, "hash": content_hash(effective)}}
+    summary["configs"] = {**res_cfg.used, "effective_settings": {**effective, "hash": content_hash(effective),
+                                                                  "reuse_hash": content_hash({k: effective[k] for k in inc.REUSE_SETTINGS})}}
     used_dir = work / "config_used"
     used_dir.mkdir(exist_ok=True)
     for n, content in {**res_cfg.contents, "settings": effective}.items():
@@ -167,7 +168,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     con = crypto.connect({"memory_limit": cfg.memory_limit, "temp_directory": str(tmp)})
     summary["fingerprints"] = inc.fingerprints()
     prev = Path(cfg.previous_run) if cfg.previous_run else None
-    reuse, why_not = inc.check(prev, prev / "model.json" if prev else None, summary["configs"]["effective_settings"]["hash"])
+    reuse, why_not = inc.check(prev, prev / "model.json" if prev else None, summary["configs"]["effective_settings"]["reuse_hash"])
     with meter.stage("ingest"):
         summary["ingest"] = ingest(sources_path, p["canonical"], cfg.batch_size)
         inc.write_hashes(con, p["canonical"], work / inc.HASHES)          # before Aadhaar is erased: the fingerprint of the record as read

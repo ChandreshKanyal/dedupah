@@ -24,7 +24,7 @@ RAW = ["full_name", "father_name", "dob", "gender", "mobile", "mobile_alt", "ema
        "party_role", "relation_to_proposer"]
 
 
-def world(tmp_path, recs):
+def world(tmp_path, recs, policy_key="policy_no"):
     """recs: list of (cluster, raw_dict, policy_no|None). Builds std/clusters/canonical parquet and runs evidence.build."""
     std, cl, can = [], [], []
     for i, (cluster_id, raw, policy) in enumerate(recs):
@@ -32,7 +32,7 @@ def world(tmp_path, recs):
         base.update(raw, source_id="s", source_record_id=f"{i:04d}")
         std.append(standardise_row(base))
         cl.append({"source_id": "s", "source_record_id": f"{i:04d}", "cluster_id": cluster_id})
-        can.append({"source_id": "s", "source_record_id": f"{i:04d}", "attributes": json.dumps({"policy_no": policy}) if policy else None})
+        can.append({"source_id": "s", "source_record_id": f"{i:04d}", "attributes": json.dumps({policy_key: policy}) if policy else None})
     pq.write_table(pa.Table.from_pylist(std, schema=SCHEMA), tmp_path / "std.parquet")
     pq.write_table(pa.Table.from_pylist(cl), tmp_path / "cl.parquet")
     pq.write_table(pa.Table.from_pylist(can, schema=pa.schema([("source_id", pa.string()), ("source_record_id", pa.string()), ("attributes", pa.string())])), tmp_path / "can.parquet")
@@ -60,6 +60,14 @@ def test_home_neighbours_and_policy_roles(tmp_path):
     assert e[("A", "B", "same_home")] == ev.WEIGHTS["same_home"]
     assert ("A", "C", "same_home") not in e and e[("A", "C", "same_area_text")] == ev.WEIGHTS["same_area_text"]
     assert e[("I", "P", "policy_member")] == 5.0 and e[("N", "P", "policy_nominee")] == 3.0 and e[("I", "N", "policy_nominee")] == 3.0
+    assert ("A", "B", "same_area_text") not in e                                                # the same flat is not also "neighbours" (E2-12)
+
+
+@pytest.mark.parametrize("key", ["Policy No", "policy_number", "POLICY ID"])
+def test_a_policy_number_is_found_under_its_usual_names(tmp_path, key):
+    """Agent review E2-14: only a column named exactly policy_no was read."""
+    e = world(tmp_path, [("P", {"party_role": "Proposer"}, "POL1"), ("I", {"party_role": "Insured"}, "POL1")], policy_key=key)
+    assert e[("I", "P", "policy_member")] == 5.0
 
 
 def test_named_relative_needs_matching_place_and_is_diluted_by_namesakes(tmp_path):

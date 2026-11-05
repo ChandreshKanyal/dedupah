@@ -68,11 +68,13 @@ def _extras(con, canonical: Path, cfg: SurvivorshipConfig) -> tuple[dict[str, st
     out, skipped = {}, []
     for n in names:
         col = extra_column(n)
-        if not EXTRA_NAME.fullmatch(n) or len(out) >= MAX_EXTRA_COLUMNS:
+        while col in GOLDEN_FIELDS:
+            col += "_2"
+        # 'Branch Code' and 'branch_code' are one column (the screen promises that columns with the same name become one field): a name never
+        # depends on which other columns a run happens to have (agent review E2-10: one run's extra_branch_code became the next one's _2)
+        if not EXTRA_NAME.fullmatch(n) or (col not in out.values() and len(set(out.values())) >= MAX_EXTRA_COLUMNS):
             skipped.append(n)
             continue
-        while col in out.values() or col in GOLDEN_FIELDS:      # 'Branch Code' and 'branch_code' are kept apart
-            col += "_2"
         out[n] = col
     return out, skipped
 
@@ -83,7 +85,11 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
     holding most of its anchor records; a later one (higher id) replaces an earlier one for the same person and field; value None clears."""
     out_dir.mkdir(parents=True, exist_ok=True)
     extras, extras_skipped = _extras(con, canonical, cfg)
-    exprs = {**GOLDEN_FIELDS, **{c: f"nullif(trim(json_extract_string(k.attributes, '$.\"{n}\"')), '')" for n, c in extras.items()}}
+    by_col: dict[str, list[str]] = {}
+    for n, c in extras.items():
+        by_col.setdefault(c, []).append(n)
+    one = "nullif(trim(json_extract_string(k.attributes, '$.\"{}\"')), '')"
+    exprs = {**GOLDEN_FIELDS, **{c: (one.format(ns[0]) if len(ns) == 1 else "coalesce(" + ", ".join(one.format(n) for n in ns) + ")") for c, ns in by_col.items()}}
     cols = ", ".join(f"({exprs[f]})::VARCHAR AS {f}" for f in exprs)
     quals = ", ".join(f"({QUALITY.get(f, '1')})::INT AS q_{f}" for f in exprs)
     con.execute(f"""CREATE OR REPLACE TABLE g_src AS
@@ -101,7 +107,7 @@ def build_golden(con: duckdb.DuckDBPyConnection, std: Path, canonical: Path, clu
 
     con.execute("DROP TABLE IF EXISTS g_values")
     first, shared_skipped = True, 0
-    units = cfg.units() + [(c, [c], cfg.extra_fields.get(n, cfg.extra_default_strategy)) for n, c in extras.items()]
+    units = cfg.units() + [(c, [c], next((cfg.extra_fields[n] for n in ns if n in cfg.extra_fields), cfg.extra_default_strategy)) for c, ns in by_col.items()]
     for unit, members, strategy in units:
         lead = members[0]
         order = [s for s in cfg.field_trust[unit] if s in present] + [s for s in trust if s not in cfg.field_trust[unit]] \

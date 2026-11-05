@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from dedupe.governance.diff import describe_changes
 from dedupe.governance.store import ConfigError
+from dedupe.identity import successor
 from dedupe.review.service import SENSITIVE, ReviewError
 
 from .auth import Principal
@@ -202,7 +203,8 @@ def person(request: Request, project_id: str = PID, run_id: str = RID, person_id
     try:
         out = (rs.review_reveal if reveal else rs.review).person(person_id, reveal=reveal)
     except ReviewError:
-        raise _not_found() from None
+        now = successor(_services(request).workspace.identity_dir(project_id), person_id)       # a retired ID: say where its records went
+        raise (HTTPException(404, f"This customer was merged into {now}.") if now else _not_found()) from None
     out["unmasked"] = reveal
     if reveal:
         _log_unmask(request, p, ref, reason, "person")

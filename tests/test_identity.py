@@ -104,3 +104,24 @@ def test_an_undone_merge_gets_its_ids_back_and_a_different_person_never_does(tmp
     _run(tmp_path, [[A, B, C, D], [E]], reg="r2")
     third, _ = _run(tmp_path, [[A, B, C, D], [F]], reg="r2")          # E vanished, F is a brand-new person
     assert third[F] not in ("P000000002",) and third[F] == "P000000003"
+
+
+G, H, J = [("s", x) for x in "ghj"]
+
+
+def test_a_merge_keeps_the_oldest_id_even_when_the_younger_person_has_more_records(tmp_path):
+    """Agent review E2-08: the bigger group's ID used to win, against the promise above (and downstream systems keep the oldest)."""
+    first, _ = _run(tmp_path, [[A], [B, C, D]])
+    second, _ = _run(tmp_path, [[A, B, C, D]])
+    assert set(second.values()) == {first[A]} and _persons(tmp_path)[first[B]] == ("retired", 2, first[A])
+
+
+def test_an_undone_merge_gets_its_id_back_even_when_new_records_joined(tmp_path):
+    """Agent review E2-08: with three new records the old ID failed the Jaccard test, stayed retired and pointed at the wrong person."""
+    from dedupe.identity import successor
+    first, _ = _run(tmp_path, [[A, B], [C, D]])
+    _run(tmp_path, [[A, B, C, D]])
+    assert successor(tmp_path / "reg", first[C]) == first[A]                  # merged: where its records went
+    back, info = _run(tmp_path, [[A, B], [C, D, G, H, J]])
+    assert back[C] == back[G] == first[C] and info["reactivated"] == 1 and _persons(tmp_path)[first[C]][0] == "active"
+    assert successor(tmp_path / "reg", first[C]) is None

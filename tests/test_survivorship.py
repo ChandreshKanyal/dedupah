@@ -187,3 +187,12 @@ def test_extra_columns_can_be_switched_off(tmp_path):
     assert info["extra_columns"] == {} and ("c", "extra_segment") not in v
     with pytest.raises(ValidationError):
         SurvivorshipConfig(extra_fields={"a'b": "most_recent"})
+
+
+def test_columns_whose_names_differ_only_in_spelling_are_one_golden_column(tmp_path):
+    """Agent review E2-10: 'branch_code' alone was extra_branch_code; once another source brought 'Branch Code' it became extra_branch_code_2."""
+    recs = [{"cluster": "c", "source": "crm", "id": "1", "record_date": "2020-01-01", "attrs": {"branch_code": "PUN01"}},
+            {"cluster": "c", "source": "loans", "id": "2", "record_date": "2025-01-01", "attrs": {"Branch Code": "MUM07"}}]
+    con, info, v = _build(tmp_path, recs, SurvivorshipConfig())
+    assert set(info["extra_columns"].values()) == {"extra_branch_code"}
+    assert v["c", "extra_branch_code"][:2] == ("MUM07", "loans")       # one column, newest record across both spellings

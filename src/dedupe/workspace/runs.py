@@ -1,7 +1,8 @@
 """Runs: one execution of a project over chosen connections, in a separate OS process, into its own folder.
 
 A request starts a run and returns at once. The run is a separate process (a crash or memory spike never takes the API down); its state lives in
-the database. Runs wait in a queue: only `max_concurrent` (default 1: a big run needs the machine's memory) run at once, the rest are "queued" in
+the database. Runs wait in a queue: only `max_concurrent` (default 1: a big run needs the machine's memory) run at once, and never two of one
+project; the rest are "queued" in
 the order they were asked for and start by themselves when one finishes, also after the API restarts. The caller chooses the project and the approved connections, nothing
 else: the command is a fixed argument list (no shell), the project's database URL travels in the child's environment (never on the command line),
 the child does not receive the API's login secret, and the child's output goes to a log file the API never serves.
@@ -221,10 +222,13 @@ class RunJobs:
         return self.get(project_id, rid), False
 
     def _dispatch(self) -> None:
-        """Start queued runs, oldest first, while there is room. Called with the lock held."""
+        """Start queued runs, oldest first, while there is room. Called with the lock held. Never two runs of ONE project at once: they would
+        both update its person-ID registry (agent review E2-09), and the second can then reuse the first one's work."""
         while self._count("running") < self.max_concurrent:
+            busy = select(runs.c.project_id).where(runs.c.status == "running")
             with self.engine.connect() as c:
-                nxt = c.execute(select(runs.c.id, runs.c.project_id).where(runs.c.status == "queued").order_by(runs.c.created_at, runs.c.id).limit(1)).first()
+                nxt = c.execute(select(runs.c.id, runs.c.project_id).where(runs.c.status == "queued", runs.c.project_id.not_in(busy))
+                                .order_by(runs.c.created_at, runs.c.id).limit(1)).first()
             if nxt is None:
                 return
             with self.engine.begin() as c:

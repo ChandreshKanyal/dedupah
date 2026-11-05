@@ -13,7 +13,7 @@ ID of the previous group it overlaps most (by source records), and everything el
     `reactivated`): same records, same person, same ID
 
 IDs are P + 9 digits, handed out in increasing order and never given to a different person: a retired ID only ever returns to
-the group of records it had when it was retired (Jaccard overlap of at least one half). The registry is four small parquet files in `registry_dir` (records, persons, events, retired_members); keep that folder between runs.
+the group holding most of the records it had when it was retired. The registry is four small parquet files in `registry_dir` (records, persons, events, retired_members); keep that folder between runs.
 """
 from pathlib import Path
 
@@ -63,10 +63,15 @@ def assign_person_ids(con: duckdb.DuckDBPyConnection, registry_dir: Path) -> dic
                              GROUP BY 1, 2""").fetchall()
     old_size = dict(con.execute("SELECT person_id, count(*) FROM _old GROUP BY 1").fetchall())
 
-    # greedy: biggest overlap first (ties: the older ID, then the cluster holding the smallest record key) -> deterministic
+    # First the groups that hold MOST of an old person's records: there the OLDEST such ID wins (a merge keeps the oldest ID, as promised
+    # above; agent review E2-08: the bigger group's ID used to win). Then greedy by overlap for the rest (the largest part of a split).
+    # Ties: the older ID, then the cluster holding the smallest record key -> deterministic.
     assigned: dict[str, str] = {}
     taken: set = set()
-    for label, pid, _n in sorted(overlap, key=lambda r: (-r[2], _num(r[1]), kmin[r[0]])):
+    def order(r):
+        label, pid, n = r
+        return (0, _num(pid), -n, kmin[label]) if 2 * n > old_size[pid] else (1, -n, _num(pid), kmin[label])
+    for label, pid, _n in sorted(overlap, key=order):
         if label not in assigned and pid not in taken:
             assigned[label] = pid
             taken.add(pid)
@@ -75,8 +80,10 @@ def assign_person_ids(con: duckdb.DuckDBPyConnection, registry_dir: Path) -> dic
     ret_size = dict(con.execute("SELECT person_id, count(*) FROM _ret GROUP BY 1").fetchall())
     ret_overlap = con.execute("""SELECT n.label, r.person_id, count(*) FROM _nc n JOIN _ret r USING (source_id, source_record_id)
                                  GROUP BY 1, 2""").fetchall()
-    cands = [(n / (size[lab] + ret_size[pid] - n), pid, lab) for lab, pid, n in ret_overlap if lab not in assigned]
-    for _jac, pid, lab in sorted((c for c in cands if c[0] >= 0.5), key=lambda c: (-c[0], _num(c[1]), kmin[c[2]])):
+    # most of its last records together again: new records joining them do not stop it (E2-08: Jaccard did, and the ID stayed retired
+    # pointing at the person it had been merged into)
+    cands = [(n / ret_size[pid], pid, lab) for lab, pid, n in ret_overlap if lab not in assigned]
+    for _share, pid, lab in sorted((c for c in cands if c[0] > 0.5), key=lambda c: (-c[0], _num(c[1]), kmin[c[2]])):
         if lab not in assigned and pid not in taken:
             assigned[lab] = pid
             taken.add(pid)
@@ -153,3 +160,17 @@ def assign_person_ids(con: duckdb.DuckDBPyConnection, registry_dir: Path) -> dic
     return {"run": run, "persons": len(assigned), "kept": kept - len(reactivated), "created": len(created), "reactivated": len(reactivated),
             "retired": retired_now,
             "events": len(events), "registry": str(registry_dir)}
+
+
+def successor(registry_dir: Path, person_id: str) -> str | None:
+    """The active ID a retired person's records now belong to (following merges), or None when the ID is active or unknown."""
+    f = Path(registry_dir) / "persons.parquet"
+    if not f.exists():
+        return None
+    rows = {pid: (status, succ) for pid, status, succ in duckdb.connect().execute(
+        f"SELECT person_id, status, successor FROM {crypto.rp(f)}").fetchall()}
+    cur, seen = person_id, set()
+    while cur in rows and rows[cur][0] == "retired" and rows[cur][1] and cur not in seen:
+        seen.add(cur)
+        cur = rows[cur][1]
+    return cur if cur != person_id and rows.get(cur, ("",))[0] == "active" else None
