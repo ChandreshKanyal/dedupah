@@ -14,7 +14,7 @@ class MatchingSettings(BaseModel):
     blocking_rules: list[str] = Field(default_factory=lambda: [r.name for r in DEFAULT_RULES])
     blocking_cap: int = Field(50, ge=2, le=1000)         # a key shared by more records than this is treated as generic and skipped
     household_threshold: float = Field(5.0, gt=0)        # evidence needed (in bits) to link two people into a household
-    max_cluster_size: int = Field(15, ge=2, le=1000)     # a customer group larger than this is split by the contradiction guard
+    max_cluster_size: int = Field(15, ge=2, le=1000)     # a customer group larger than this is flagged for a person to check (never cut blindly)
     review_min_probability: float = Field(0.0, ge=0, lt=1)   # queue items whose best pair scores below this are dropped
     review_cap: int | None = Field(None, ge=1)           # keep only the top N queue items
 

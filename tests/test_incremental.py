@@ -104,3 +104,34 @@ def test_the_portal_hands_the_latest_successful_run_over_unless_a_full_rerun_is_
     f = start(c, s, full_rerun=True).json()
     sv.jobs.wait(PROJECT, f["id"], 30)
     assert not (sv.workspace.run_dir(PROJECT, f["id"]) / PREVIOUS_RUN).exists()
+
+
+def test_a_changed_token_key_never_mixes_old_and_new_aadhaar_tokens(first, tmp_path, monkeypatch):
+    """Agent review E2-04: unchanged records kept their old tokens while changed ones got new ones, so one Aadhaar had two tokens."""
+    tmp, _, src, _ = first
+    monkeypatch.setenv("DEDUPE_TOKEN_KEY", "another-key-for-this-test-0123456789")
+    s = _run(tmp_path, src, "rekeyed", prev=tmp / "r1")
+    assert not s["incremental"]["used"] and "Aadhaar" in s["incremental"]["reason"]
+
+
+def test_the_model_is_learned_again_once_the_changes_since_it_was_learned_add_up(first, tmp_path):
+    """Agent review E2-05: the 30% limit was measured against the previous run only, so small steps reused a model learned long ago."""
+    tmp, syn, _, s1 = first
+    total, prev, cur, out = s1["ingest"]["total"], tmp / "r1", syn, []
+    for step, (fname, col) in enumerate([("bank_crm.csv", "full_name"), ("loans.csv", "applicant_name"), ("marketing_leads.csv", "name")], 2):
+        nxt = tmp_path / f"syn{step}"
+        shutil.copytree(cur, nxt)
+        path = nxt / fname
+        rows = list(csv.DictReader(path.open(encoding="utf-8")))
+        with path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows([{**r, col: r[col].upper() + " "} for r in rows])     # any edit makes the record "changed"
+        (tmp_path / f"s{step}").mkdir()
+        s = _run(tmp_path, _sources(tmp_path / f"s{step}", nxt), f"r{step}", prev=prev)
+        out.append((s["incremental"]["records"]["changed"] / total, s["incremental"]["model"]))
+        prev, cur = tmp_path / f"r{step}", nxt
+    assert all(share <= 0.3 for share, _ in out)                              # each step alone is under the limit
+    assert out[0][1] == "reused" and "learned" in [m for _, m in out]          # but together they go over it
+    learned = json.loads((tmp_path / "r2" / "model.json").read_text())["meta"]
+    assert learned["reused_from_run"] == "r1" and learned["changed_since_learned"] == pytest.approx(out[0][0], abs=0.01)

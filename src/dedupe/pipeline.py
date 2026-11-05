@@ -196,9 +196,13 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         load_tables(con, p["std"], p["cand"])
         moved = (incr["records"]["new"] + incr["records"]["changed"] + incr["records"]["removed"]) / max(1, incr["records"]["unchanged"] + incr["records"]["changed"] + incr["records"]["removed"]) if reuse else 1.0
         prev_mode = (json.loads((prev / "pipeline_summary.json").read_text(encoding="utf-8")).get("scoring") or {}).get("mode") if reuse else None
-        if reuse and moved <= inc.MAX_CHANGE_FOR_MODEL and prev_mode in ("id_anchored", "unsupervised_em"):
-            model = Model.load(prev / "model.json")
-            model.meta = {**model.meta, "reused_from_run": prev.name}
+        # the change is counted since the run that LEARNED the model, not only since the previous run: a chain of small changes adds up (E2-05)
+        prev_model = Model.load(prev / "model.json") if reuse else None
+        drift = prev_model.meta.get("changed_since_learned", 0.0) + moved if prev_model else 1.0
+        if reuse and drift <= inc.MAX_CHANGE_FOR_MODEL and prev_mode in ("id_anchored", "unsupervised_em"):
+            model = prev_model
+            learned_in = model.meta.get("learned_in_run") or prev.name
+            model.meta = {**model.meta, "reused_from_run": learned_in, "learned_in_run": learned_in, "changed_since_learned": round(drift, 4)}
             incr["pairs_reused"] = inc.reusable_pairs(con, prev, p["cand"].with_suffix(".index.parquet"))
             prepare_tf_tables(con)
             materialize(con, "todo", "cand_levels", with_tf=True)
@@ -210,11 +214,12 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
             _drop(con, "reused", "todo", "changed_keys", "h_new", "h_old")
         else:
             model = train(con)
+            model.meta = {**model.meta, "learned_in_run": work.name, "changed_since_learned": 0.0}
             score(con, model, p["scored"])
             incr["model"] = "learned"
             if reuse:
-                incr["model_reason"] = (f"{moved:.0%} of records changed (more than {inc.MAX_CHANGE_FOR_MODEL:.0%})" if moved > inc.MAX_CHANGE_FOR_MODEL
-                                        else "the earlier run's scores were not meaningful")
+                incr["model_reason"] = (f"{drift:.0%} of records changed since the model was learned (more than {inc.MAX_CHANGE_FOR_MODEL:.0%})"
+                                        if drift > inc.MAX_CHANGE_FOR_MODEL else "the earlier run's scores were not meaningful")
         model.save(p["model"])
         summary["incremental"] = incr
         summary["scoring"] = {"seed_pairs": model.meta["seed_pairs"], "bias_bits": round(model.bias / 0.6931, 2), "mode": model.meta["scoring_mode"],

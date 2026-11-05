@@ -218,3 +218,20 @@ def test_a_steward_join_across_different_pans_is_refused_until_explicitly_confir
     summary = run_pipeline(PipelineConfig(sources, work, judgments_url=url))
     got = dict(duckdb.sql(f"select source_id || '|' || source_record_id, cluster_id from '{work / 'clusters' / 'clusters.parquet'}'").fetchall())
     assert summary["judgments"]["held"] == 1 and got[f"{s1}|{r1}"] == got[f"{s2}|{r2}"]
+
+
+def test_the_newer_of_a_split_and_a_same_person_decision_wins(tmp_path):
+    """Agent review E2-06: a split {a1,a2} | {b1,b2} and a newer "a2 is b1" were both applied: neither held and the people were torn."""
+    keys = [("s", "a1"), ("s", "a2"), ("s", "b1"), ("s", "b2")]
+    auto = [(0, 1, 0.98), (2, 3, 0.98), (1, 2, 0.95)]
+    con, store = _store_and_records(tmp_path, keys)
+    store.split([[keys[0], keys[1]], [keys[2], keys[3]]], "asha", "two people")
+    store.same_person(keys[1], keys[2], "ravi", "same after all")
+    cons = constraints_from_store(con, store)
+    res = cluster(range(4), auto + cons.must, cannot_links=cons.cannot, separations=cons.separations)
+    assert _groups(res) == [[0, 1, 2, 3]] and audit(cons, res.labels, {})["not_held"] == 0
+    assert [m["reason"] for m in cons.missing] == ["replaced by a newer decision about the same records"]
+    store.split([[keys[0], keys[1]], [keys[2], keys[3]]], "asha", "no, really two people")          # newer again: the split wins now
+    cons = constraints_from_store(con, store)
+    res = cluster(range(4), auto + cons.must, cannot_links=cons.cannot, separations=cons.separations)
+    assert _groups(res) == [[0, 1], [2, 3]] and audit(cons, res.labels, {})["not_held"] == 0

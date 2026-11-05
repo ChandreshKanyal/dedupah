@@ -266,7 +266,10 @@ function runOverview(r, pid) {
   const j = s.judgments;
   const sentence = num(s.records) + " records became " + plural(s.people, "customer", "customers") + ": " + plural(s.auto_merged_pairs, "pair was", "pairs were") +
     " merged automatically, and " + plural(s.review_items, "pair waits", "pairs wait") + " for a person.";
-  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s), el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("Customers", num(s.people)),
+  const big = s.oversize_people ? el("div", { class: "notice warn", role: "note" }, plural(s.oversize_people, "customer has", "customers have") +
+    " unusually many records (the largest " + num(s.largest_person) + "). A shared office phone, an agent's email or a default identifier can join " +
+    "different people: open them under Customers and split any that are not one person.") : null;
+  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("Customers", num(s.people)),
     stat("Merged automatically", num(s.auto_merged_pairs)), stat("Sent to a person", num(s.review_items), can("queue.read") ? link("/review/" + pid) : null))];
   if (j && j.judgments_applied_to_run) {
     parts.push(el("h2", { class: "section" }, "Decisions by people this run applied"),

@@ -166,3 +166,11 @@ def test_a_run_whose_work_an_incremental_run_is_reusing_cannot_be_deleted_until_
 def test_a_member_is_added_under_the_exact_id_their_sign_in_uses(tmp_path):
     c, s, sv = world(tmp_path, waiting(tmp_path / "never"))
     assert c.post(P + "/access", json={"subject": " Asha.Rao@Bank.example ", "role": "viewer"}, headers=hdr(s, *ADMIN)).json()["subject"] == "Asha.Rao@Bank.example"
+
+
+def test_the_run_summary_names_customers_with_unusually_many_records(tmp_path):
+    """Agent review E2-07: groups above max_cluster_size were flagged, but nobody ever saw it."""
+    from dedupe.workspace.runs import headline
+    (tmp_path / "pipeline_summary.json").write_text(json.dumps({"clustering": {"clusters": 40, "oversize_clusters": 2, "largest_cluster": 31}}))
+    h = headline(tmp_path)
+    assert h["oversize_people"] == 2 and h["largest_person"] == 31

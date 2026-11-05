@@ -80,6 +80,32 @@ def constraints_from_store(con, store) -> Constraints:
                 # the steward listed these records as one person: keep them together, so the guard cuts BETWEEN the parts
                 cons.must.extend((part[0], r, PART_GLUE_WEIGHT) for r in part[1:])
             cons.items.append({"id": j.id, "kind": "split", "parts": parts})
+    return _newer_wins_over_splits(cons)
+
+
+def _newer_wins_over_splits(cons: Constraints) -> Constraints:
+    """A 'same person' and a split that put the same two records on different sides contradict each other: the newer one wins and the older
+    one is not applied (reported in `missing`). Both used to be applied, so neither held and the people were torn (agent review E2-06)."""
+    splits = [it for it in cons.items if it["kind"] == "split"]
+    if not splits:
+        return cons
+    side = {it["id"]: {r: n for n, part in enumerate(it["parts"]) for r in part} for it in splits}
+    dropped = set()
+    for it in [x for x in cons.items if x["kind"] == "same_person"]:
+        for sp in splits:
+            parts = side[sp["id"]]
+            if it["a"] in parts and it["b"] in parts and parts[it["a"]] != parts[it["b"]] and not {it["id"], sp["id"]} & dropped:
+                dropped.add(min(it["id"], sp["id"]))
+    if not dropped:
+        return cons
+    old = {it["id"]: it for it in cons.items if it["id"] in dropped}
+    cons.items = [it for it in cons.items if it["id"] not in dropped]
+    cons.missing += [{"id": i, "kind": old[i]["kind"], "reason": "replaced by a newer decision about the same records"} for i in sorted(dropped)]
+    glue = {(it["parts"][n][0], r) for it in old.values() if it["kind"] == "split" for n in range(len(it["parts"])) for r in it["parts"][n][1:]}
+    pairs = {(it["a"], it["b"]) for it in old.values() if it["kind"] == "same_person"}
+    cons.must = [m for m in cons.must if not ((m[0], m[1]) in pairs and m[2] >= STEWARD_WEIGHT) and not ((m[0], m[1]) in glue and m[2] == PART_GLUE_WEIGHT)]
+    gone = {i for i in dropped if old[i]["kind"] == "split"}
+    cons.separations = {r: kept for r, seps in cons.separations.items() if (kept := [x for x in seps if x[0] not in gone])}
     return cons
 
 

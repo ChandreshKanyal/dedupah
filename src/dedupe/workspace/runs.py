@@ -94,6 +94,7 @@ def headline(work: Path) -> dict:
     return {"records": (s.get("ingest") or {}).get("total"), "sources": sorted(((s.get("ingest") or {}).get("records") or {}).keys()),
             "candidate_pairs": (s.get("blocking") or {}).get("candidate_pairs"), "auto_merged_pairs": dec.get("auto_merge"),
             "review_pairs": dec.get("review"), "people": (s.get("clustering") or {}).get("clusters"),
+            "oversize_people": (s.get("clustering") or {}).get("oversize_clusters"), "largest_person": (s.get("clustering") or {}).get("largest_cluster"),
             "review_items": (s.get("review_queue") or {}).get("queue_items"), "households": (s.get("households") or {}).get("households"),
             "seconds": s.get("total_seconds"), "records_by_source": (s.get("ingest") or {}).get("records") or {},
             "scoring": {k: (s.get("scoring") or {}).get(k) for k in ("mode", "mode_reason")} if s.get("scoring") else None,

@@ -2154,3 +2154,19 @@ Done with measurements first, then fixes, then the same measurements again (scri
 - **E2-01 (high)** was fixed by the form redesign of section 74 (one choice per column plus "Set every column to ... Apply"; no main choice
   that silently changed nothing).
 - Tests in `tests/test_judgment_clustering.py` (both fail on the code before). Suite: 523 passed, 4 skipped; ruff clean.
+
+## 91. Review fixes E2-04, E2-05, E2-06, E2-07: incremental safety, newer decisions win, oversized customers shown (2026-11-05, session 4)
+
+- **E2-04:** after DEDUPE_TOKEN_KEY changed, an incremental run kept the old Aadhaar tokens of unchanged records and made new ones for changed
+  records, so one Aadhaar had two tokens and its person split. The reuse fingerprint now includes a keyed hash of a fixed text (never the key):
+  a changed key means a full run, with the reason in plain words.
+- **E2-05:** the 30% "learn the model again" limit was measured against the previous run only, so small steps kept reusing a model learned
+  long ago (and `reused_from_run` named the wrong run). The model now records the run that learned it and the share of records changed since
+  (`meta.learned_in_run`, `meta.changed_since_learned`); the limit applies to that sum.
+- **E2-06:** a split and a newer "same person" across its parts were both applied, so neither held and the people were torn. The newer of the
+  two wins; the older is not applied and is reported ("replaced by a newer decision about the same records"; `judged._newer_wins_over_splits`).
+- **E2-07:** groups above `max_cluster_size` were flagged but nobody saw it, and the setting's help said they were split. They are not cut
+  (cutting blindly would be worse); the run page now warns how many customers have unusually many records (`oversize_people`,
+  `largest_person` in the run summary) and says what to do; the setting's description says "flagged for a person to check".
+- Tests: `test_incremental.py` (token key, drift adding up), `test_judgment_clustering.py` (newer wins, both ways), `test_runs_queue_health.py`
+  (summary); the first three fail on the code before. Suite: 527 passed, 4 skipped; ruff clean.

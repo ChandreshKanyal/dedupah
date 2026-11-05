@@ -14,6 +14,7 @@ comparison logic (fingerprints below), or used different run settings. Reused sc
 them; a full run (portal: "Full reload", on the New run page or a schedule) refreshes everything.
 """
 import hashlib
+import hmac
 import json
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from dedupe import crypto
 
 from .mapping import OUTPUT_COLUMNS
 from .scoring.comparisons import COMPARISONS, level_case_sql
+from .standardise.identifiers import _token_key
 from .standardise.run import SCHEMA as STD_SCHEMA
 from .standardise.run import STANDARDISE_VERSION
 
@@ -32,10 +34,12 @@ NEEDED = ("standardised.parquet", HASHES, "candidates.parquet", "candidates.inde
 
 
 def fingerprints() -> dict:
-    """What must match for an earlier run's work to be reusable."""
+    """What must match for an earlier run's work to be reusable. `token_key` is a keyed hash of a fixed text, never the key: a changed
+    DEDUPE_TOKEN_KEY gives every Aadhaar a new token, so old and new tokens must never meet in one run (agent review E2-04)."""
     comps = json.dumps([[c.name, c.n_levels, level_case_sql(c)] for c in COMPARISONS])
     return {"standardise": f"{STANDARDISE_VERSION}:{hashlib.sha256(str(STD_SCHEMA).encode()).hexdigest()[:16]}",
-            "comparisons": hashlib.sha256(comps.encode()).hexdigest()[:16]}
+            "comparisons": hashlib.sha256(comps.encode()).hexdigest()[:16],
+            "token_key": hmac.new(_token_key(), b"dedupe incremental fingerprint", hashlib.sha256).hexdigest()[:16]}
 
 
 def write_hashes(con: duckdb.DuckDBPyConnection, canonical: Path, out: Path) -> None:
@@ -53,7 +57,10 @@ def check(prev: Path | None, model: Path | None, settings_hash: str) -> tuple[bo
     if missing or model is None or not Path(model).exists():
         return False, "the earlier run predates incremental runs or is incomplete"
     s = json.loads((prev / "pipeline_summary.json").read_text(encoding="utf-8"))
-    if s.get("fingerprints") != fingerprints():
+    old, now = s.get("fingerprints") or {}, fingerprints()
+    if old.get("token_key") != now["token_key"] and {k: v for k, v in old.items() if k != "token_key"} == {k: v for k, v in now.items() if k != "token_key"}:
+        return False, "the key that turns Aadhaar numbers into tokens changed since the earlier run"
+    if old != now:
         return False, "the earlier run was made by a different version of the cleaning or comparison logic"
     if ((s.get("configs") or {}).get("effective_settings") or {}).get("hash") != settings_hash:
         return False, "the run settings changed since the earlier run"
