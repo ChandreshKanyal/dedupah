@@ -3,29 +3,21 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-04, session 4: revamp complete, P1-01 fixed, P1-02 next) <<<
+## >>> RESUME HERE (latest state: 2026-11-05, session 4: every agent-review finding closed; next: engine robustness) <<<
 
-**Where we are (2026-11-04).** The **whole-portal revamp is complete** (`docs/REVAMP_PLAN.md`, phases 0-7, sections 76-83; the owner's
-five decisions taken as recommended). In short: the script is split into `src/dedupe/api/ui/js/*.js` (load order in
-`routes_ui.SCRIPTS`; `words.js` holds the shared words); 4-item menu (Home, Projects, Review, Admin); Home = "what needs you now" from the
-backend `progress` of each project; the project page is the journey Data > Rules > Run > Review > Results with one Next step; Data step
-with "Needs mapping" uploads and `/map/<upload>` addresses; one-click run (`quickRun`) with a confirm box; runs named "Run 3 · 4 Nov,
-06:40"; Customers search (name, id, whole mobile or email); Review with plain reasons, live counts and a Decided tab; governance only when
-second approval is on; leave-without-saving warning; every screen fits a phone; messages hide by themselves; plain validation messages.
-Then **review finding P1-01 (critical) was fixed** (section 84): server variables `DEDUPE_SRC_*`/`DEDUPE_DST_*` are usable only by the
-projects allowed in `DEDUPE_ENV_GRANTS` (default deny, prefix grants with `*`), checked at every door.
+**Where we are (2026-11-05).** The whole-portal revamp is complete (sections 76-83). **Every finding of the agent review is now closed**
+(summaries in `~/agent-review/*/report-summary.txt`): platform P1-01..15 (sections 75, 84-88), engine input E1-01..17 (75, 89, 93, 94),
+engine merge E2-01..15 (74, 90-92), portal U1/U2 (75-83, 95; left on purpose: U1-08, U1-11/12, U1-14, see section 95). Highlights: project
+roles narrow permissions (85); second-approval gaps closed (86); the EM scoring judges candidates against the random-pair prior and
+term-frequency adjustments are centred (89: no namesake merges on the agent's file; with identifiers F1 0.903 -> 0.931 at 1,200 synthetic
+households; without identifiers fewer wrong merges, more pairs to review, chosen on purpose); person IDs keep the oldest ID on a merge (92);
+never two runs of one project at once (92); document-number columns by type in the mapping screen (95). Wave 3 of the UX review (X1-X3)
+never ran.
 
-**Next: P1-02 (high), the member role is ignored** (`~/agent-review/P1-platform/r02_projects.py`, part 1): a member added as "viewer" keeps
-everything their global role allows inside the project (unmask, export, propose rules, delete runs). Planned fix (not started, no code
-written): in `api/guards.py` `require` / `require_or_owner`, when the address names a project, use effective permissions = global
-permissions, except for a member whose grant is not "owner" and who lacks `projects.all`: global ∩ the grant role's permissions; return
-the narrowed Principal (so handler checks like `"pii.unmask" in p.permissions` and `_progress` follow) and put it on
-`request.state.principal`. Then a test replaying r02 part 1, the full suite, PROGRESS, commit. After P1-02: P1-03 (steward pages unmasked
-results 100 rows a call), P1-04/05/08 (second-approval gaps), the scoring rebuild (E1-02/03), E2-02/03, wave 3 of the UX review.
-Confirm with the user before each new piece of work.
-
-**Still open from the agent review** (summaries in `~/agent-review/*/report-summary.txt`): P1-02 (next), P1-03, P1-04/05/08, P1-09..P1-13,
-E1-02/03, E2-02/03, plus medium/low items; P1-01 fixed (84), P1-06/07/14 fixed in round 1 (75). Wave 3 (UX agents X1-X3) never ran.
+**The user's direction (2026-11-05): no phone-width work for now; the engine must be robust first, then the website on desktop.**
+Next (proposed, confirm with the user first): an engine robustness phase: (1) scale: memory and time at 1M-5M records (clustering is pure
+Python, extrapolated ~30 GB at 5M, section 23); (2) failure handling: a run that dies half way, a source that changes shape, disk full;
+(3) accuracy on harder synthetic data (more namesakes, typos, families), with the benchmark `~/agent-review/scoring/bench.py`.
 
 **Server state (shared EC2 box, reboots almost daily).** Another user (`shankar`) runs uvicorn on 127.0.0.1:8000: do NOT touch it; our
 compose `api` container cannot bind 8000. The user works on the preview container `dedupe-preview` at 127.0.0.1:8001 (src mounted
