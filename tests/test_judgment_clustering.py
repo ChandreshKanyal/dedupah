@@ -56,7 +56,7 @@ def test_identifier_conflict_blocks_a_steward_link_unless_confirmed():
     ids = {0: {"pan": "AAAAA1111A"}, 1: {"pan": "BBBBB2222B"}}
     res = cluster(range(2), [(0, 1, STEWARD_WEIGHT)], ids=ids)
     assert _groups(res) == [[0], [1]]                                       # refused
-    res2 = cluster(range(2), [(0, 1, STEWARD_WEIGHT)], ids={0: {}, 1: {}})  # confirmed: the pipeline blanks both records' identifiers
+    res2 = cluster(range(2), [(0, 1, STEWARD_WEIGHT)], ids=ids, id_aliases={("pan", "BBBBB2222B"): "AAAAA1111A"})   # confirmed: one value
     assert _groups(res2) == [[0, 1]]
 
 
@@ -100,6 +100,42 @@ def test_a_steward_same_person_overrides_a_rule_veto_on_the_same_pair(tmp_path):
     store.same_person(keys[0], keys[1], "asha", "confirmed by phone")
     cons = constraints_from_store(con, store)
     assert drop_vetoes_overridden_by_stewards([(0, 1), (1, 2)], cons) == [(1, 2)]
+
+
+def _store_and_records(tmp_path, keys):
+    con = duckdb.connect()
+    _records(con, keys)
+    return con, JudgmentStore.open(f"sqlite:///{tmp_path / 'j.db'}")
+
+
+def test_a_steward_same_person_joins_the_two_people_not_only_the_pair_it_was_stored_on(tmp_path):
+    """Agent review E2-02: X = {a1, a2} (strong automatic link), Y = {b1}; a rule vetoed a2-b1; the steward says X is Y through a1-b1 (the
+    one pair approve_match stores). a2 used to be split off while the audit said the decision held."""
+    keys = [("s", "a1"), ("s", "a2"), ("s", "b1")]
+    con, store = _store_and_records(tmp_path, keys)
+    store.same_person(keys[0], keys[2], "ravi", "same person")
+    cons = constraints_from_store(con, store)
+    auto = [(0, 1, 0.98)]
+    cannot = drop_vetoes_overridden_by_stewards([(1, 2)], cons, auto) + cons.cannot
+    assert cannot == []
+    assert _groups(cluster(range(3), auto + cons.must, cannot_links=cannot)) == [[0, 1, 2]]
+    store.different_person(keys[1], keys[2], "asha", "a2 is someone else")       # a steward's own 'different' is never dropped
+    cons = constraints_from_store(con, store)
+    assert drop_vetoes_overridden_by_stewards([(1, 2)], cons, auto) + cons.cannot == [(1, 2), (1, 2)]
+
+
+def test_a_confirmed_identifier_conflict_excuses_only_those_two_values(tmp_path):
+    """Agent review E2-03: the steward confirms a (PAN1) = b (PAN2); record c carries PAN3 and links automatically to b. Blanking a's and b's
+    identifiers used to let c merge in."""
+    from dedupe.clustering.judged import id_aliases
+    keys = [("s", "a"), ("s", "b"), ("s", "c")]
+    con, store = _store_and_records(tmp_path, keys)
+    store.same_person(keys[0], keys[1], "ravi", "PAN typo, same man", confirm_id_conflict=True)
+    cons = constraints_from_store(con, store)
+    ids = {0: {"pan": "AAAPA1111A"}, 1: {"pan": "BBBPB2222B"}, 2: {"pan": "CCCPC3333C"}}
+    res = cluster(range(3), [(1, 2, 0.97)] + cons.must, ids, id_aliases=id_aliases(cons, ids))
+    assert _groups(res) == [[0, 1], [2]]
+    assert audit(cons, res.labels, ids)["held"] == 1
 
 
 # ---- the whole pipeline ---------------------------------------------------------------------------------------------

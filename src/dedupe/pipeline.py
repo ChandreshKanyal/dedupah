@@ -26,7 +26,7 @@ from . import incremental as inc
 from .blocking import DEFAULT_RULES, rules_by_name
 from .blocking import generate as block
 from .clustering import ClusterConfig, cluster
-from .clustering.judged import audit, constraints_from_store, drop_vetoes_overridden_by_stewards
+from .clustering.judged import audit, constraints_from_store, drop_vetoes_overridden_by_stewards, id_aliases
 from .clustering.run import load_inputs, predictions, write_outputs
 from .decision import decide
 from .governance import MatchingSettings, resolve
@@ -228,12 +228,10 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         cons = None
         if cfg.judgments_url:
             cons = constraints_from_store(con, JudgmentStore.open(cfg.judgments_url))
-            cannot = drop_vetoes_overridden_by_stewards(cannot, cons) + cons.cannot
+            cannot = drop_vetoes_overridden_by_stewards(cannot, cons, edges) + cons.cannot
             edges = list(edges) + cons.must
-            for rid in cons.neutralise:
-                ids[rid] = {}
         res = cluster(nodes, edges, ids, cannot, ClusterConfig(max_cluster_size=cfg.max_cluster_size), guard=cfg.cluster_guard,
-                      separations=cons.separations if cons else None)
+                      separations=cons.separations if cons else None, id_aliases=id_aliases(cons, ids) if cons else None)
         if cons:
             rep = audit(cons, res.labels, ids)
             summary["judgments"] = {**cons.summary(), "held": rep["held"], "not_held": rep["not_held"]}

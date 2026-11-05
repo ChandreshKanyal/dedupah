@@ -628,6 +628,8 @@ function goldenForm(content, guide, propose, cancel, opts) {
     const pref = ((content.field_trust || {})[u] || [])[0] || "";
     preferSel[u] = el("select", { "aria-label": "Preferred source for " + text }, el("option", { value: "" }, "The trust order below"),
       sourceIds.map((s) => el("option", { value: s, selected: s === pref }, s)));
+    // a preferred source only wins under "Most trusted source" (otherwise it breaks ties): choosing one switches the rule to it
+    preferSel[u].addEventListener("change", () => { if (preferSel[u].value) ruleSel[u].value = "most_trusted_source"; });
     return el("tr", {}, el("td", {}, text), el("td", {}, ruleSel[u]), el("td", {}, preferSel[u]));
   });
   const allSel = el("select", { "aria-label": "Keep for every column" }, GOLDEN_STRATEGIES.map(([k, t]) => el("option", { value: k }, t)));
@@ -654,7 +656,8 @@ function goldenForm(content, guide, propose, cancel, opts) {
     const dates = {};
     for (const [s, sel] of Object.entries(dateSel)) if (sel.value) dates[s] = sel.value;
     const extraFields = {};
-    for (const [n, sel] of Object.entries(extraSel)) if (sel && sel.value !== "most_recent") extraFields[n] = sel.value;
+    const extraDef = content.extra_default_strategy || "most_recent";
+    for (const [n, sel] of Object.entries(extraSel)) if (sel && sel.value !== extraDef) extraFields[n] = sel.value;
     const out = { ...content, source_trust: auto.checked ? [] : order, source_dates: dates, fields, field_trust: fieldTrust, shared_value_limit: Number(shared.value),
       carry_extra_columns: carry.checked, extra_fields: extraFields };
     try { await propose(out, why.value); } catch (e) { fail(err, e.message); }

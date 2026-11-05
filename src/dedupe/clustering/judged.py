@@ -3,9 +3,13 @@
 Policy (PROGRESS.md section 25):
   * a steward decision beats automation: 'same person' is an edge heavier than any automatic one, 'different person' and
     'split' are hard separations (the records inside each split part are glued together so the cut falls between the parts); a never-merge veto on exactly the same pair is dropped when a steward says same person;
+  * 'same person' joins the two PEOPLE the steward compared, not only the record pair it was stored on: a rule veto between any record of
+    one and any record of the other (as the automatic links group them) is dropped too (agent review E2-02: a veto on another pair used to
+    split a record off while the audit said "held");
   * the exception is a hard identifier conflict (two different valid PANs / Aadhaar numbers): a 'same person' decision that
     would join them is NOT applied and is reported, unless the steward explicitly confirmed it (`confirm_id_conflict`), in which
-    case the identifiers of those two records are ignored by the contradiction guard;
+    case the guard treats exactly those two values as one (`id_aliases`); any third value still conflicts (E2-03: the records' identifiers
+    used to be ignored altogether, so a record with yet another PAN merged in);
   * two judgments that truly contradict each other (A=B, B=C, A!=C): the newer one wins and the older one is reported;
   * judgments about records that are not in this run's data are ignored and reported (`missing`).
 """
@@ -20,7 +24,7 @@ class Constraints:
     must: list = field(default_factory=list)            # (rid_a, rid_b, weight)
     cannot: list = field(default_factory=list)          # (rid_a, rid_b)
     separations: dict = field(default_factory=dict)     # rid -> [(split_id, part_no)]
-    neutralise: set = field(default_factory=set)        # rids whose identifiers the guard must ignore (confirmed id conflicts)
+    confirmed: list = field(default_factory=list)       # (rid_a, rid_b) of 'same person' decisions that confirm an identifier conflict
     items: list = field(default_factory=list)           # what the audit checks: dicts with id, kind and rids
     missing: list = field(default_factory=list)         # [{id, kind, reason}]
     judged_pairs: set = field(default_factory=set)      # (min rid, max rid) with any pair decision, for the review queue
@@ -58,7 +62,7 @@ def constraints_from_store(con, store) -> Constraints:
             if j.kind == "same_person":
                 cons.must.append((a, b, STEWARD_WEIGHT + j.id * 1e-9))
                 if j.evidence.get("confirmed_id_conflict"):
-                    cons.neutralise.update((a, b))
+                    cons.confirmed.append((a, b))
             else:
                 cons.cannot.append((a, b))
         elif j.kind == "split":
@@ -79,11 +83,42 @@ def constraints_from_store(con, store) -> Constraints:
     return cons
 
 
-def drop_vetoes_overridden_by_stewards(cannot: list, cons: Constraints) -> list:
-    """A rule veto on exactly the pair a steward declared 'same person' is dropped (steward beats automation)."""
-    must_pairs = {(min(a, b), max(a, b)) for a, b, _ in cons.must}
+def drop_vetoes_overridden_by_stewards(cannot: list, cons: Constraints, edges=()) -> list:
+    """Rule vetoes a steward's 'same person' overrides (steward beats automation): every veto between the two people the decision joins, as
+    the automatic links (`edges`) group the records; a steward's own 'different person' always stays."""
+    parent: dict = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+    for a, b, *_ in edges:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    joined = {frozenset((find(it["a"]), find(it["b"]))) for it in cons.items if it["kind"] == "same_person"}
     steward_cannot = {(min(a, b), max(a, b)) for a, b in cons.cannot}
-    return [c for c in cannot if (min(c), max(c)) not in must_pairs or (min(c), max(c)) in steward_cannot]
+    return [c for c in cannot if frozenset((find(c[0]), find(c[1]))) not in joined or (min(c), max(c)) in steward_cannot]
+
+
+def id_aliases(cons: Constraints, ids: dict) -> dict:
+    """{(kind, value): canonical value}: for each confirmed identifier conflict, the two values the steward said belong to one person count as
+    one value in the contradiction guard (and nothing else does)."""
+    parent: dict = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+    for a, b in cons.confirmed:
+        for kind in ("pan", "aadhaar"):
+            va, vb = ids.get(a, {}).get(kind), ids.get(b, {}).get(kind)
+            if va and vb and va != vb:
+                ra, rb = find((kind, va)), find((kind, vb))
+                if ra != rb:
+                    parent[max(ra, rb)] = min(ra, rb)
+    return {k: find(k)[1] for k in parent}
 
 
 def audit(cons: Constraints, labels: dict, ids: dict) -> dict:

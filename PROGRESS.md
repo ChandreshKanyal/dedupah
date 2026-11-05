@@ -2139,3 +2139,18 @@ Done with measurements first, then fixes, then the same measurements again (scri
 - **Tests:** `tests/test_scoring_modes.py` replays both findings (namesakes in four one-PIN towns; half the people with a PAN); both fail
   on the code before. Two older tests followed the better calibration (the review fixture now has 18 items, the workload test cuts the
   queue halfway through its own scores). Suite: 521 passed, 4 skipped; ruff clean.
+
+## 90. Review fixes E2-02, E2-03, E2-11, E2-15; E2-01 was already fixed (2026-11-05, session 4)
+
+- **E2-02 (high):** "same person" is stored on ONE record pair (the best one between the two people), so a rule veto on another pair between
+  them split a record off while the audit said "held". A steward's "same person" now drops every rule veto between the two groups it joins
+  (as the automatic links group the records; `drop_vetoes_overridden_by_stewards(..., edges)`); a steward's own "different person" stays.
+- **E2-03 (high):** confirming an identifier conflict blanked both records' identifiers, so a third record with yet another PAN merged in.
+  Now exactly the two confirmed values count as one (`judged.id_aliases`, `cluster(id_aliases=...)`); any third value still conflicts.
+- **E2-11 (medium):** a column's preferred source only broke ties unless its rule was "Most trusted source": choosing a preferred source in
+  the golden-record form now switches that column's rule to it (still changeable).
+- **E2-15 (low):** an extra column's "Newest record" choice was dropped when the project's default for extra columns was something else: the
+  form now compares with that default.
+- **E2-01 (high)** was fixed by the form redesign of section 74 (one choice per column plus "Set every column to ... Apply"; no main choice
+  that silently changed nothing).
+- Tests in `tests/test_judgment_clustering.py` (both fail on the code before). Suite: 523 passed, 4 skipped; ruff clean.
