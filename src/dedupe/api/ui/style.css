@@ -363,7 +363,8 @@ label.id-card.editable:hover { border-color: var(--border-strong); }
 .conds .cond { margin: 6px 0; }
 .conds select, .conds input { max-width: 320px; }
 .rule-builder .when { margin-bottom: 0; }
-.save-bar { position: sticky; bottom: 0; z-index: 2; margin-top: 8px; padding: 12px 16px; border: 1px solid var(--border-strong); border-radius: 0; background: var(--bg-panel); }
+.save-bar { position: sticky; bottom: -32px; z-index: 2; margin-top: 8px; padding: 12px 16px; border: 1px solid var(--border-strong); border-radius: 0; background: var(--bg-panel); }
+/* bottom -32px: #content keeps 32px of padding below; the bar sits on the edge of the screen, no content shows under it (U2-23) */
 .save-bar .field { max-width: 640px; }
 .save-bar .row { margin-bottom: 0; }
 textarea.code { min-height: 240px; }

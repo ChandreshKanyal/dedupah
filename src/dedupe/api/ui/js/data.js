@@ -46,6 +46,10 @@ async function uploadFiles(pid, list, status) {
   if (!done.length) throw new Error(bad || "No file was uploaded.");
   return { batch: { files: done, index: 0, memo: { reason: null } }, bad };
 }
+// Which identity field a document type names ("PAN", "Pan card", "AADHAAR", "Driving Licence" ...), for document columns (U2-15).
+const DOC_TYPES = [[/\bpan\b|pan ?card/i, "pan", ["pan", "pan card"]], [/aadh?aa?r|\buid\b/i, "aadhaar", ["aadhaar", "aadhar", "aadhaar card", "uid"]],
+  [/passport/i, "passport_no", ["passport"]], [/driv|licen[cs]e|\bdl\b/i, "dl_no", ["dl", "driving licence", "driving license", "driving_licence", "driving_license"]],
+  [/voter|\bepic\b|election/i, "voter_id", ["voter id", "voter_id", "voter", "epic", "voter card", "election card"]]];
 // The upload area: drop files or choose them; when they are in, the mapping screens open with the first file.
 function uploadZone(pid, firstId) {
   const input = el("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx,.json,.jsonl,.ndjson,.parquet", multiple: true, hidden: true });
@@ -424,15 +428,33 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     src.attributes = src.attributes || [];
     const examples = (c) => [...new Set(sample.map((r) => r[c]).filter((v) => v != null && v !== ""))].slice(0, 3);
     const fieldOf = (c) => Object.keys(src.fields).find((f) => src.fields[f] === c);
-    const useOf = (c) => (fieldOf(c) ? "f:" + fieldOf(c) : src.record_id === c ? "id" : src.attributes.includes(c) ? "keep" : "");
-    const combined = Object.keys(src.fields).filter((f) => typeof src.fields[f] !== "string");
+    // one column of document numbers whose type (PAN, Aadhaar, passport ...) is in another column: each type fills its own field (U2-15)
+    const isDoc = (e) => e && typeof e === "object" && e.when && e.column;
+    const docsOf = (c) => Object.entries(src.fields).filter(([, e]) => isDoc(e) && e.column === c);
+    const wantDocs = new Set();                            // chosen as document numbers, type column not found yet
+    const useOf = (c) => (fieldOf(c) ? "f:" + fieldOf(c) : docsOf(c).length || wantDocs.has(c) ? "docs" : src.record_id === c ? "id" : src.attributes.includes(c) ? "keep" : "");
+    const combined = Object.keys(src.fields).filter((f) => typeof src.fields[f] !== "string" && !isDoc(src.fields[f]));
+    const seen = (col) => [...new Set(sample.map((r) => r[col]).filter((v) => v != null && String(v).trim() !== "").map((v) => String(v).trim()))];
+    const docField = (v) => DOC_TYPES.find(([re]) => re.test(v));
+    // the usual spellings of every type, plus the ones the sample shows: a type missing from the first rows still counts (Aadhaar rows further down)
+    const setDocs = (c, typeCol) => {
+      for (const [f] of docsOf(c)) delete src.fields[f];
+      const by = Object.fromEntries(DOC_TYPES.map(([, f, usual]) => [f, [...usual]]));
+      for (const v of seen(typeCol)) { const d = docField(v); if (d && !by[d[1]].includes(v.toLowerCase())) by[d[1]].push(v.toLowerCase()); }
+      for (const [f, vals] of Object.entries(by)) if (typeof src.fields[f] !== "string") src.fields[f] = { column: c, when: { [typeCol]: vals } };
+    };
     const setUse = (c, use) => {
-      for (const f of Object.keys(src.fields)) if (src.fields[f] === c) delete src.fields[f];
+      for (const f of Object.keys(src.fields)) if (src.fields[f] === c || (isDoc(src.fields[f]) && src.fields[f].column === c)) delete src.fields[f];
       if (src.record_id === c) src.record_id = null;
       src.attributes = src.attributes.filter((x) => x !== c);
+      wantDocs.delete(c);
       if (use.startsWith("f:")) src.fields[use.slice(2)] = c;            // a field comes from one column: another column using it lets go
       else if (use === "id") src.record_id = c;
       else if (use === "keep") src.attributes.push(c);
+      else if (use === "docs") {
+        const typeCol = cols.find((x) => x !== c && seen(x).some(docField));
+        if (typeCol) setDocs(c, typeCol); else wantDocs.add(c);
+      }
       refresh.forEach((r) => r());
     };
     const refresh = [];
@@ -446,10 +468,23 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
         fill(sel, el("option", { value: "", selected: cur === "" }, "Don't use"),
           el("option", { value: "id", selected: cur === "id" }, "Each row's own id" + (src.record_id && src.record_id !== c ? " (now " + src.record_id + ")" : "")),
           el("option", { value: "keep", selected: cur === "keep" }, "Keep as an extra column"),
+          el("option", { value: "docs", selected: cur === "docs" }, "Identity document numbers (their type is in another column)"),
           opts.field_groups.map((g) => el("optgroup", { label: g.title }, g.fields.map((f) => el("option", { value: "f:" + f, selected: cur === "f:" + f }, fieldTitle(f) + taken(f))))));
         const f = fieldOf(c);
         const role = f ? FIELD_ROLE[f] || ["Golden record", ""] : null;
         const wrong = f && (t.contradicts || []).includes(f);
+        const docs = docsOf(c);
+        if (cur === "docs") {
+          const typeCol = docs.length ? Object.keys(docs[0][1].when)[0] : "";
+          const pick = el("select", { "aria-label": "Column holding the document type for " + c }, el("option", { value: "" }, "Choose the column with the type"),
+            cols.filter((x) => x !== c).map((x) => el("option", { value: x, selected: x === typeCol }, x)));
+          pick.addEventListener("change", () => { if (pick.value) { setDocs(c, pick.value); if (docsOf(c).length) wantDocs.delete(c); } refresh.forEach((r) => r()); });
+          fill(note, el("div", {}, field("Type of each document is in", pick),
+            docs.length ? docs.map(([df, e]) => el("div", {}, fieldTitle(df) + " where " + Object.keys(e.when)[0] + " is " + Object.values(e.when)[0].slice(0, 4).join(" or ") +
+              (Object.values(e.when)[0].length > 4 ? " (or another usual spelling)" : "")))
+              : el("span", { class: "bad" }, "No column of this file says PAN, Aadhaar, passport, driving licence or voter ID: choose the type column.")));
+          return;
+        }
         fill(note, wrong ? tag("The values do not look like " + fieldTitle(f).toLowerCase(), "warn")
           : role ? role[0] + (role[1] ? ": " + role[1] : "") : cur === "id" ? "Traces a golden record back to this row; not used to match"
             : cur === "keep" ? "Carried into the golden record as it is" : t.field && !src.fields[t.field] ? "Could be " + fieldTitle(t.field).toLowerCase() : "");
@@ -496,7 +531,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     });
     const save = async () => {
       const many = batch && batch.files.length > 1;
-      const proj = cache.projects.find((x) => x.id === pid);
+      const proj = await api("GET", P(pid));               // the setting as it is now, not as the list was loaded (U1-10)
       const solo = proj && !proj.second_approval;          // nobody else approves: the reason is recorded without asking
       const again = preset || (batch && batch.files[batch.index].saved);
       let why = solo ? (again ? "Changed the mapping of " : "Added from ") + (kind() === "upload" ? "uploaded file " : "source ") + state.source.source_id

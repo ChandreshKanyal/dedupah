@@ -221,3 +221,15 @@ def test_the_first_administrator_is_created_from_the_command_line(tmp_path, monk
     r = login(c, "root-admin")
     assert r.status_code == 200 and r.json()["must_change_password"] is False
     assert PW not in capsys.readouterr().out
+
+
+def test_a_member_must_be_a_real_user_and_portal_page_names_are_not_project_ids(tmp_path):
+    """Portal review U2-13 (a typo became a member nobody can be) and U1-13 (a project called 'decisions' collided with a portal page)."""
+    c, s, sv = make(tmp_path)
+    h = bearer(c)
+    assert c.post("/projects", json={"id": "decisions", "name": "x"}, headers=h).status_code == 422
+    assert c.post("/projects", json={"id": "team", "name": "Team"}, headers=h).status_code == 201
+    r = c.post("/projects/team/access", json={"subject": "nobody-here", "role": "viewer"}, headers=h)
+    assert r.status_code == 422 and "no user" in r.text
+    sv.accounts.create_user("asha", "Asha", PW, ["viewer"], "test")
+    assert c.post("/projects/team/access", json={"subject": "Asha", "role": "viewer"}, headers=h).json()["subject"] == "asha"

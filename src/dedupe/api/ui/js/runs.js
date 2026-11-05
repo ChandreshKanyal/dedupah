@@ -245,8 +245,9 @@ function scoringNotice(s) {
       "Scores are usually sensible but less certain than ID-backed ones: look over a sample of automatic merges before relying on them.");
   }
   return el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Scores are not meaningful for this run. "),
-    "There are too few identifiers and too little data to learn how much each field matters, so every pair sits near 50% and goes to review. " +
-    "Add records or identifiers, or decide these pairs by hand.");
+    "There are too few identifiers and too little data to learn how much each field matters, so every pair scores 50%: pairs with enough evidence " +
+    "(a name with a birth date, phone, email or address) go to a person, the others are kept apart" + (s.review_items != null ? " (" + plural(s.review_items, "pair waits", "pairs wait") + " here)" : "") +
+    ". Add records or identifiers to get real scores.");
 }
 // What the cleaning noticed in awkward data (standardise/oddities.py), in words, with what it did about it.
 const ODDITY = {
@@ -288,7 +289,8 @@ function runDetails(r) {
       ? kv([["Previous run", inc.previous_run], ["Records unchanged", num(rc.unchanged)], ["New", num(rc.new)], ["Changed", num(rc.changed)], ["Removed", num(rc.removed)],
         ["Pairs whose scores were reused", num(inc.pairs_reused)], ["Pairs scored now", num(inc.pairs_scored)],
         ["Scoring model", inc.model === "reused" ? "Reused from the previous run" : "Learned again" + (inc.model_reason ? ": " + inc.model_reason : "")]])
-      : el("p", { class: "hint" }, "Nothing reused: every record was processed" + (inc.reason ? " (" + inc.reason + ")" : "") + "."));
+      : el("p", { class: "hint" }, (r.options || {}).full ? "Full reload, as asked: every record was processed again."      // U2-24
+        : "Nothing reused: every record was processed" + (inc.reason ? " (" + inc.reason + ")" : "") + "."));
   }
   const q = s.source_quality;
   if (q && Object.keys(q).length) {

@@ -348,6 +348,8 @@ def grant_access(request: Request, body: GrantIn, project_id: str = PID, p: Prin
         raise HTTPException(422, "Unknown role.")
     try:
         subject = body.subject.strip().lower() if sv.settings.auth_mode == "local" else body.subject.strip()   # local user names are lower case; other sign-ins' ids are exact
+        if sv.settings.auth_mode == "local" and sv.accounts.get(subject) is None:
+            raise HTTPException(422, f"There is no user called {subject!r}. Ask an administrator to create the account first.")   # U2-13
         g = sv.workspace.grant(project_id, subject, body.role, p.actor)
     except WorkspaceError as e:
         raise HTTPException(422, str(e)) from None

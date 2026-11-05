@@ -15,6 +15,7 @@ from dedupe.store import JudgmentStore
 from ..dburl import driver_url
 
 PROJECT_ID = r"^[a-z0-9][a-z0-9-]{1,39}$"
+RESERVED_IDS = {"decisions", "new", "new-run", "new-project"}     # addresses of portal pages (/review/decisions): never a project (U1-13)
 _ID = re.compile(PROJECT_ID)
 
 _meta = MetaData()
@@ -110,6 +111,8 @@ class Workspace:
     def create(self, pid: str, name: str, description: str, actor: str, second_approval: bool = True) -> Project:
         if not _ID.match(pid or ""):
             raise WorkspaceError("a project id is 2-40 lower-case letters, digits or - (it appears in addresses and folder names)")
+        if pid in RESERVED_IDS:
+            raise WorkspaceError(f"the id {pid!r} is used by the portal's own pages: choose another")
         name = (name or "").strip()
         if not name or len(name) > 120:
             raise WorkspaceError("a project needs a name of up to 120 characters")

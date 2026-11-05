@@ -5,6 +5,7 @@ A field expression is one of:
     {"coalesce": ["a", "b"]}                      first non-empty
     {"concat": ["a", "b"], "sep": ", "}           join non-empty parts
     {"column": "c", "when": {"doc_type": "PAN"}}  value only when other columns equal given values
+    {"column": "c", "when": {"doc_type": ["pan", "pan card"]}}  ... or are one of the values (case and spaces ignored)
     {"const": "x"}                                a constant
 """
 import json
@@ -75,7 +76,10 @@ def _expr(e, used: set[str]) -> str:
         sql = _col(e["column"])
         if e.get("when"):
             used.update(e["when"])
-            cond = " AND ".join(f"CAST({_q(c)} AS VARCHAR) = {_lit(v)}" for c, v in e["when"].items())
+            # a value, or a list of values compared without case or surrounding spaces ("PAN", "Pan Card" -> PAN numbers)
+            cond = " AND ".join(f"CAST({_q(c)} AS VARCHAR) = {_lit(v)}" if not isinstance(v, list) else
+                                f"lower(trim(CAST({_q(c)} AS VARCHAR))) IN ({', '.join(_lit(str(x).strip().lower()) for x in v) or 'NULL'})"
+                                for c, v in e["when"].items())
             sql = f"CASE WHEN {cond} THEN {sql} END"
         return sql
     raise MappingError(f"bad field expression: {e!r}")

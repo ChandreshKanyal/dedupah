@@ -157,21 +157,31 @@ def _sniff(path: Path, filename: str) -> str:
 def _text_batches(path: Path, kind: str):
     delim = _delimiter(path, kind)
     with open(path, encoding="utf-8-sig", newline="") as f:
-        reader = _after_title_rows(csv.reader(f, delimiter=delim))
+        raw = csv.reader(f, delimiter=delim, strict=True)        # strict: a quote that is never closed is an error, not rows merged into one cell
+        reader = _after_title_rows(raw)
         try:
             names = _header(next(reader))
         except StopIteration:
             raise UploadError("the file is empty") from None
+        except csv.Error:
+            raise UploadError("the first lines of the file are not a table (a quote is never closed)") from None
+        if len(names) <= 2 and any(len(n.split()) >= 5 or len(n) > 60 for n in names):       # a sentence, not column names
+            raise UploadError("this file has no columns: it looks like text, not a table (save it with a header row and a separator such as , or ;)")
         yield names
         rows = []
-        for line, r in enumerate(reader, start=2):
-            if not any(v.strip() for v in r):
-                continue
-            _check_width(r, names, line)
-            rows.append([(v if v != "" else None) for v in (r + [None] * len(names))[:len(names)]])
-            if len(rows) >= BATCH:
-                yield to_string_table(names, rows)
-                rows = []
+        line = 1
+        try:
+            for r in reader:
+                line = raw.line_num
+                if not any(v.strip() for v in r):
+                    continue
+                _check_width(r, names, line)
+                rows.append([(v if v != "" else None) for v in (r + [None] * len(names))[:len(names)]])
+                if len(rows) >= BATCH:
+                    yield to_string_table(names, rows)
+                    rows = []
+        except csv.Error:
+            raise UploadError(f"a quote opened after line {line} is never closed: the rows after it would run together") from None
         if rows:
             yield to_string_table(names, rows)
 

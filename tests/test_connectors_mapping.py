@@ -100,6 +100,15 @@ def test_mapping_expressions():
     assert json.loads(r[0]["attributes"]) == {"t": "PAN"} and r[0]["source_record_id"] == "1"
 
 
+def test_a_document_column_fills_each_identifier_by_its_type_in_any_spelling():
+    """Portal review U2-15: KYC files keep every document in one number column with its type next to it."""
+    t = pa.table({"id": ["1", "2", "3", "4"], "t": ["PAN", " Pan Card", "AADHAAR", "x'); DROP"], "n": ["AB1", "AB2", "999", "1"]})
+    cfg = SourceConfig(source_id="s", connector={}, record_id="id", fields={
+        "pan": {"column": "n", "when": {"t": ["pan", "pan card"]}}, "aadhaar": {"column": "n", "when": {"t": ["aadhaar", "x'); drop"]}}})
+    r = _run(cfg, t)
+    assert [x["pan"] for x in r] == ["AB1", "AB2", None, None] and [x["aadhaar"] for x in r] == [None, None, "999", "1"]
+
+
 def test_mapping_errors_are_clear_and_sql_is_injection_safe():
     cfg = SourceConfig(source_id="s", connector={}, fields={"full_name": "nope"})
     with pytest.raises(MappingError, match="nope"):

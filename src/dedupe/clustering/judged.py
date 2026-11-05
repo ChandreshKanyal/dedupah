@@ -30,10 +30,12 @@ class Constraints:
     judged_pairs: set = field(default_factory=set)      # (min rid, max rid) with any pair decision, for the review queue
 
     def summary(self) -> dict:
+        """Counted per DECISION a person made (one "different people" covers every record pair between the two: U2-08), not per pair."""
+        actions = {(it["kind"], it.get("action", it["id"])) for it in self.items}
         kinds: dict = {}
-        for it in self.items:
-            kinds[it["kind"]] = kinds.get(it["kind"], 0) + 1
-        return {"judgments_applied_to_run": len(self.items), "by_kind": kinds, "missing_records": len(self.missing)}
+        for kind, _ in actions:
+            kinds[kind] = kinds.get(kind, 0) + 1
+        return {"judgments_applied_to_run": len(actions), "by_kind": kinds, "missing_records": len(self.missing)}
 
 
 def constraints_from_store(con, store) -> Constraints:
@@ -58,7 +60,7 @@ def constraints_from_store(con, store) -> Constraints:
             cons.judged_pairs.add((min(a, b), max(a, b)))
             if j.kind == "unsure":
                 continue
-            cons.items.append({"id": j.id, "kind": j.kind, "a": a, "b": b})
+            cons.items.append({"id": j.id, "kind": j.kind, "a": a, "b": b, "action": j.evidence.get("action_id") or j.id})
             if j.kind == "same_person":
                 cons.must.append((a, b, STEWARD_WEIGHT + j.id * 1e-9))
                 if j.evidence.get("confirmed_id_conflict"):
@@ -79,7 +81,7 @@ def constraints_from_store(con, store) -> Constraints:
                     cons.separations.setdefault(r, []).append((j.id, n))
                 # the steward listed these records as one person: keep them together, so the guard cuts BETWEEN the parts
                 cons.must.extend((part[0], r, PART_GLUE_WEIGHT) for r in part[1:])
-            cons.items.append({"id": j.id, "kind": "split", "parts": parts})
+            cons.items.append({"id": j.id, "kind": "split", "parts": parts, "action": j.evidence.get("action_id") or j.id})
     return _newer_wins_over_splits(cons)
 
 
@@ -149,7 +151,7 @@ def id_aliases(cons: Constraints, ids: dict) -> dict:
 
 def audit(cons: Constraints, labels: dict, ids: dict) -> dict:
     """Did each judgment hold in the final clusters? Returns counts and the list of unsatisfied ones with a reason."""
-    ok, bad = 0, []
+    bad = []
     for it in cons.items:
         if it["kind"] == "same_person":
             held = labels[it["a"]] == labels[it["b"]]
@@ -171,8 +173,10 @@ def audit(cons: Constraints, labels: dict, ids: dict) -> dict:
                     if other != n:
                         held = False
             why = "parts_still_together"
-        if held:
-            ok += 1
-        else:
-            bad.append({"id": it["id"], "kind": it["kind"], "reason": why})
-    return {"held": ok, "not_held": len(bad), "unsatisfied": bad, "missing": cons.missing}
+        if not held:
+            bad.append({"id": it["id"], "kind": it["kind"], "reason": why, "action": it.get("action", it["id"])})
+    # per decision, like the summary: a decision is kept when every record pair it covers is
+    failed = {(b["kind"], b["action"]) for b in bad}
+    decisions = {(it["kind"], it.get("action", it["id"])) for it in cons.items}
+    ok = len(decisions - failed)
+    return {"held": ok, "not_held": len(failed), "unsatisfied": bad, "missing": cons.missing}

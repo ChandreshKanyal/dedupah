@@ -77,6 +77,7 @@ async function rulesPanel(p, name, editing) {
   const now = !second && can("config.activate");          // one-person project: what is saved is in use at once
   const what = name === "decision" ? "matching rules" : name === "survivorship" ? "golden-record rules" : "technical settings";
   const proposed = async (content, reason) => {
+    if (second && (reason || "").trim().length < 10) throw new Error("Say why in at least 10 characters: the person who approves it reads this.");   // U1-06
     reason = reason || (live ? "Changed the " : "Chose the ") + what;      // one-person project: nobody else reads the reason, it is not asked
     if (latest && startContent && sameJson(content, startContent)) {
       say(latest.status === "active" ? "Nothing changed: these " + what + " are already in use." : "These " + what + " are already saved and wait to be put in use.", "good");
@@ -424,9 +425,10 @@ function matchingEditor(content, cat, propose, cancel, opts) {
   // step 4: everything else
   const keep = el("input", { type: "radio", name: "leftover", value: "keep", checked: state.use_score === false });
   const byScore = el("input", { type: "radio", name: "leftover", value: "score", checked: state.use_score !== false });
-  const pct = (x, d) => String(Math.round((x || d) * 100));
-  const reviewAt = el("input", { type: "number", min: "1", max: "99", step: "1", value: pct(state.review_at, 0.1), class: "pct" });
-  const autoAt = el("input", { type: "number", min: "1", max: "100", step: "1", value: pct(state.auto_merge_at, 0.9), class: "pct" });
+  // to a tenth of a percent: a saved 0.875 shows 87.5 and is saved back unchanged (U2-19: it became 88)
+  const pct = (x, d) => String(Math.round((x || d) * 1000) / 10);
+  const reviewAt = el("input", { type: "number", min: "1", max: "99", step: "0.1", value: pct(state.review_at, 0.1), class: "pct" });
+  const autoAt = el("input", { type: "number", min: "1", max: "100", step: "0.1", value: pct(state.auto_merge_at, 0.9), class: "pct" });
   const scale = scoreScale(Number(reviewAt.value) / 100, Number(autoAt.value) / 100);
   const redraw = () => { const r = Number(reviewAt.value) / 100; const a = Number(autoAt.value) / 100; if (r > 0 && r < a && a <= 1) scale.set(r, a); };
   reviewAt.addEventListener("input", redraw);
@@ -451,7 +453,8 @@ function matchingEditor(content, cat, propose, cancel, opts) {
   const json = el("details", { class: "advanced" }, el("summary", {}, "For experts: other conditions, or the rules as JSON"),
     el("div", { class: "row" }, btn("Add a rule with other conditions", expertRule, "small", "plus")),
     el("p", { class: "hint" }, "Saving while this is open uses the JSON below as it is, not the choices above."), field("Rules (JSON)", editor));
-  const current = () => ({ ...state, use_score: byScore.checked, auto_merge_at: Number(autoAt.value) / 100, review_at: Number(reviewAt.value) / 100 });
+  const share = (input) => Math.round(Number(input.value) * 10) / 1000;      // 87.3 -> 0.873 exactly, so an unchanged form stays unchanged
+  const current = () => ({ ...state, use_score: byScore.checked, auto_merge_at: share(autoAt), review_at: share(reviewAt) });
   json.addEventListener("toggle", () => { if (json.open) editor.value = JSON.stringify(current(), null, 2); });
   const why = el("input", { type: "text", maxlength: "300" });
   const err = errBox();

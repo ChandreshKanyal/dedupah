@@ -2224,3 +2224,31 @@ Done with measurements first, then fixes, then the same measurements again (scri
   name decides); Excel date serials (31303) stay row ids (they could be ids).
 - **The engine input-side review (E1) is closed**: E1-01, 02 (part), 04, 05, 06, 08, 14 (section 75), E1-02, 03 (89), the rest (93, 94).
 - Tests in `tests/test_detect.py`. Suite: 547 passed, 4 skipped; ruff clean.
+
+## 95. Portal review leftovers (U1, U2): reasons, members, document columns, error page, uploads (2026-11-05, session 4)
+
+Checked every U1/U2 finding against today's code; most were fixed by round 1 and the revamp (sections 75-83). Fixed now:
+- **U1-06:** with second approval on, saving rules with an empty reason invented one ("Chose the matching rules"): at least 10 characters are asked.
+- **U1-09:** the destination dialog asked a reason in one-person projects: not asked there any more (recorded automatically).
+- **U1-10:** the upload screen read the second-approval setting from a possibly stale list: read fresh before saving.
+- **U1-13:** a project called "decisions" collided with the Review > Decisions page: decisions, new, new-run, new-project are reserved ids.
+- **U2-08:** "decisions applied" counted record pairs (one "different people" covers several): counted per decision a person made (summary and audit).
+- **U2-11:** a page that cannot be opened (no such run, no permission) left the previous screen up with a corner message: it now shows "This
+  page could not be opened" with the reason, Back and Home.
+- **U2-13:** a non-existent user name was accepted as a member (local sign-in): refused, "There is no user called ...".
+- **U2-14:** "every pair goes to review" was shown on a run with 0 in review: says only pairs with enough evidence go to a person, with the count.
+- **U2-15:** KYC files keep every document number in one column with its type next to it: the mapping screen offers "Identity document
+  numbers (their type is in another column)"; each type (with its usual spellings, plus those in the sample) fills PAN, Aadhaar, passport,
+  driving licence or voter ID. The mapping engine accepts a list of values in `when`, case and spaces ignored. Checked in the browser on
+  the synthetic KYC file: PAN 61, Aadhaar 58, passport 18, licence 22 of 200 rows filled (Aadhaar appears in none of the 20 sample rows).
+- **U2-17:** columns of options (gender, a category such as the document type, city, state) are shown unmasked in mapping samples.
+- **U2-19:** thresholds were rounded to whole percents (0.875 became 0.88 on save): kept to a tenth of a percent, saved back unchanged.
+- **U2-20:** an unclosed quote ran the rest of a CSV into one cell, and a letter saved as .csv was taken for a table: both refused with a
+  plain reason (a quoted cell over two lines is still fine).
+- **U2-23:** the sticky save bar floated 32 px above the bottom with content showing under it: it sits on the screen edge.
+- **U2-24, U2-25:** a full reload said "nothing reused (no earlier successful run)"; people who cannot start runs were told to start the first run.
+- Not changed: U1-08 (schedules tick every data source in use, like the one-click run), U1-14 (a slow screen overwriting a newer one: possible
+  only, needs a navigation token through every screen), U1-11/12 (ARIA on sub-tabs, no JS behaviour tests).
+- **The user's direction (2026-11-05):** no phone-width work for now; the engine must be robust first, then the website on desktop.
+- Browser: tour (28 screens) no problems; round-3 checks (`~/agent-review/p7/round3.py`) no problems. Tests: upload, mapping, local-auth tests.
+  Suite: 550 passed, 4 skipped before the last portal-script edits; portal and changed-area tests pass after them; ruff clean.

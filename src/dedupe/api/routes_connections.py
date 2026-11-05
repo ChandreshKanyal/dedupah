@@ -77,6 +77,10 @@ class DeclineIn(Strict):
     reason: str = Field(min_length=3, max_length=300)
 
 
+OPEN_TYPES = {"gender", "marital_status", "category", "state", "city"}            # detected column types that identify nobody
+OPEN_FIELDS = {"source_id", "gender", "marital_status", "city", "state", "party_role", "relation_to_proposer"}
+
+
 def mask_cell(v) -> str | None:
     if v is None or v == "":
         return None
@@ -228,8 +232,10 @@ def inspect(request: Request, body: InspectIn, project_id: str = PID, unmask: bo
     if reveal:
         _log_unmask(request, p, f"{project_id}/source-sample", reason, "source sample")
     cell = _plain if reveal else mask_cell
+    # columns of options (gender, a category such as a document type, city, state) identify nobody: shown as they are, so a person can map them (U2-17)
+    open_cols = {c for c, t in (info["types"] or {}).items() if (t or {}).get("type") in OPEN_TYPES}
     return {"columns": info["columns"], "suggestions": info["suggestions"], "unmasked": reveal, "types": info["types"], "record_id": info["record_id"],
-            "sample": [{k: cell(v) for k, v in row.items()} for row in info["sample"].slice(0, SAMPLE_ROWS).to_pylist()]}
+            "sample": [{k: (_plain(v) if k in open_cols else cell(v)) for k, v in row.items()} for row in info["sample"].slice(0, SAMPLE_ROWS).to_pylist()]}
 
 
 def _plain(v) -> str | None:
@@ -255,7 +261,7 @@ def preview(request: Request, body: SourceConfig, project_id: str = PID, unmask:
     if reveal:
         _log_unmask(request, p, f"{project_id}/source-sample", reason, "mapped sample")
     cell = _plain if reveal else mask_cell
-    rows = [{k: (v if k == "source_id" else cell(v)) for k, v in row.items()} for row in table.slice(0, SAMPLE_ROWS).to_pylist()]
+    rows = [{k: (v if k in OPEN_FIELDS else cell(v)) for k, v in row.items()} for row in table.slice(0, SAMPLE_ROWS).to_pylist()]
     return {"sample_size": n, "filled": filled, "rows": rows, "unmasked": reveal}
 
 

@@ -139,15 +139,17 @@ async function destinationDialog(p, refresh) {
   const schema = el("input", { type: "text", maxlength: "63" });
   const why = el("input", { type: "text", maxlength: "300" });
   const err = errBox();
+  const solo = !p.second_approval;                          // one-person project: nobody else reads the reason, it is not asked (U1-09)
+  const reason = () => why.value.trim() || "Added the database destination " + id.value.trim();
   const res = await dialog("Add a database destination", el("div", {}, field("Destination id (letters, digits, - and _)", id), field("Environment variable that holds the database address", env),
-    field("Default schema (optional)", schema), field("Reason (at least 10 characters)", why), err), "Save destination", async () => {
+    field("Default schema (optional)", schema), solo ? null : field("Reason (at least 10 characters)", why), err), "Save destination", async () => {
     try {
-      return await api("POST", P(p.id) + "/destinations", { destination: { destination_id: id.value.trim(), url_env: env.value.trim().toUpperCase(), schema_name: schema.value.trim() || null }, reason: why.value.trim() });
+      return await api("POST", P(p.id) + "/destinations", { destination: { destination_id: id.value.trim(), url_env: env.value.trim().toUpperCase(), schema_name: schema.value.trim() || null }, reason: reason() });
     } catch (e) { fail(err, e.message); return undefined; }
   });
   if (!res) return;
   const now = !res.second_approval && can("config.activate");           // one-person project: saved means in use
-  if (now) await api("POST", P(p.id) + "/destinations/" + res.id + "/versions/" + res.version + "/activate", { reason: why.value.trim() });
+  if (now) await api("POST", P(p.id) + "/destinations/" + res.id + "/versions/" + res.version + "/activate", { reason: reason() });
   await refresh();
   say("Saved as version " + res.version + (now ? " and in use." : res.second_approval ? ". Another person approves it, then it can be put in use." : ". Someone who can put it in use does that next."), "good");
 }

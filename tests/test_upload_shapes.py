@@ -70,3 +70,18 @@ def test_midnight_on_every_date_does_not_turn_birth_dates_into_record_dates():
     assert detect_values(dobs)["type"] == "dob"
     stamps = [f"2026-0{1 + i % 9}-1{i % 9} 1{i % 9}:30:15" for i in range(30)]
     assert detect_values(stamps)["type"] == "record_date"
+
+
+def test_a_quote_that_is_never_closed_is_refused_not_merged(up):
+    """Portal review U2-20: an unclosed quote ran every later row into one cell, silently."""
+    data = b'id,name,city\n1,Asha,Pune\n2,"Ravi,Delhi\n3,Meena,Chennai\n4,Anil,Jaipur\n'
+    with pytest.raises(UploadError, match="never closed"):
+        store(up, "q.csv", data)
+    ok = store(up, "q2.csv", b'id,name,address\n1,Asha,"12 MG Road\nPune"\n2,Ravi,Delhi\n')        # a quoted cell over two lines is fine
+    assert ok["rows"] == 2
+
+
+def test_a_text_file_saved_as_csv_is_not_taken_for_a_table(up):
+    data = b"Dear team, please find the customer list for March attached below\nRegards\nAsha\nFinance\nPune office\n"
+    with pytest.raises(UploadError, match="looks like text"):
+        store(up, "letter.csv", data)

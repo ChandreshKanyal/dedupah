@@ -87,7 +87,13 @@ async function go(fn) {
   pageKeys = null;
   closeSearch();
   focusNext = true;
-  return run(fn);
+  // a screen that cannot be opened (no such run, no permission) says so in place of the screen, never leaves the previous one up (U2-11)
+  return run(async () => {
+    try { await fn(); } catch (e) {
+      if (e.message === "unauthorised") throw e;
+      show(page("This page could not be opened", e.message, [btn("Back", () => window.history.back(), "", "prev"), btn("Home", link("/"), "primary", "home")]));
+    }
+  });
 }
 function buildNav() {
   $("nav").replaceChildren(...NAV.filter((i) => canNav(i[1])).map(([name, , ic, path]) =>

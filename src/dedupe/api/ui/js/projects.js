@@ -178,7 +178,8 @@ async function projectJourney(p, runs, connections) {
     data: ["Add the data to find duplicates in: files or databases.", can("sources.manage") || can("config.read") ? ["Add data", () => go(() => viewProject(pid, "setup", "data")), "database"] : null],
     rules: ["Choose " + (missingRules === "golden" ? "how the one clean record per customer is built." : "when two records are the same customer."),
       can("config.read") ? ["Choose rules", () => go(() => viewProject(pid, "setup", missingRules || "matching")), "sliders"] : null],
-    run: ["Data and rules are set. Start the first run to find the duplicates.", can("runs.start") ? ["Start run", () => quickRun(pid), "play"] : null],
+    run: can("runs.start") ? ["Data and rules are set. Start the first run to find the duplicates.", ["Start run", () => quickRun(pid), "play"]]
+      : ["Data and rules are set. Someone who can start runs starts the first one.", null],                       // U2-25
     running: ["A run is going. This page shows the result when it is done.", latest ? ["Open the run", openRun(latest), "clock"] : null],
     failed: ["The last run did not finish. Open it to see why, then run again.", latest ? ["Open the run", openRun(latest), "alert"] : null],
     review: [plural(pr.open_review, "pair needs", "pairs need") + " your decision: same customer or not.", can("queue.read") ? ["Review " + plural(pr.open_review, "pair", "pairs"), link("/review/" + pid), "inbox"] : null],
