@@ -41,6 +41,14 @@ def kind(values):
     (["C0001", "C0002", "C0003", "C0004", "C0005", "C0006"], "row_id"),
     (["Gold", "Silver", "Gold", "Gold", "Silver", "Platinum", "Gold", "Silver", "Gold", "Gold", "Silver"], "category"),
     (["ok", "bad", None, "", "x"], None),                                 # fewer than five real values: no verdict
+    # agent review E1-07
+    ([f"LD{i:05d}" for i in range(1, 40)], "row_id"),                     # lead ids are not vehicle numbers (no state code + series letters)
+    ([f"AB{i:02d}C{i:04d}" for i in range(10, 50)], "row_id"),
+    ([f"APP-2024-{13265 + i // 3}" for i in range(60)], "ref_code"),      # an application id over a few rows each
+    ([str(100001 + i * 9973 % 899998) for i in range(80)], "row_id"),     # all-different six-digit values: not PIN codes
+    (["1", "2", "2", "1", "1", "2", "1", "2", "2", "1"], "category"),       # 1 / 2 codes are options, not amounts
+    ([f"{1 + i % 28:02d}-{1 + i % 12:02d}-{50 + i % 40}" for i in range(60)], "date"),   # two-digit years: a date of unknown century
+    ([str(1950 + i % 50) for i in range(60)], "year"),
 ])
 def test_each_type_is_recognised_from_its_values(values, expected):
     assert kind(values) == expected

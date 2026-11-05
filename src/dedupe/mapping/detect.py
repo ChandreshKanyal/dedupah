@@ -38,7 +38,8 @@ _ADDRESS_WORDS = {"road", "rd", "street", "st", "nagar", "colony", "sector", "fl
 
 _GSTIN = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 _IFSC = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
-_VEHICLE = re.compile(r"^[A-Z]{2}\d{1,2}[A-Z]{0,3}\d{4}$")
+_STATE_CODES = ("AN|AP|AR|AS|BR|CH|CG|DD|DL|DN|GA|GJ|HR|HP|JK|JH|KA|KL|LA|LD|MP|MH|MN|ML|MZ|NL|OD|OR|PY|PB|RJ|SK|TN|TS|TR|UP|UK|UA|WB")
+_VEHICLE = re.compile(rf"^(?:{_STATE_CODES})\d{{1,2}}[A-Z]{{1,3}}\d{{4}}$|^\d{{2}}BH\d{{4}}[A-Z]{{1,2}}$")   # MH12AB1234, DL3C1234, 22BH1234AA; not LD00001
 _AADHAAR_MASKED = re.compile(r"^[X*x]{4}[\s-]?[X*x]{4}[\s-]?\d{4}$")
 _TOKEN = re.compile(r"^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$|^[A-Za-z0-9+/]{43}=$")
 _PINCODE = re.compile(r"^[1-9]\d{5}$")
@@ -83,6 +84,8 @@ TYPES: dict[str, tuple[str | None, str]] = {
     "mixed_ids": (None, "A mix of identity numbers (PAN, passport, voter ID ...) in one column"),
     "file_ref": (None, "Names or links of image or document files"),
     "four_digits": (None, "Four-digit numbers (for example the last four digits of Aadhaar)"),
+    "year": (None, "Years (for example a birth year)"),
+    "ref_code": (None, "Reference numbers that repeat (an account, application or customer number)"),
     "category": (None, "A short list of repeated values (a category)"),
     "text": (None, "Free text"),
 }
@@ -96,6 +99,7 @@ ALSO_FITS: dict[str, set[str]] = {
     "row_id": {"customer_number", "passport_no", "dl_no", "voter_id", "pan", "aadhaar_reference_key"}, "mixed_ids": {"passport_no", "dl_no", "voter_id", "pan"},
     "date": {"dob", "record_date"}, "dob": {"record_date"}, "record_date": {"dob"}, "category": {"gender", "marital_status", "occupation",
     "party_role", "relation_to_proposer", "state", "city"}, "amount": {"annual_income", "age"}, "text": {"address", "address_alt"},
+    "year": {"dob"}, "ref_code": {"customer_number"},
 }
 
 
@@ -201,6 +205,15 @@ def _dates(vals: list[str]) -> tuple[str, float] | None:
     return "date", share
 
 
+_SHORT_DATE = re.compile(r"\d{1,2}[-/.]\d{1,2}[-/.]\d{2}")
+
+
+def _one_shape(vals: list[str]) -> bool:
+    """All values look alike (letters as A, digits as 9) and hold both letters and digits: a code, not text or a number."""
+    shapes = {re.sub(r"\d", "9", re.sub(r"[A-Za-z]", "A", v)) for v in vals}
+    return len(shapes) <= 2 and all(re.search(r"\d", v) and re.search(r"[A-Za-z]", v) for v in vals)
+
+
 def _counter(vals: list[str], distinct: float) -> bool:
     """Row numbers: whole numbers, all different, and either a near-unbroken run (1, 2, 3 ...) or too many different values to be ages
     (people's ages repeat once there are a few dozen rows)."""
@@ -221,7 +234,12 @@ def _numeric(vals: list[str], distinct: float) -> tuple[str, float] | None:
     nums = [v for v in vals if _NUMBER.match(v)]
     if len(nums) / len(vals) < MIN_SHARE:
         return None
+    if len(set(vals)) <= 4 and all(re.fullmatch(r"\d", v) for v in vals):
+        return "category", 1.0                             # 1 / 2 (/ 3): codes for a list of options, not amounts (E1-07)
     if sum(bool(re.fullmatch(r"\d{4}", v)) for v in nums) / len(vals) >= MIN_SHARE:
+        years = [int(v) for v in nums if re.fullmatch(r"\d{4}", v)]
+        if sum(1900 <= y <= reference_date().year for y in years) / len(vals) >= MIN_SHARE and statistics.median(years) >= 1930:
+            return "year", len(years) / len(vals)          # 1985, 1990: years, not Aadhaar last-4s (E1-07)
         return "four_digits", len(nums) / len(vals)
     if distinct >= 0.99 and all("." not in v for v in nums):
         return "row_id", 1.0
@@ -242,6 +260,8 @@ def detect_values(values) -> dict:
         scores[name] = sum(1 for v in vals if check(v)) / len(vals)
     if sum(v.endswith("000") for v in vals) / len(vals) >= 0.5:
         scores["pincode"] = 0.0                          # 500000, 250000: round amounts, not PIN codes
+    if len(vals) >= 50 and out["distinct"] >= 0.98:
+        scores["pincode"] = 0.0                          # PIN codes repeat in any file of people; all-different six-digit values do not (E1-07)
     if (d := _dates(vals)) is not None:
         scores[d[0]] = d[1]
     if (n := _numeric(vals, out["distinct"])) is not None and not any(scores[t] >= MIN_SHARE for t in ("aadhaar", "mobile", "pincode")):
@@ -270,6 +290,10 @@ def detect_values(values) -> dict:
         some_id = sum(any(check(v) for name, check in _CHECKS if name in _ID_TYPES) for v in vals) / len(vals)
         if some_id >= MIN_SHARE:
             best = ("mixed_ids", some_id)
+    if best is None and sum(bool(_SHORT_DATE.fullmatch(v)) for v in vals) / len(vals) >= MIN_SHARE:
+        best = ("date", 1.0)                              # 14-09-85: a date whose century cannot be told (E1-07: was a row id)
+    if best is None and 0.2 <= out["distinct"] < 0.99 and _one_shape(vals):
+        best = ("ref_code", 1.0)                          # APP-2024-13265 repeated over a few rows: one reference per account/application
     if best is None and out["distinct"] < 0.2:
         best = ("category", 1.0)
     if best is None and len(text_like) / len(vals) >= MIN_SHARE and statistics.mean(len(v) for v in vals) >= 25:

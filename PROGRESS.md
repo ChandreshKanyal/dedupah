@@ -2212,3 +2212,15 @@ Done with measurements first, then fixes, then the same measurements again (scri
   of a name are dropped.
 - Tests in `test_oddities.py`, `test_decision.py`, `test_connectors_remote.py`; one age test now expects the more specific reason
   (`veto_birth_year_far_apart` instead of `not_enough_evidence`, still "kept apart"). Suite: 540 passed, 4 skipped; ruff clean.
+
+## 94. Review fix E1-07: column types read from the values (2026-11-05, session 4)
+
+- Lead ids (LD00001) and mixed customer ids (AB12C3456) were taken for vehicle numbers: a vehicle number now needs a state code, series
+  letters and four digits (MH12AB1234, DL3C1234, 22BH1234AA). An application id that repeats over a few rows (APP-2024-13265) is a new type
+  "Reference numbers that repeat" (fits customer number). All-different six-digit values (amounts, ids) are no longer PIN codes (PINs repeat in
+  any file of people). 1 / 2 codes are a list of options, not amounts. Two-digit-year dates (14-09-85) are dates (century unknown), not row
+  ids. 1950-2000 are "Years (for example a birth year)" (fits date of birth), not "four-digit numbers".
+- Left as they are, honestly: six-digit amounts that repeat (150000, 310500) look exactly like PIN codes from the values alone (the column's
+  name decides); Excel date serials (31303) stay row ids (they could be ids).
+- **The engine input-side review (E1) is closed**: E1-01, 02 (part), 04, 05, 06, 08, 14 (section 75), E1-02, 03 (89), the rest (93, 94).
+- Tests in `tests/test_detect.py`. Suite: 547 passed, 4 skipped; ruff clean.
