@@ -24,6 +24,7 @@ async function openQueueItem(ctx, index, doneText) {
 // The Review inbox is one work screen (the Task Manager layout of classic MDM tools): the project's open pairs in a work list on the left, the
 // selected pair on the right with its decision buttons. Deciding moves to the next pair in place; Undo is offered in the message.
 const REVIEW_STATUS = ["open", "unsure", "all", "decided"];
+const W = () => wordsOf(projectOf(shownPath));
 const pairName = (it) => (it.name_l || it.person_l) + " and " + (it.name_r || it.person_r);
 const WHY_FILTER = [["any", "Any reason"], ["rule", "Sent by a rule"], ["score", "Its score only"]];
 // How strongly a piece of evidence counts, in a word instead of the engine's bits
@@ -65,8 +66,8 @@ async function viewInbox(pidArg, statusArg, ridArg) {
   const apply = () => { ctx.band = band.value; ctx.why = why.value; ctx.q = text.value.trim(); return loadList(0, 0); };
   for (const x of [band, why]) x.addEventListener("change", () => run(apply));
   text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); run(apply); } });
-  text.setAttribute("aria-label", "Find a pair by name, person ID or city");
-  text.placeholder = "Find a pair: name, person ID or city";
+  text.setAttribute("aria-label", "Find a pair by name, ID or city");
+  text.placeholder = "Find a pair: name, ID or city";
   text.classList.add("wide-search");
   const filters = el("div", { role: "search", "aria-label": "Filter the pairs" },
     el("div", { class: "row" }, usable.length > 1 ? picker : null, text, btn("Search", apply, "", "search"),
@@ -111,7 +112,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     const selCount = el("span", { class: "sel-count" }, num(chosen.size) + " selected");
     const bulk = async (decision) => {
       if (!chosen.size) { say("Tick the pairs first.", "bad"); return; }
-      const what = decision === "approve" ? "Same person" : "Different people";
+      const what = decision === "approve" ? W().same : W().diff;
       const why = await askReason(what + " for " + plural(chosen.size, "pair", "pairs"), "Why? It is recorded with every one of these decisions", decision === "approve" ? 10 : 0,
         "Decide " + plural(chosen.size, "pair", "pairs"));
       if (why === null) return;
@@ -133,8 +134,8 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     const some = items.length > 0;                      // an empty list has nothing to tick or to page through
     fill(listPane,
       some && writer ? el("div", { class: "pane-tool" }, selCount,
-        writer ? btn("Same person", () => bulk("approve"), "small", null, { title: "Same person for the ticked pairs" }) : null,
-        writer ? btn("Different people", () => bulk("reject"), "small", null, { title: "Different people for the ticked pairs" }) : null,
+        writer ? btn(W().same, () => bulk("approve"), "small", null, { title: W().same + " for the ticked pairs" }) : null,
+        writer ? btn(W().diff, () => bulk("reject"), "small", null, { title: W().diff + " for the ticked pairs" }) : null,
         el("span", { class: "grow" })) : null,
       items.length ? el("div", { class: "wl" }, rowsEl) : el("div", { class: "pane-empty" }, filtered() ? "No pairs match these filters."
         : status === "open" ? "Nothing to review here: every pair of this run is decided." : status === "unsure" ? "No pair is marked Not sure." : "No pairs in this view."),
@@ -166,7 +167,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       const body = { person_l: it.person_l, person_r: it.person_r, reason: note.value.trim() };
       if (kind === "approve" && conflict) body.confirm_id_conflict = true;
       const out = await api("POST", base + "/decisions/" + kind, body, { "Idempotency-Key": keys[kind] });
-      const words = { approve: "Same person", reject: "Different people", unsure: "Not sure" }[kind];
+      const words = { approve: W().same, reject: W().diff, unsure: "Not sure" }[kind];
       const msg = words + " recorded for " + pairName(it) + (out.pending_approval ? ". It waits for a second person." : ". It applies at the project's next run.");
       const stays = status === "all" || (status === "unsure" && kind === "unsure");
       await Promise.all([loadList(ctx.offset, stays ? i + 1 : i), recount()]);
@@ -177,8 +178,8 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       } });
     };
     const B = {
-      same: writer ? btn("Same person", () => decide("approve"), "primary", "check", { "aria-keyshortcuts": "S", title: "S" }) : null,
-      diff: writer ? btn("Different people", () => decide("reject"), "", "x", { "aria-keyshortcuts": "D", title: "D" }) : null,
+      same: writer ? btn(W().same, () => decide("approve"), "primary", "check", { "aria-keyshortcuts": "S", title: "S" }) : null,
+      diff: writer ? btn(W().diff, () => decide("reject"), "", "x", { "aria-keyshortcuts": "D", title: "D" }) : null,
       unsure: writer ? btn("Not sure", () => decide("unsure"), "", null, { "aria-keyshortcuts": "U", title: "U" }) : null,
       prev: btn("Previous", () => (i > 0 ? openPair(i - 1) : ctx.offset ? loadList(ctx.offset - QUEUE_PAGE, QUEUE_PAGE - 1) : null), "", "prev",
         { "aria-keyshortcuts": "P", title: "P", disabled: i === 0 && ctx.offset === 0 }),
@@ -193,16 +194,16 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       can("pii.unmask") && !c.unmasked ? btn("Show identifiers", async () => { const why = await revealIdentifiers("Show identifiers"); if (why) await openPair(i, why); }) : null,
       btn("Open full page", () => { reviewCtx = { ...ctx, index: ctx.offset + i, l: it.person_l, r: it.person_r }; return go(() => viewCompare(pid, rid, it.person_l, it.person_r)); }, "", "external"),
     ];
-    const both = [A, Bp].flatMap((x) => x.records.map((r) => el("tr", {}, el("td", { class: "mono" }, x.person_id), el("td", {}, r.source_id), el("td", { class: "mono" }, r.source_record_id),
-      el("td", {}, r.name_as_written || ""), el("td", {}, r.dob || ""), el("td", {}, r.mobile || ""), el("td", {}, r.email || ""), el("td", {}, r.city || ""))));
-    const evidence = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, comparisonTitle(x.comparison) + ": " + x.level + " (" + strength(x.bits) + ")")))
+    const [recTitles, recCells] = recordColumns([A, Bp]);
+    const both = [A, Bp].flatMap((x) => x.records.map((r) => el("tr", {}, el("td", { class: "mono" }, x.person_id), el("td", {}, r.source_id), el("td", { class: "mono" }, r.source_record_id), recCells(r))));
+    const evidence = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, (x.title || comparisonTitle(x.comparison)) + ": " + x.level + " (" + strength(x.bits) + ")")))
       : el("p", { class: "muted" }, "None."));
     const panes = {
-      compare: () => [fieldDiff(A.golden, Bp.golden)],
-      records: () => [table(["Person", "Source", "Record", "Name as written", "Date of birth", "Mobile", "Email", "City"], both)],
+      compare: () => [fieldDiff(withOwn(A), withOwn(Bp))],
+      records: () => [table(["Person", "Source", "Record", ...recTitles], both)],
       evidence: () => [el("p", { class: "hint" }, "From the best-matching pair of records."),
-        el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the same person"), el("div", { class: "body" }, evidence(c.why_match))),
-          el("div", { class: "panel" }, el("h3", {}, "For different people"), el("div", { class: "body" }, evidence(c.why_not))))],
+        el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the " + W().same.toLowerCase()), el("div", { class: "body" }, evidence(c.why_match))),
+          el("div", { class: "panel" }, el("h3", {}, "For " + W().diff.toLowerCase()), el("div", { class: "body" }, evidence(c.why_not))))],
       history: () => [c.existing_judgments.length ? table(["Decision", "By", "Status", "Reason"], c.existing_judgments.map((j) => el("tr", {}, el("td", {}, KIND_LABEL[j.kind] || label(j.kind)),
         el("td", {}, j.actor), el("td", {}, statusTag(j.status === "active" ? "in_force" : j.status === "revoked" ? "undone" : j.status)), el("td", {}, j.reason))))
         : el("p", { class: "muted" }, "No earlier decisions on these records.")],
@@ -250,21 +251,32 @@ async function viewInbox(pidArg, statusArg, ridArg) {
 // ---- comparing two people ----------------------------------------------------------------------------------------------------
 const FIELD_ORDER = ["full_name", "father_name", "dob", "gender", "marital_status", "mobile", "email", "address", "city", "state", "pincode", "pan", "aadhaar_last4", "passport_no",
   "dl_no", "voter_id", "occupation", "annual_income"];
+// A person's golden values with the project's own fields in front ("own:<title>"), for the side-by-side table.
+const withOwn = (p) => ({ ...Object.fromEntries((p.own || []).filter((o) => o.value != null).map((o) => ["own:" + o.title, o.value])), ...p.golden });
+// The columns of a table of source records: the project's own fields first; built-in columns nobody filled are left out when it has own fields.
+function recordColumns(people) {
+  const recs = people.flatMap((p) => p.records);
+  const own = (people[0].own || []).map((o) => [o.title, (r) => (r.own || {})[o.name]]);
+  const base = [["Name as written", (r) => r.name_as_written], ["Date of birth", (r) => r.dob], ["Mobile", (r) => r.mobile], ["Email", (r) => r.email], ["City", (r) => r.city]];
+  const cols = own.length ? [...own, ...base.filter(([, f]) => recs.some((r) => f(r)))] : base;
+  return [cols.map((c) => c[0]), (r) => cols.map(([, f]) => el("td", {}, f(r) == null ? "" : String(f(r))))];
+}
 function fieldDiff(a, b) {
-  const keys = [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].sort((x, y) => (FIELD_ORDER.indexOf(x) + 99) % 199 - (FIELD_ORDER.indexOf(y) + 99) % 199);
+  const rank = (k) => (k.startsWith("own:") ? -1 : (FIELD_ORDER.indexOf(k) + 99) % 199);
+  const keys = [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].sort((x, y) => rank(x) - rank(y));
   const norm = (v) => String(v).trim().toLowerCase().replace(/[\s.,-]+/g, " ");
-  return el("div", { class: "scroll" }, el("table", { class: "diff" }, head(["Field", "Person A", "Person B", "Compared"]), el("tbody", {}, keys.map((k) => {
+  return el("div", { class: "scroll" }, el("table", { class: "diff" }, head(["Field", W().Person + " A", W().Person + " B", "Compared"]), el("tbody", {}, keys.map((k) => {
     const x = a[k]; const y = b[k];
     const one = x == null || x === "" || y == null || y === "";
     const same = !one && norm(x) === norm(y);
     const masked = String(x).includes("*") || String(y).includes("*");
     const verdict = one ? ["Only on one side", "muted"] : same ? [masked ? "Looks the same (masked)" : "Same", "same"] : ["Differs", "differs"];
-    return el("tr", {}, el("th", { scope: "row" }, fieldTitle(k)), el("td", {}, x == null ? "" : String(x)), el("td", {}, y == null ? "" : String(y)), el("td", { class: "flag " + verdict[1] }, verdict[0]));
+    return el("tr", {}, el("th", { scope: "row" }, k.startsWith("own:") ? k.slice(4) : fieldTitle(k)), el("td", {}, x == null ? "" : String(x)), el("td", {}, y == null ? "" : String(y)), el("td", { class: "flag " + verdict[1] }, verdict[0]));
   }))));
 }
 function recordsTable(p) {
-  return table(["Source", "Record", "Name as written", "Date of birth", "Mobile", "Email", "City"], p.records.map((r) => el("tr", {}, el("td", {}, r.source_id),
-    el("td", { class: "mono" }, r.source_record_id), el("td", {}, r.name_as_written || ""), el("td", {}, r.dob || ""), el("td", {}, r.mobile || ""), el("td", {}, r.email || ""), el("td", {}, r.city || ""))));
+  const [titles, cells] = recordColumns([p]);
+  return table(["Source", "Record", ...titles], p.records.map((r) => el("tr", {}, el("td", {}, r.source_id), el("td", { class: "mono" }, r.source_record_id), cells(r))));
 }
 async function viewCompare(pid, rid, l, r, reveal) {
   here(R(pid, rid) + "/compare/" + l + "/" + r);
@@ -285,7 +297,7 @@ async function viewCompare(pid, rid, l, r, reveal) {
     const body = { person_l: l, person_r: r, reason: note.value.trim() };
     if (kind === "approve" && conflict) body.confirm_id_conflict = true;
     const out = await api("POST", base + "/decisions/" + kind, body, { "Idempotency-Key": keys[kind] });
-    const words = { approve: "Same person", reject: "Different people", unsure: "Not sure" }[kind];
+    const words = { approve: W().same, reject: W().diff, unsure: "Not sure" }[kind];
     const msg = words + " recorded for " + l + " and " + r + (out.pending_approval ? ". It waits for a second person." : ". It applies at the project's next run.");
     const undo = { label: "Undo", icon: "undo", fn: async () => {
       await api("POST", P(pid) + "/decisions/" + out.action_id + "/undo", { reason: "undone right after deciding" });
@@ -299,8 +311,8 @@ async function viewCompare(pid, rid, l, r, reveal) {
     else say(msg + " Nothing else waits in this queue.", "good", undo);
   };
   const B = {
-    same: writer ? btn("Same person", () => decide("approve"), "primary", "check", { "aria-keyshortcuts": "S" }) : null,
-    diff: writer ? btn("Different people", () => decide("reject"), "", null, { "aria-keyshortcuts": "D" }) : null,
+    same: writer ? btn(W().same, () => decide("approve"), "primary", "check", { "aria-keyshortcuts": "S" }) : null,
+    diff: writer ? btn(W().diff, () => decide("reject"), "", null, { "aria-keyshortcuts": "D" }) : null,
     unsure: writer ? btn("Not sure", () => decide("unsure"), "", null, { "aria-keyshortcuts": "U" }) : null,
     prev: ctx.index ? btn("Previous", () => openQueueItem(ctx, ctx.index - 1), "", "prev", { "aria-keyshortcuts": "P" }) : null,
     next: btn("Skip", () => openQueueItem(ctx, ctx.index == null ? 0 : ctx.index + 1), "", "next", { "aria-keyshortcuts": "N" }),
@@ -318,12 +330,12 @@ async function viewCompare(pid, rid, l, r, reveal) {
   }
   const position = ctx.index == null ? "" : "Pair " + num(ctx.index + 1) + (ctx.status === "open" && ctx.band === "all" && summary && summary.open_now != null ? " of " + num(summary.open_now) : "") + ". ";
   const [A, Bp] = c.persons;
-  const why = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, comparisonTitle(x.comparison) + ": " + x.level + " (" + strength(x.bits) + ")")))
+  const why = (list) => (list.length ? el("ul", { class: "plain" }, list.map((x) => el("li", {}, (x.title || comparisonTitle(x.comparison)) + ": " + x.level + " (" + strength(x.bits) + ")")))
     : el("p", { class: "muted" }, "None."));
   const stale = runInfo.latest_run_id && runInfo.latest_run_id !== rid ? el("div", { class: "notice warn", role: "note" },
     "This pair comes from an older run. Your decision still counts, but the newest run may already show these people differently.",
     el("div", { class: "row" }, btn("Review the newest run", () => go(() => viewInbox(pid)), "small"))) : null;
-  show(page("Compare people", position + (c.decided_by ? "Why it is here: " + (RULE_TITLE[c.decided_by] || label(c.decided_by)) : "Match score " + pct(c.probability)) + ".", actions,
+  show(page("Compare " + W().people, position + (c.decided_by ? "Why it is here: " + (RULE_TITLE[c.decided_by] || label(c.decided_by)) : "Match score " + pct(c.probability)) + ".", actions,
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Review", "/review/" + pid), l + " and " + r)),
   stale, scoringNotice(runInfo.summary),
   c.unmasked ? el("p", { class: "hint" }, "Identifiers are shown in full. This view is logged.") : el("p", { class: "hint" }, "Identifiers are masked. Masked values that look the same may still differ."),
@@ -332,19 +344,19 @@ async function viewCompare(pid, rid, l, r, reveal) {
     conflict ? el("label", { class: "check" }, conflict, el("span", {}, "I confirm they are one person despite the conflicting identifiers (a reason is required)")) : null,
     field("Note", note),
     el("div", { class: "row" }, B.same, B.diff, B.unsure),
-    el("p", { class: "hint" }, "Keys: ", el("kbd", {}, "S"), " same person, ", el("kbd", {}, "D"), " different people, ", el("kbd", {}, "U"), " not sure, ", el("kbd", {}, "N"), " skip, ",
+    el("p", { class: "hint" }, "Keys: ", el("kbd", {}, "S"), " " + W().same.toLowerCase() + ", ", el("kbd", {}, "D"), " " + W().diff.toLowerCase() + ", ", el("kbd", {}, "U"), " not sure, ", el("kbd", {}, "N"), " skip, ",
       el("kbd", {}, "P"), " previous. After a decision the next pair opens; Undo is offered in the message."))) : el("p", { class: "hint" }, "Your role can look but not decide."),
-  el("h2", { class: "section" }, A.person_id + " (person A, " + plural(A.record_count, "record", "records") + ") and " + Bp.person_id + " (person B, " + plural(Bp.record_count, "record", "records") + ")"),
-  fieldDiff(A.golden, Bp.golden),
+  el("h2", { class: "section" }, A.person_id + " (" + W().person + " A, " + plural(A.record_count, "record", "records") + ") and " + Bp.person_id + " (" + W().person + " B, " + plural(Bp.record_count, "record", "records") + ")"),
+  fieldDiff(withOwn(A), withOwn(Bp)),
   el("h2", { class: "section" }, "Evidence from the best-matching pair of records"),
-  el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the same person"), el("div", { class: "body" }, why(c.why_match))),
-    el("div", { class: "panel" }, el("h3", {}, "For different people"), el("div", { class: "body" }, why(c.why_not)))),
+  el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the " + W().same.toLowerCase()), el("div", { class: "body" }, why(c.why_match))),
+    el("div", { class: "panel" }, el("h3", {}, "For " + W().diff.toLowerCase()), el("div", { class: "body" }, why(c.why_not)))),
   c.existing_judgments.length ? el("h2", { class: "section" }, "Earlier decisions on these records") : null,
   c.existing_judgments.length ? table(["Decision", "By", "Status", "Reason"], c.existing_judgments.map((j) => el("tr", {}, el("td", {}, KIND_LABEL[j.kind] || label(j.kind)), el("td", {}, j.actor),
     el("td", {}, statusTag(j.status === "active" ? "in_force" : j.status === "revoked" ? "undone" : j.status)), el("td", {}, j.reason)))) : null,
   el("h2", { class: "section" }, "Source records"),
-  el("div", { class: "cols" }, [A, Bp].map((x, i) => el("div", {}, el("div", { class: "title-row" }, el("h3", { class: "section" }, (i ? "Person B: " : "Person A: ") + x.person_id),
-    can("person.read") ? btn("Open person", () => go(() => viewPerson(pid, rid, x.person_id)), "small") : null), recordsTable(x)))));
+  el("div", { class: "cols" }, [A, Bp].map((x, i) => el("div", {}, el("div", { class: "title-row" }, el("h3", { class: "section" }, W().Person + (i ? " B: " : " A: ") + x.person_id),
+    can("person.read") ? btn("Open " + W().person, () => go(() => viewPerson(pid, rid, x.person_id)), "small") : null), recordsTable(x)))));
 }
 
 // ---- one person: their records, fixing a wrong merge (split) and correcting a golden value (override) ----------------------------------
@@ -379,25 +391,27 @@ async function viewPerson(pid, rid, person, reveal) {
   };
   const golden = Object.entries(v.golden || {}).map(([k, val]) => [fieldTitle(k), el("span", { class: "title-row" }, String(val),
     writer ? btn("Correct", () => correct(k, val), "small ghost", "edit", { "aria-label": "Correct " + label(k) }) : null)]);
+  const [recTitles, recCells] = recordColumns([v]);
   const rows = v.records.map((r) => {
     const cb = writer && v.records.length > 1 ? el("input", { type: "checkbox", "aria-label": "Select record " + r.source_id + " " + r.source_record_id }) : null;
     if (cb) picks.push([cb, r]);
     return el("tr", {}, writer && v.records.length > 1 ? el("td", { class: "check" }, cb) : null, el("td", {}, r.source_id), el("td", { class: "mono" }, r.source_record_id),
-      el("td", {}, r.name_as_written || ""), el("td", {}, r.dob || ""), el("td", {}, r.mobile || ""), el("td", {}, r.email || ""), el("td", {}, r.city || ""));
+      recCells(r));
   });
   const actions = can("pii.unmask") && !reveal ? [btn("Show identifiers", async () => {
     const why = await revealIdentifiers("Show identifiers");
     if (why) await go(() => viewPerson(pid, rid, person, why));
   })] : [];
-  show(page("Customer " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run", R(pid, rid)), crumb("Customers", R(pid, rid) + "/customers"), person)),
-  v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map(fieldTitle).join(", ") + ". The golden record shows the best-supported value.") : null,
-  el("h2", { class: "section" }, "Golden record"), golden.length ? kv(golden) : empty("No values."),
+  show(page(W().One + " " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run", R(pid, rid)), crumb(W().Many, R(pid, rid) + "/customers"), person)),
+  v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map((f) => ((v.own || []).find((o) => "extra_" + o.name === f) || { title: fieldTitle(f) }).title).join(", ") + ". The golden record shows the best-supported value.") : null,
+  el("h2", { class: "section" }, "Golden record"),
+  golden.length || (v.own || []).some((o) => o.value != null) ? kv([...(v.own || []).filter((o) => o.value != null).map((o) => [o.title, String(o.value)]), ...golden]) : empty("No values."),
   Object.keys(v.extra || {}).length ? [el("h3", { class: "section" }, "Other columns from the sources"), kv(Object.entries(v.extra).map(([k, val]) => [label(k), String(val)]))] : null,
   el("h2", { class: "section" }, "Source records"),
-  table([...(writer && v.records.length > 1 ? [""] : []), "Source", "Record", "Name as written", "Date of birth", "Mobile", "Email", "City"], rows),
-  writer && v.records.length > 1 ? el("div", { class: "row" }, btn("Split the ticked records into a new person", split, "", "split"),
-    el("span", { class: "muted" }, "Use this when records of two different people were merged.")) : null);
+  table([...(writer && v.records.length > 1 ? [""] : []), "Source", "Record", ...recTitles], rows),
+  writer && v.records.length > 1 ? el("div", { class: "row" }, btn("Split the ticked records into a new " + W().person, split, "", "split"),
+    el("span", { class: "muted" }, "Use this when records of two " + W().diff.toLowerCase() + " were merged.")) : null);
 }
 
 // ---- decisions: what was decided, what became of it, and undo -------------------------------------------------------------------

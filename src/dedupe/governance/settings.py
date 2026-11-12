@@ -25,6 +25,8 @@ class MatchingSettings(BaseModel):
     # comparison -> level (as worded in the model, or "*" for all) -> bits: a weight set by hand instead of learned ({"phone": {"*": 0}}
     # means the phone never counts)
     fixed_weights: dict[str, dict[str, float]] = Field(default_factory=dict)
+    # what one record of this project is called on screen ("vendor", "product"); empty = customer for person data, record otherwise
+    record_name: str = Field("", max_length=30, pattern=r"^[A-Za-z][A-Za-z ]*$|^$")
     compare_within_source: bool = True                   # False: only records of different sources are compared (linking two files)
 
     @field_validator("blocking_rules")

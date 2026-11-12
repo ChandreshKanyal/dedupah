@@ -144,7 +144,7 @@ async function viewRun(pid, rid, tab) {
   const [r, runs] = await Promise.all([api("GET", R(pid, rid)), can("runs.read") ? api("GET", P(pid) + "/runs?limit=1000") : [], refreshCache()]);
   const going = r.status === "running" || r.status === "queued";
   const okRun = r.status === "succeeded";
-  const tabList = okRun ? [["overview", "Overview"], ...(can("results.export") ? [["results", "Results"]] : []), ...(can("person.read") ? [["customers", "Customers"]] : [])] : [];
+  const tabList = okRun ? [["overview", "Overview"], ...(can("results.export") ? [["results", "Results"]] : []), ...(can("person.read") ? [["customers", wordsOf(pid).Many]] : [])] : [];
   if (!tabList.some(([k]) => k === tab)) tab = "overview";
   here(R(pid, rid) + (tab === "overview" ? "" : "/" + tab));
   const title = runTitle(r, runs);
@@ -177,7 +177,7 @@ async function viewRun(pid, rid, tab) {
     return;
   }
   const stale = r.latest_run_id && r.latest_run_id !== rid ? el("div", { class: "notice warn", role: "note" },
-    el("strong", {}, "A newer run has finished. "), "This run's customers and results are out of date. Decisions made from it still count, but review in the newest run.",
+    el("strong", {}, "A newer run has finished. "), "This run's results are out of date. Decisions made from it still count, but review in the newest run.",
     el("div", { class: "row" }, btn("Open the newest run", () => go(() => viewRun(pid, r.latest_run_id, tab)), "small primary"))) : null;
   let body;
   if (tab === "overview") body = el("div", {}, runOverview(r, pid), el("details", { class: "advanced" }, el("summary", {}, "Details: what it read, data quality, timings"),
@@ -189,7 +189,7 @@ async function viewRun(pid, rid, tab) {
 // The results of one finished run, right on the run page: each file with one Download menu (formats, or into a database).
 async function runResults(pid, rid) {
   if (!can("results.export")) {
-    return empty("Your role cannot take results out of the portal. You can still look customers up under Customers. Ask an administrator for the results.export permission if you need files.");
+    return empty("Your role cannot take results out of the portal. You can still look them up in the portal. Ask an administrator for the results.export permission if you need files.");
   }
   const p = await api("GET", P(pid));
   const refresh = () => go(() => viewRun(pid, rid, "results"));
@@ -204,22 +204,22 @@ async function customersPanel(pid, rid, st) {
   const r = await api("GET", R(pid, rid) + "/datasets/golden_records/rows?limit=" + size + "&offset=" + st.offset + "&q=" + encodeURIComponent(st.q));
   const wrap = el("div");
   const again = (patch) => run(async () => wrap.replaceWith(await customersPanel(pid, rid, { ...st, ...patch })));
-  const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: "Name, person ID, whole mobile number or email", class: "wide-search" });
+  const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: wordsOf(pid).own ? "ID, whole mobile number or email" : "Name, person ID, whole mobile number or email", class: "wide-search" });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") again({ q: q.value.trim(), offset: 0 }); });
   // the sources' own columns (a project's own fields among them) come after the built-in ones: a company or a product has no name or birth date
   const extras = r.columns.filter((c) => c.startsWith("extra_")).slice(0, 4);
   const cols = [...CUSTOMER_COLUMNS.slice(0, -2), ...extras, ...CUSTOMER_COLUMNS.slice(-2)].map((c) => [c, r.columns.indexOf(c)]).filter(([, i]) => i >= 0);
-  const TITLES = { person_id: "Person ID", record_count: "Records", sources: "Sources", ...Object.fromEntries(extras.map((c) => [c, cap(label(c.slice(6)))])) };
+  const TITLES = { person_id: wordsOf(pid).own ? "ID" : "Person ID", record_count: "Records", sources: "Sources", ...Object.fromEntries(extras.map((c) => [c, cap(label(c.slice(6)))])) };
   const cell = (c, v) => (v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v));
   const last = Math.min(st.offset + size, r.total);
   add(wrap, el("div", { class: "row", role: "search" }, q, btn("Search", () => again({ q: q.value.trim(), offset: 0 }), "", "search"),
     st.q ? btn("Clear", () => again({ q: "", offset: 0 }), "ghost") : null),
-  r.masked.length ? el("p", { class: "hint" }, "Phone numbers, emails and identifiers are masked here; open a customer to see more. A search by mobile or email needs the whole value.") : null,
+  r.masked.length ? el("p", { class: "hint" }, "Phone numbers, emails and identifiers are masked here; open a " + wordsOf(pid).one + " to see more. A search by mobile or email needs the whole value.") : null,
   r.rows.length ? table(cols.map(([c]) => (c === "record_count" ? [TITLES[c]] : TITLES[c] || fieldTitle(c))), r.rows.map((row) => {
     const id = row[r.columns.indexOf("person_id")];
     return linkRow(id, () => viewPerson(pid, rid, id), cols.slice(1).map(([c, i]) => el("td", { class: c === "record_count" ? "num" : null }, cell(c, row[i]))));
-  })) : empty(st.q ? "No customer matches " + st.q + "." : "No customers."),
-  r.total ? el("div", { class: "pager" }, el("span", { class: "muted" }, num(st.offset + 1) + " to " + num(last) + " of " + plural(r.total, "customer", "customers")),
+  })) : empty(st.q ? "No " + wordsOf(pid).one + " matches " + st.q + "." : "No " + wordsOf(pid).many + "."),
+  r.total ? el("div", { class: "pager" }, el("span", { class: "muted" }, num(st.offset + 1) + " to " + num(last) + " of " + plural(r.total, wordsOf(pid).one, wordsOf(pid).many)),
     st.offset > 0 ? btn("Previous", () => again({ offset: Math.max(0, st.offset - size) }), "small", "prev") : null,
     last < r.total ? btn("Next", () => again({ offset: st.offset + size }), "small", "next") : null) : null);
   return wrap;
@@ -267,12 +267,12 @@ const ODDITY = {
 function runOverview(r, pid) {
   const s = r.summary;
   const j = s.judgments;
-  const sentence = num(s.records) + " records became " + plural(s.people, "customer", "customers") + ": " + plural(s.auto_merged_pairs, "pair was", "pairs were") +
+  const sentence = num(s.records) + " records became " + plural(s.people, wordsOf(pid).one, wordsOf(pid).many) + ": " + plural(s.auto_merged_pairs, "pair was", "pairs were") +
     " merged automatically, and " + plural(s.review_items, "pair waits", "pairs wait") + " for a person.";
-  const big = s.oversize_people ? el("div", { class: "notice warn", role: "note" }, plural(s.oversize_people, "customer has", "customers have") +
+  const big = s.oversize_people ? el("div", { class: "notice warn", role: "note" }, plural(s.oversize_people, wordsOf(pid).one + " has", wordsOf(pid).many + " have") +
     " unusually many records (the largest " + num(s.largest_person) + "). A shared office phone, an agent's email or a default identifier can join " +
-    "different people: open them under Customers and split any that are not one person.") : null;
-  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat("Customers", num(s.people)),
+    wordsOf(pid).diff.toLowerCase() + ": open them under " + wordsOf(pid).Many + " and split any that are not one " + wordsOf(pid).person + ".") : null;
+  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat(wordsOf(pid).Many, num(s.people)),
     stat("Merged automatically", num(s.auto_merged_pairs)), stat("Sent to a person", num(s.review_items), can("queue.read") ? link("/review/" + pid) : null))];
   if (j && j.judgments_applied_to_run) {
     parts.push(el("h2", { class: "section" }, "Decisions by people this run applied"),

@@ -24,6 +24,15 @@ function runTitle(r, runs) {
   const i = (runs || []).findIndex((x) => x.id === r.id);
   return (i < 0 ? "Run" : "Run " + (runs.length - i)) + " \u00b7 " + shortWhen(r.started_at || r.created_at);
 }
+// What one record of a project is called. A project about people keeps the usual words (customer, person); one that matches on its own
+// fields says "record", or the word chosen under Fields and search ("vendor").
+const manyOf = (w) => (/[^aeiou]y$/.test(w) ? w.slice(0, -1) + "ies" : /(s|x|ch|sh)$/.test(w) ? w + "es" : w + "s");
+function wordsOf(pid) {
+  const w = (cache.projects.find((p) => p.id === pid) || {}).record_word;
+  if (!w) return { own: false, one: "customer", many: "customers", One: "Customer", Many: "Customers", same: "Same person", diff: "Different people", person: "person", people: "people", Person: "Person" };
+  const many = manyOf(w);
+  return { own: true, one: w, many, One: cap(w), Many: cap(many), same: "Same " + w, diff: "Different " + many, person: w, people: many, Person: cap(w) };
+}
 const LOAD_WORDS = { incremental: "Only what changed (faster)", full: "Everything again" };
 
 // A change someone declined: who, why, and that the person who proposed it can change it and save again. Null when the newest version was not declined.

@@ -51,7 +51,7 @@ function setupSummary(content, cat) {
       weights.length ? el("ul", { class: "changes" }, weights.flatMap(([c, ls]) => Object.entries(ls).map(([lv, bits]) =>
         el("li", {}, compTitle(c) + ", " + (lv === "*" ? "every level" : "“" + lv + "”") + ": " + (bits === 0 ? "never counts" : bits)))))
         : el("p", { class: "muted" }, "None: every weight is learned from the data.")),
-    step(4, "Limits", null, kv(LIMITS.map(([k, text]) => [text, String(content[k])]))));
+    step(4, "Words and limits", null, kv([["One record is called", content.record_name || (fields.length ? "record" : "customer")], ...LIMITS.map(([k, text]) => [text, String(content[k])])])));
 }
 // One own field as a row of controls. `f` is edited in place; `changed` redraws what depends on the list of fields.
 function ownFieldRow(f, isNew, changed, remove) {
@@ -193,6 +193,7 @@ function setupForm(content, cat, propose, cancel, opts) {
     const input = el("input", { type: "number", min: String(min), max: String(max), step: String(stepBy), value: String(state[k]), class: "pct" });
     return [k, input, field(text, input)];
   });
+  const recordName = el("input", { type: "text", maxlength: "30", value: state.record_name || "", class: "narrow-input" });
   drawFields();
   others();
   // ---- experts and saving
@@ -202,6 +203,7 @@ function setupForm(content, cat, propose, cancel, opts) {
     for (const w of weights) (fixed[w.c] = fixed[w.c] || {})[w.lv] = w.bits;
     const out = { ...state, blocking_rules: cat.search.built_in.map((r) => r.name).filter((n) => builtIn.has(n)), fixed_weights: fixed, compare_within_source: !across.checked };
     for (const [k, input] of limits) out[k] = Number(input.value);
+    out.record_name = recordName.value.trim();
     return out;
   };
   const editor = el("textarea", { spellcheck: "false", rows: "14", class: "code" });
@@ -216,6 +218,7 @@ function setupForm(content, cat, propose, cancel, opts) {
     if (json.open) {
       try { out = JSON.parse(editor.value); } catch (_) { fail(err, "That is not valid JSON.", editor); return; }
     } else {
+      if (!/^[A-Za-z ]*$/.test(recordName.value.trim())) { fail(err, "The word for one record is letters only.", recordName); return; }
       if (state.custom_fields.some((f) => !ownTitle(f))) { fail(err, "Give every field of your own a name."); return; }
       if (weights.some((w) => !Number.isFinite(w.bits) || Math.abs(w.bits) > 30)) { fail(err, "A weight set by hand is a number between -30 and 30."); return; }
       out = current();
@@ -241,7 +244,9 @@ function setupForm(content, cat, propose, cancel, opts) {
     step(3, "Weights set by hand", "Normally the engine learns from your data how much each agreement counts. A weight here replaces what it learns: " +
       "0 means it never counts, a positive number counts for a match, a negative one against (between -30 and 30; a shared PAN counts 13).",
     weightList, el("div", { class: "row" }, btn("Set a weight", () => { weights.push({ c: comps()[0][0], lv: "*", bits: 0 }); drawWeights(); }, "", "plus"))),
-    step(4, "Limits", "Change these together with your administrator.", el("div", { class: "fields" }, limits.map((l) => l[2]))),
+    step(4, "Words and limits", "Change the limits together with your administrator.",
+      field("What one record is called on screen (for example: vendor, product). Leave empty for \u201ccustomer\u201d, or \u201crecord\u201d when the project has fields of its own", recordName),
+      el("div", { class: "fields" }, limits.map((l) => l[2]))),
     json, saveBar(why, err, save, cancel, opts));
 }
 // Mapping screen: a new field of the project's own, made while mapping a column. Saves the project's settings with the field added and

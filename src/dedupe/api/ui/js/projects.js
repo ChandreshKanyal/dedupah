@@ -176,13 +176,13 @@ async function projectJourney(p, runs, connections) {
   // the next step: one sentence and the main button of the page
   const NEXT = {
     data: ["Add the data to find duplicates in: files or databases.", can("sources.manage") || can("config.read") ? ["Add data", () => go(() => viewProject(pid, "setup", "data")), "database"] : null],
-    rules: ["Choose " + (missingRules === "golden" ? "how the one clean record per customer is built." : "when two records are the same customer."),
+    rules: ["Choose " + (missingRules === "golden" ? "how the one clean record per " + wordsOf(pid).one + " is built." : "when two records are the same " + wordsOf(pid).one + "."),
       can("config.read") ? ["Choose rules", () => go(() => viewProject(pid, "setup", missingRules || "matching")), "sliders"] : null],
     run: can("runs.start") ? ["Data and rules are set. Start the first run to find the duplicates.", ["Start run", () => quickRun(pid), "play"]]
       : ["Data and rules are set. Someone who can start runs starts the first one.", null],                       // U2-25
     running: ["A run is going. This page shows the result when it is done.", latest ? ["Open the run", openRun(latest), "clock"] : null],
     failed: ["The last run did not finish. Open it to see why, then run again.", latest ? ["Open the run", openRun(latest), "alert"] : null],
-    review: [plural(pr.open_review, "pair needs", "pairs need") + " your decision: same customer or not.", can("queue.read") ? ["Review " + plural(pr.open_review, "pair", "pairs"), link("/review/" + pid), "inbox"] : null],
+    review: [plural(pr.open_review, "pair needs", "pairs need") + " your decision: the same " + wordsOf(pid).one + " or not.", can("queue.read") ? ["Review " + plural(pr.open_review, "pair", "pairs"), link("/review/" + pid), "inbox"] : null],
     done: ["Up to date. Run again when the data or the rules change.", done && can("results.export") ? ["Get the results", () => go(() => viewProject(pid, "results", "files")), "download"] : null],
   }[pr.step] || ["", null];
   const nextBar = el("div", { class: "next-step" }, el("div", {}, el("span", { class: "muted" }, "Next step"), el("strong", {}, NEXT[0])),
@@ -205,15 +205,15 @@ async function projectJourney(p, runs, connections) {
       st.cfg.decision.waiting.length + st.cfg.survivorship.waiting.length ? el("div", { class: "muted" }, "Changes wait for approval.") : null] : [],
     [st ? btn("Matching rules", () => go(() => viewProject(pid, "setup", "matching"))) : null, st ? btn("Golden record", () => go(() => viewProject(pid, "setup", "golden"))) : null,
       st ? btn("Fields and search", () => go(() => viewProject(pid, "setup", "technical"))) : null]),
-    row(3, "Run", [latest ? (latest.status === "succeeded" ? runTitle(latest, runs) + ": " + num(latest.summary.records) + " records became " + num(latest.summary.people) + " customers."
+    row(3, "Run", [latest ? (latest.status === "succeeded" ? runTitle(latest, runs) + ": " + num(latest.summary.records) + " records became " + num(latest.summary.people) + " " + wordsOf(pid).many + "."
       : el("div", {}, runTitle(latest, runs) + ": ", runState(latest))) : "No run yet.",
     runs.length > 1 ? el("div", { class: "muted" }, plural(runs.length, "run", "runs") + " so far.") : null],
     [latest ? btn("Open", openRun(latest)) : null, can("runs.start") && st && st.ready && pr.step !== "running" ? btn(latest ? "Run again" : "Start run", () => quickRun(pid), "", "play") : null]),
     row(4, "Review", [done ? (box && box.open ? plural(box.open, "pair waits", "pairs wait") + " for a person." : "Nothing waits for a person.") : "Pairs a person must check appear after the first run.",
-      box && box.waiting_for_run ? el("div", { class: "muted" }, plural(box.waiting_for_run, "decision is", "decisions are") + " made and change the customers at the next run.") : null],
+      box && box.waiting_for_run ? el("div", { class: "muted" }, plural(box.waiting_for_run, "decision is", "decisions are") + " made and change the " + wordsOf(pid).many + " at the next run.") : null],
     [done && can("queue.read") ? btn("Review", link("/review/" + pid)) : null, done && can("queue.read") ? btn("Decisions made", link("/review/" + pid + "/decided")) : null]),
-    row(5, "Results", [done ? num(done.summary.people) + " customers, one clean record each, from " + runTitle(done, runs) + "." : "The customers and their clean records appear after the first run."],
-      [done && can("person.read") ? btn("Find a customer", () => go(() => viewRun(pid, done.id, "customers")), "", "search") : null,
+    row(5, "Results", [done ? num(done.summary.people) + " " + wordsOf(pid).many + ", one clean record each, from " + runTitle(done, runs) + "." : "The " + wordsOf(pid).many + " and their clean records appear after the first run."],
+      [done && can("person.read") ? btn("Find a " + wordsOf(pid).one, () => go(() => viewRun(pid, done.id, "customers")), "", "search") : null,
       done && can("results.export") ? btn("Get the results", () => go(() => viewProject(pid, "results", "files")), "", "download") : null]),
   ];
   return el("div", {}, bar, nextBar, el("div", { class: "panel journey-steps" }, rows));

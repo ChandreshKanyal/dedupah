@@ -69,7 +69,7 @@ def test_a_person_is_masked_by_default_for_everyone(api, output):
         assert r.status_code == 200 and output["pan"] not in r.text, role                 # the full PAN appears nowhere in the response
         v = r.json()
         assert v["unmasked"] is False and v["golden"]["pan"].startswith("*") and v["golden"]["pan"].endswith(output["pan"][-3:])
-        assert set(v) == {"person_id", "golden", "record_count", "sources", "conflict_fields", "records", "extra", "unmasked"}   # extra: masked extra source columns
+        assert set(v) == {"person_id", "golden", "record_count", "sources", "conflict_fields", "records", "extra", "own", "unmasked"}   # extra: masked extra source columns; own: the project's own fields
 
 
 def test_unmasking_needs_permission_and_is_logged_without_the_data(api, output):

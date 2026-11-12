@@ -190,3 +190,26 @@ def test_nothing_a_user_types_reaches_a_query_unchecked():
                       [{"name": "r", "parts": [{"field": "b", "how": "prefix", "chars": 4}, {"field": "a"}]}])
     sql = " ".join([r.sql for r in spec.blocking] + [lv.sql for c in spec.comparisons for lv in c.levels])
     assert "'" not in sql.replace("' '", "").replace("'|'", "").replace("'day'", "").replace("'T|'", "").replace("'F|'", "")
+
+
+def test_a_reviewer_sees_the_projects_own_fields_of_each_record(tmp_path):
+    from sqlalchemy import create_engine
+
+    from dedupe.review.service import ReviewPolicy, ReviewService
+    from dedupe.store.judgments import JudgmentStore
+    store = JudgmentStore(create_engine(f"sqlite:///{tmp_path / 'j.db'}"))
+    rows, _ = _companies()
+    run_pipeline(PipelineConfig(_sources(tmp_path, rows), tmp_path / "work", custom_fields=FIELDS))
+    work = tmp_path / "work"
+    pid = crypto.connect().execute(f"SELECT cluster_id FROM {crypto.rp(work / 'clusters' / 'clusters.parquet')} GROUP BY 1 HAVING count(*) > 1 LIMIT 1").fetchone()[0]
+    names = {f["name"]: f for f in FIELDS}
+    text = next(n for n, f in names.items() if f.get("kind") in ("company", "text"))
+    code = next(n for n, f in names.items() if f.get("kind") == "code")
+    seen = ReviewService(work, store).person(pid)
+    assert {o["name"] for o in seen["own"]} == set(names) and all(set(r["own"]) == set(names) for r in seen["records"])
+    assert all(r["own"][text] and "*" not in r["own"][text] for r in seen["records"])                  # a name is read, as a person's name is
+    coded = [r["own"][code] for r in seen["records"] if r["own"][code]]
+    assert all(c.startswith("*") for c in coded)                                                         # a code is masked like an identifier
+    assert not {"extra_" + n for n in names} & {"extra_" + k for k in seen["extra"]}                     # not listed twice
+    opened = ReviewService(work, store, ReviewPolicy(reveal_sensitive=True)).person(pid, reveal=True)
+    assert all("*" not in (r["own"][code] or "") for r in opened["records"])

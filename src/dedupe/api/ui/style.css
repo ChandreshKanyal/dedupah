@@ -344,6 +344,7 @@ input.pct { max-width: 120px; }
 .own-tolerance { display: flex; align-items: flex-end; gap: 8px; }
 .own-tolerance select { width: auto; margin-bottom: 4px; }
 .check-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 4px 16px; margin-top: 8px; }
+input.narrow-input { max-width: 280px; }
 h4.sub { margin: 16px 0 2px; font-size: 13px; }
 
 .id-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 10px; }

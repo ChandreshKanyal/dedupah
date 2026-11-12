@@ -77,6 +77,7 @@ class PipelineConfig:
     custom_blocking: list = field(default_factory=list)
     fixed_weights: dict = field(default_factory=dict)
     compare_within_source: bool = True
+    record_name: str = ""                       # what one record is called on screen (portal wording only)
 
 
 class _Meter:

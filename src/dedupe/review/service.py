@@ -29,6 +29,13 @@ from dedupe.survivorship.config import GOLDEN_FIELDS
 
 SENSITIVE = ("customer_number", "pan", "mobile", "mobile_alt", "email", "passport_no", "dl_no", "voter_id", "aadhaar_token", "aadhaar_last4")
 MAX_PAIRS_PER_ACTION = 500
+# own fields of these kinds are masked like the built-in identifiers; the others (a company name, an amount, a date) are shown like names and
+# birth dates are: a person deciding a pair has to read them
+MASKED_KINDS = ("code", "phone", "email")
+
+
+def _mask_own(field, v, reveal: bool):
+    return v if v is None or reveal or field.kind not in MASKED_KINDS else ("*" * max(len(str(v)) - 3, 0)) + str(v)[-3:]
 
 
 class ReviewError(ValueError):
@@ -68,6 +75,11 @@ class ReviewService:
     def comparisons(self) -> tuple:
         """What this run compared: the built-in fields plus the project's own (read from the run's settings)."""
         return spec_of_run(self.work).comparisons
+
+    @cached_property
+    def own_fields(self) -> tuple:
+        """The project's own fields of this run (dedupe.custom.CustomField)."""
+        return spec_of_run(self.work).custom
 
     def _con(self):
         return crypto.connect()
@@ -180,8 +192,11 @@ class ReviewService:
         ids = sorted({i[k] for i in items for k in ("cluster_l", "cluster_r")})
         if not ids:
             return
+        # a project matching on its own fields has no person's name: its first text field of a readable kind names the record instead
+        label = next((f"extra_{f.name}" for f in self.own_fields if f.kind in ("company", "text", "name")), None)
+        name = f"coalesce(full_name, {label})" if label else "full_name"
         try:
-            rows = con.execute(f"SELECT cluster_id, full_name, city FROM {crypto.rp(self.f['gold'])} WHERE cluster_id IN (SELECT unnest(?))", [ids]).fetchall()
+            rows = con.execute(f"SELECT cluster_id, {name}, city FROM {crypto.rp(self.f['gold'])} WHERE cluster_id IN (SELECT unnest(?))", [ids]).fetchall()
         except duckdb.Error:
             return
         names = {c: (n, city) for c, n, city in rows}
@@ -211,16 +226,21 @@ class ReviewService:
         golden = {k: (v if reveal else _mask(k, v)) for k, v in zip(gcols, g, strict=True) if k in GOLDEN_FIELDS and v is not None} if g else {}
         meta = dict(zip(gcols, g, strict=True)) if g else {}
         # the sources' own extra columns: what they hold is unknown, so they are masked like identifiers unless revealed
-        extra = {k[6:]: (v if reveal else ("*" * max(len(str(v)) - 3, 0)) + str(v)[-3:]) for k, v in meta.items() if k.startswith("extra_") and v is not None}
+        mine = {"extra_" + f.name: f for f in self.own_fields}
+        extra = {k[6:]: (v if reveal else ("*" * max(len(str(v)) - 3, 0)) + str(v)[-3:]) for k, v in meta.items()
+                 if k.startswith("extra_") and k not in mine and v is not None}
+        own = [{"name": f.name, "title": f.label, "value": _mask_own(f, meta.get(k), reveal)} for k, f in mine.items()]
+        own_cols = "".join(f", s.{f.col}" for f in self.own_fields)
         recs = con.execute(f"""SELECT c.source_id, c.source_record_id, k.full_name, s.name_clean, s.dob, s.gender, s.mobile, s.email, k.address, s.city,
-                                      s.address_pin, s.pan, s.aadhaar_last4, s.passport_no, s.dl_no, s.voter_id
+                                      s.address_pin, s.pan, s.aadhaar_last4, s.passport_no, s.dl_no, s.voter_id{own_cols}
             FROM {crypto.rp(self.f['cl'])} c JOIN {crypto.rp(self.f['std'])} s USING (source_id, source_record_id)
             JOIN {crypto.rp(self.f['canon'])} k USING (source_id, source_record_id) WHERE c.cluster_id = ? ORDER BY 1, 2 LIMIT 50""", [person_id]).fetchall()
         rcols = ["source_id", "source_record_id", "name_as_written", "name_clean", "dob", "gender", "mobile", "email", "address", "city", "pincode",
                  "pan", "aadhaar_last4", "passport_no", "dl_no", "voter_id"]
-        records = [{k: (v if reveal else _mask(k, v)) for k, v in zip(rcols, r, strict=True)} for r in recs]
+        records = [{**{k: (v if reveal else _mask(k, v)) for k, v in zip(rcols, r, strict=False)},
+                    "own": {f.name: _mask_own(f, v, reveal) for f, v in zip(self.own_fields, r[len(rcols):], strict=True)}} for r in recs]
         return {"person_id": person_id, "golden": golden, "record_count": meta.get("record_count", len(records)), "sources": meta.get("sources"),
-                "conflict_fields": meta.get("conflict_fields", []), "records": records, "extra": extra}
+                "conflict_fields": meta.get("conflict_fields", []), "records": records, "extra": extra, "own": own}
 
     def explain(self, person_l: str, person_r: str, reveal: bool = False) -> dict:
         """Side-by-side view for deciding a pair: both people, the strongest record pair's evidence ('for' and 'against'), hard conflicts."""

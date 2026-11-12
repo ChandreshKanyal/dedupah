@@ -3,14 +3,14 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-12, session 5: own fields work end to end in the portal; next: learn from decisions) <<<
+## >>> RESUME HERE (latest state: 2026-11-12, session 5: own fields work end to end in the portal, Review included; next: learn from decisions) <<<
 
-**2026-11-12 (sections 96, 97):** the user wants a versatile engine with full control, like the top tools. Done: a project's own fields in
-the engine (`dedupe/custom`, settings `custom_fields`, `custom_blocking`, `fixed_weights`, `compare_within_source`; mapping `custom`) and in
-the portal (mapping screen, "Fields and search" page = `ui/js/fields.js`, own fields in matching rules, save-time checks, starter rules).
-Next (confirm first): Review screen check with own fields; neutral words instead of "person/customer" for non-person projects; then
-learning from steward decisions, a match-one-record API, scale. The preview container needs `-v "$PWD/configs:/app/configs:ro"` (old
-configs are baked into the image). Read sections 96 and 97 first.
+**2026-11-12 (sections 96-98):** the user wants a versatile engine with full control, like the top tools. Done: a project's own fields in
+the engine (`dedupe/custom`, settings `custom_fields`, `custom_blocking`, `fixed_weights`, `compare_within_source`, `record_name`; mapping
+`custom`) and in the portal (mapping screen, "Fields and search" page = `ui/js/fields.js`, own fields in matching rules, save-time checks,
+starter rules, Review and results show own fields, words follow the project via `wordsOf`). Next (confirm first): learning from steward
+decisions, a match-one-record API, scale; small leftovers in section 98. The preview container runs on 8001 with
+`-v "$PWD/configs:/app/configs:ro"` (old configs are baked into the image). Read sections 96-98 first.
 
 **Where we are (2026-11-05).** The whole-portal revamp is complete (sections 76-83). **Every finding of the agent review is now closed**
 (summaries in `~/agent-review/*/report-summary.txt`): platform P1-01..15 (sections 75, 84-88), engine input E1-01..17 (75, 89, 93, 94),
@@ -2324,3 +2324,28 @@ portal still says "person" and "customer" everywhere, also for vendors or produc
 the mapping screen suggests Full name for a company-name column instead of offering an own field; a fresh field's levels are not offered
 for a hand-set weight until the settings are saved once. **The live image (`dedupah-api`) has an old `configs/` baked in: the preview
 container must mount `configs/` (or the image be rebuilt).** All results are synthetic.
+
+## 98. Review with own fields; the portal's words follow the project (2026-11-12, session 5)
+
+**Found in the browser:** the Review screen showed a vendor pair as phone and city only: the fields the project matches on were missing, so
+a reviewer could not decide.
+
+**What was built:**
+- `ReviewService.person`: `own` (the golden value of each own field: name, title, value) and, per source record, `own` (the cleaned value
+  by field name). Codes, phones and emails are masked like identifiers unless revealed; names, texts, numbers, dates and categories are
+  shown, as a person's name and birth date are. Own fields are no longer repeated under "Other columns". The work list names a pair by the
+  first own text field when there is no person's name. Evidence entries carry the field's title ("Company name", not "x company name").
+- Review screens (`review.js`): own fields lead the side-by-side table, the records tables and the single-record page; built-in columns
+  nobody filled are left out when the project has own fields.
+- **Words:** settings `record_name` ("vendor"; set under Fields and search, step "Words and limits"). `ProjectView.record_word` = that word,
+  else "record" when the project has own fields, else nothing (customer / person as before). `wordsOf(pid)` in `words.js`; used on Home,
+  the project page, run page and list, Review ("Same vendor", "Different vendors", "Vendor A"), results cards.
+- **Bug fixed before it shipped:** `PipelineConfig` lacked `record_name`, so any run of a project with saved settings would have failed.
+
+**Checked in a browser** (`~/agent-review/own/` a6-a8; 127 synthetic vendor records with 14 doubtful rows added): 6 pairs in Review with
+company name, GSTIN (masked) and turnover side by side; "Same vendor" decided; the next run applied it (81 -> 80 vendors); 0 problems.
+Tests: 1 new (what a reviewer sees, masking by kind); suite 576 passed, 4 skipped (the allow-list test of the person view now names `own`); ruff clean.
+
+**Not done / weaknesses:** the Decided list, activity log and admin approvals still say "Same person"; households are still built for
+non-person projects; the simple plural rule ("vendor" -> "vendors") will be wrong for irregular words; the list search does not look into
+own columns; the mapping screen still suggests Full name for a company-name column. All results are synthetic.

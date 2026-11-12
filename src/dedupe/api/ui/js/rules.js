@@ -5,7 +5,7 @@
 // history folded away. The editor opens only when someone presses "Change the rules".
 const CONFIGS = [["decision", "Matching rules"], ["survivorship", "Golden record"], ["settings", "Fields and search"]];
 const CONFIG_INTRO = {
-  decision: "How the engine decides whether two records belong to the same person.",
+  decision: "How the engine decides whether two records are the same.",
   survivorship: "Which value a person's golden record keeps when their records disagree.",
   settings: "What is compared beside the built-in customer fields, and how the engine finds the pairs it compares.",
 };

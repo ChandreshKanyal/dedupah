@@ -70,6 +70,7 @@ class RecordView(BaseModel):
     passport_no: str | None = None
     dl_no: str | None = None
     voter_id: str | None = None
+    own: dict[str, Any] = {}            # the project's own fields of this record (cleaned), by field name
 
 
 class PersonView(BaseModel):
@@ -80,11 +81,13 @@ class PersonView(BaseModel):
     conflict_fields: list[str] = []
     records: list[RecordView]
     extra: dict[str, Any] = {}          # the sources' own extra columns in the golden record (masked unless revealed)
+    own: list[dict[str, Any]] = []      # the project's own fields: name, title, golden value (codes, phones and emails masked unless revealed)
     unmasked: bool = False
 
 
 class Contribution(BaseModel):
     comparison: str
+    title: str | None = None           # the name of one of the project's own fields
     level: str
     bits: float
 

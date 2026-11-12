@@ -8,7 +8,7 @@ async function resultsPanel(p, runs) {
     return el("div", {}, empty("Results appear here after a run has finished. Start a run first.", can("runs.start") ? btn("Start run", () => quickRun(p.id), "primary", "play") : null),
       await destinationsPanel(p, refresh));
   }
-  const pick = el("select", {}, done.map((r) => el("option", { value: r.id }, runTitle(r, runs) + " (" + plural(r.summary.people, "customer", "customers") + ")")));
+  const pick = el("select", {}, done.map((r) => el("option", { value: r.id }, runTitle(r, runs) + " (" + plural(r.summary.people, wordsOf(p.id).one, wordsOf(p.id).many) + ")")));
   const box = el("div");
   const load = () => run(async () => box.replaceChildren(...(await datasetCards(p, pick.value))));
   pick.addEventListener("change", load);
@@ -30,8 +30,8 @@ async function datasetCards(p, rid) {
   };
   const golden = info.datasets.find((d) => d.name === "golden_records");
   const others = info.datasets.filter((d) => d !== golden);
-  return [golden ? card(golden, "Customers, one clean record each", false) : null,
-    others.length ? el("details", { class: "advanced" }, el("summary", {}, "Other files: which record belongs to which customer, households"), others.map((d) => card(d, d.title, true))) : null]
+  return [golden ? card(golden, wordsOf(p.id).Many + ", one clean record each", false) : null,
+    others.length ? el("details", { class: "advanced" }, el("summary", {}, "Other files: which record belongs to which " + wordsOf(p.id).one + ", households"), others.map((d) => card(d, d.title, true))) : null]
     .filter(Boolean);
 }
 // A page of a result table on screen. Identifiers, contact details and extra columns stay masked until someone allowed to see them asks (logged).
