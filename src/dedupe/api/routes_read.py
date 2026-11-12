@@ -281,8 +281,16 @@ def _default_content(name: str) -> dict:
 @router.get(PROJ + "/config/{name}/default")
 def config_default(request: Request, name: ConfigName, project_id: str = PID, p: Principal = READ_CONFIG):
     """The built-in content, as a starting point for a project's first version."""
-    project_scope(request, project_id)
-    return {"name": name, "content": _default_content(name)}
+    ps = project_scope(request, project_id)
+    content = _default_content(name)
+    own = project_spec(ps.configs).custom if name == "decision" else ()
+    if own:
+        # A project that matches on its own fields: the person rules alone would never merge its records. Each identifier of its own
+        # decides like a PAN does, and the score decides the rest (sure pairs merge, doubtful ones go to a person).
+        content = {**content, "use_score": True, "rules": content["rules"] + [
+            {"id": f"match_own_{f.name}", "type": "auto_merge", "reason": f"{f.label} is the same", "when": {"comparison": f.col, "is": "identical"}}
+            for f in own if f.identifier]}
+    return {"name": name, "content": content}
 
 
 # What the no-code rule builder offers: each comparison with its outcomes in words (the same words the rules are written in).
@@ -302,6 +310,51 @@ def rules_catalogue(p: Principal = READ_CONFIG):
     return {"comparisons": comps, "rule_types": RULE_TYPES}
 
 
+# Built-in columns a project's own search rule may combine with its fields, in words
+BLOCK_COLUMNS = {"address_pin": "PIN code", "city": "City", "state": "State", "dob": "Date of birth", "dob_year": "Birth year", "name_last_phon": "Surname (by sound)",
+                 "name_first_phon": "First name (by sound)", "mobile": "Mobile", "email_key": "Email", "gender": "Gender", "customer_number": "Customer number"}
+
+
+def project_settings(configs) -> tuple[dict, bool]:
+    """The project's matching settings as they will be once everything waiting is in use (the newest version that was not declined), and
+    whether that version is in use already. Empty when the project never saved any."""
+    vs = [v for v in configs.versions("settings") if v.status in ("proposed", "approved", "active")]
+    return (configs.get("settings", vs[-1].version), vs[-1].status == "active") if vs else ({}, True)
+
+
+def project_spec(configs):
+    """The spec (dedupe.custom) of those settings; the built-in one when they cannot be read."""
+    from dedupe.custom import build_spec
+    from dedupe.scoring.comparisons import MatchSpec
+    s, _ = project_settings(configs)
+    try:
+        return build_spec(s.get("custom_fields"), s.get("custom_blocking"), s.get("fixed_weights"), s.get("compare_within_source", True))
+    except ValueError:
+        return MatchSpec()
+
+
+@router.get(PROJ + "/rules-catalogue")
+def project_rules_catalogue(request: Request, project_id: str = PID, p: Principal = READ_CONFIG):
+    """What the rule and field forms of one project offer: the built-in comparisons, the project's own fields (how two records can agree on
+    each, in words) and what a search rule can be made of. No data, only names the project chose."""
+    from dedupe.blocking.rules import ALL_RULES, DEFAULT_RULES
+    from dedupe.custom import KINDS
+    from dedupe.custom.fields import HOW
+    ps = project_scope(request, project_id)
+    spec = project_spec(ps.configs)
+    settings, in_use = project_settings(ps.configs)
+    own = {c.name for c in spec.comparisons} - {c["name"] for c in rules_catalogue(p)["comparisons"]}
+    comps = [{"name": c.name, "title": c.title or COMPARISON_TITLES.get(c.name, c.name), "own": c.name in own,
+              "levels": [lv.label for lv in c.levels] + [c.else_label]} for c in spec.comparisons]
+    in_rules = {part.get("field") for r in settings.get("custom_blocking") or [] for part in r.get("parts") or []}
+    finds = {f.name: bool(f.default_blocking()) or f.name in in_rules for f in spec.custom}     # can a rule on this field alone find anything
+    fields = [{"name": f.name, "comparison": f.col, "title": f.label, "kind": f.kind, "identifier": f.identifier,
+               "ways": [{"words": w, "levels": ls} for w, ls in f.ways()], "differs": "different", "finds_pairs": finds[f.name]} for f in spec.custom]
+    return {"comparisons": comps, "rule_types": RULE_TYPES, "own_fields": fields, "settings_in_use": in_use, "kinds": KINDS,
+            "search": {"built_in": [{"name": r.name, "title": r.description or r.name, "standard": r in DEFAULT_RULES} for r in ALL_RULES.values()],
+                       "how": HOW, "columns": BLOCK_COLUMNS}}
+
+
 @router.get(PROJ + "/golden-record-guide")
 def golden_record_guide(request: Request, project_id: str = PID, p: Principal = READ_CONFIG):
     """What the golden-record rules screen needs: the fields and strategies, the project's sources (their extra columns, whether a record
@@ -314,7 +367,8 @@ def golden_record_guide(request: Request, project_id: str = PID, p: Principal = 
         if act is None:
             continue
         c = act.content
-        sources.append({"id": c["source_id"], "attributes": list(c.get("attributes") or []), "record_date_mapped": "record_date" in (c.get("fields") or {})})
+        carried = list(dict.fromkeys([*(c.get("attributes") or []), *(c.get("custom") or {})]))      # a project's own fields are carried too
+        sources.append({"id": c["source_id"], "attributes": carried, "record_date_mapped": "record_date" in (c.get("fields") or {})})
     from dedupe.survivorship.config import EXTRA_NAME, extra_column
     names = sorted({a for s in sources for a in s["attributes"]})
     extras = [{"name": a, "column": extra_column(a), "carried": bool(EXTRA_NAME.fullmatch(a)),

@@ -70,6 +70,9 @@ def _sources(old: dict, new: dict) -> list[str]:
                 what.append(f"field {f}: {_show(x['fields'].get(f, '<unmapped>'))} -> {_show(y['fields'].get(f, '<unmapped>'))}")
         if x["attributes"] != y["attributes"]:
             what.append("carried-along columns changed")
+        for f in sorted(set(x.get("custom") or {}) | set(y.get("custom") or {})):
+            if (x.get("custom") or {}).get(f) != (y.get("custom") or {}).get(f):
+                what.append(f"own field {f}: {_show((x.get('custom') or {}).get(f, '<unmapped>'))} -> {_show((y.get('custom') or {}).get(f, '<unmapped>'))}")
         out += [f"source {sid!r}: {w}" for w in what]
     return out
 

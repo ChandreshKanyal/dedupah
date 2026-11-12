@@ -3,12 +3,14 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-12, session 5: the engine matches on any column; next: portal screens for it) <<<
+## >>> RESUME HERE (latest state: 2026-11-12, session 5: own fields work end to end in the portal; next: learn from decisions) <<<
 
-**2026-11-12 (section 96):** the user wants a versatile engine with full control, like the top tools. Done in the engine: a project's own
-fields (`dedupe/custom`, settings `custom_fields`, `custom_blocking`, `fixed_weights`, `compare_within_source`; mapping `custom`). Next:
-portal screens for these (mapping + rules page), save-time check of rules on custom fields, then learning from steward decisions, a
-match-one-record API, scale. Read section 96 first.
+**2026-11-12 (sections 96, 97):** the user wants a versatile engine with full control, like the top tools. Done: a project's own fields in
+the engine (`dedupe/custom`, settings `custom_fields`, `custom_blocking`, `fixed_weights`, `compare_within_source`; mapping `custom`) and in
+the portal (mapping screen, "Fields and search" page = `ui/js/fields.js`, own fields in matching rules, save-time checks, starter rules).
+Next (confirm first): Review screen check with own fields; neutral words instead of "person/customer" for non-person projects; then
+learning from steward decisions, a match-one-record API, scale. The preview container needs `-v "$PWD/configs:/app/configs:ro"` (old
+configs are baked into the image). Read sections 96 and 97 first.
 
 **Where we are (2026-11-05).** The whole-portal revamp is complete (sections 76-83). **Every finding of the agent review is now closed**
 (summaries in `~/agent-review/*/report-summary.txt`): platform P1-01..15 (sections 75, 84-88), engine input E1-01..17 (75, 89, 93, 94),
@@ -2286,3 +2288,39 @@ check a rule's level wording against the project's own fields at save time (only
 identifier blocks lose their chain links inside one source; values written without spaces ("Nimbusvertex") are not found by blocking;
 households and person-specific cleaning still assume people. Next candidates: learning from steward decisions (as Zingg, Tamr, dedupe do), a
 match-one-record API (Senzing, Reltio), scale beyond 1M records.
+
+## 97. Portal: a project's own fields, search rules and weights on screen (2026-11-12, session 5)
+
+**Why:** section 96 made the engine match on any column, but only through settings files. The user wants full control from the portal.
+
+**What was built:**
+- **Mapping screen** (`data.js`): the Use as list has a group "Your own fields" and "A new field of your own..." (a small box: name, kind,
+  identifier for a code). The new field is saved into the project's settings at once (in use at once in a one-person project). The source
+  page, the coverage table and the preview count show own fields.
+- **Fields and search page** (was "Technical settings"; new file `ui/js/fields.js`, loaded after `rules`): a form instead of JSON. 1 Your
+  own fields (name, kind, per-kind options: identifier, words to leave out, tolerance, find pairs by this field, rare values count more);
+  2 How pairs are found (different sources only, search rules of your own as columns + what must be the same, built-in rules as tick boxes);
+  3 Weights set by hand; 4 Limits; JSON for experts. Read-only summary for people who cannot change it. A button on the project page (Rules row).
+- **Matching rules page**: own fields are columns of a rule ("Company name has the same words, small spelling slips allowed"), also in
+  "Never the same when". The words come from the engine (`CustomField.ways()`).
+- **API:** `GET /projects/{id}/rules-catalogue` (built-in comparisons + the project's own fields with their ways to agree, search-rule
+  building blocks; from the newest settings version that was not declined). Saving matching rules checks them under the project's fields:
+  a wrong level on an own field is refused in words at save time (was: only at run time). Settings refusals are the engine's own sentences
+  ("two fields of the project have the same name") instead of `value_error`. Dry run uses the fields of the run it compares with.
+- **Starter rules:** a project with own fields starts from the standard rules plus "<identifier> is the same" for each identifier of its
+  own, and with the score on (sure pairs merge, doubtful ones go to a person); person-only projects are unchanged.
+- **Engine fix found in the browser:** a "not enough evidence" rule saved before the project had own fields (every existing project, and
+  images with an old `configs/decision_default.json`) rejected every pair without person data. `decide` now adds "and none of the own
+  fields agree" to such a rule unless the rule itself names own fields.
+- **Customers list:** shows up to four of the sources' own columns (masked like identifiers), so a vendor list is not just phone and city.
+
+**Checked in a browser** (sandbox `sbx-ui`, scripts and files in `~/agent-review/own/`: a1 mapping, a2/a3 forms, a4 run, a5 results; two
+synthetic vendor files, 113 records): three own fields made while mapping, second file mapped onto them, starter rules used as they are,
+run: 38 of 38 duplicate vendors merged (12 by GSTIN rule, 26 by score), 0 wrong, 0 console or HTTP problems. `reset_sandbox.sh` now mounts
+`configs/` too. Tests: 1 new API test, 1 new engine test; suite 575 passed, 4 skipped; ruff clean.
+
+**Not done / weaknesses:** the Review screen was not exercised with own fields in a browser (this data set sent nothing to review); the
+portal still says "person" and "customer" everywhere, also for vendors or products; the customers search does not look into own columns;
+the mapping screen suggests Full name for a company-name column instead of offering an own field; a fresh field's levels are not offered
+for a hand-set weight until the settings are saved once. **The live image (`dedupah-api`) has an old `configs/` baked in: the preview
+container must mount `configs/` (or the image be rebuilt).** All results are synthetic.

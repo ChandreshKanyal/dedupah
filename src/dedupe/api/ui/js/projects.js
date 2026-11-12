@@ -72,7 +72,7 @@ async function pickProject(title, text, then) {
 // Older addresses and links still open the right place.
 const OLD_TAB = { overview: ["setup"], connections: ["setup", "data"], rules: ["setup", "matching"], schedules: ["runs"], decisions: ["results", "decisions"],
   access: ["settings", "members"], activity: ["settings", "activity"] };
-const SETUP_PARTS = { data: "Data", matching: "Matching rules", golden: "Golden record", technical: "Technical settings" };
+const SETUP_PARTS = { data: "Data", matching: "Matching rules", golden: "Golden record", technical: "Fields and search" };
 const SETUP_CONFIG = { matching: "decision", golden: "survivorship", technical: "settings" };
 const SETUP_STEP = { data: 2, matching: 3, golden: 4 };
 function setupSteps(on, pid) {
@@ -122,7 +122,7 @@ async function viewProject(pid, tab, sub) {
   const more = moreMenu([
     can("runs.read") && tab !== "runs" ? ["All runs and schedules", () => go(() => viewProject(pid, "runs"))] : null,
     can("queue.read") ? ["Decisions made", link("/review/" + pid + "/decided")] : null,
-    subs.setup.includes("technical") ? ["Technical settings", () => go(() => viewProject(pid, "setup", "technical"))] : null,
+    subs.setup.includes("technical") ? ["Fields and search", () => go(() => viewProject(pid, "setup", "technical"))] : null,
     subs.settings.includes("general") ? ["Project settings", () => go(() => viewProject(pid, "settings", "general"))] : null,
     subs.settings.includes("members") ? ["Members", () => go(() => viewProject(pid, "settings", "members"))] : null,
     subs.settings.includes("activity") ? ["Activity", () => go(() => viewProject(pid, "settings", "activity"))] : null,
@@ -203,7 +203,8 @@ async function projectJourney(p, runs, connections) {
     [st ? btn(st.data.length ? "Open" : "Add data", () => go(() => viewProject(pid, "setup", "data")), "", st.data.length ? null : "database") : null]),
     row(2, "Rules", st ? [dec ? sameWhenShort(dec) : tag("Matching rules not chosen", "warn"), gold ? el("div", { class: "muted" }, "Golden record: " + goldenWords(gold)) : tag("Golden-record rules not chosen", "warn"),
       st.cfg.decision.waiting.length + st.cfg.survivorship.waiting.length ? el("div", { class: "muted" }, "Changes wait for approval.") : null] : [],
-    [st ? btn("Matching rules", () => go(() => viewProject(pid, "setup", "matching"))) : null, st ? btn("Golden record", () => go(() => viewProject(pid, "setup", "golden"))) : null]),
+    [st ? btn("Matching rules", () => go(() => viewProject(pid, "setup", "matching"))) : null, st ? btn("Golden record", () => go(() => viewProject(pid, "setup", "golden"))) : null,
+      st ? btn("Fields and search", () => go(() => viewProject(pid, "setup", "technical"))) : null]),
     row(3, "Run", [latest ? (latest.status === "succeeded" ? runTitle(latest, runs) + ": " + num(latest.summary.records) + " records became " + num(latest.summary.people) + " customers."
       : el("div", {}, runTitle(latest, runs) + ": ", runState(latest))) : "No run yet.",
     runs.length > 1 ? el("div", { class: "muted" }, plural(runs.length, "run", "runs") + " so far.") : null],
@@ -234,7 +235,7 @@ async function activityPanel(pid) {
     delete_run: "Deleted a run", delete_upload: "Deleted an uploaded file", approve_match: "Decided: same person", reject_match: "Decided: different people",
     mark_unsure: "Marked a pair not sure", undo: "Undid a decision", split_person: "Split a person", override_field: "Corrected a field", approve_pending: "Gave a second approval",
     decline_pending: "Declined a decision" };
-  const RULES_OF = { decision: "the matching rules", survivorship: "the golden-record rules", settings: "the technical settings" };
+  const RULES_OF = { decision: "the matching rules", survivorship: "the golden-record rules", settings: "the fields and search settings" };
   const RULE_ACTIONS = { propose: "Saved a version of ", activate: "Put a version in use: ", approve: "Approved a version of ", decline: "Declined a version of ", rollback: "Went back to an earlier version of " };
   const configOf = (e) => (/(?:^|\/)(decision|survivorship|settings):/.exec(e.object_ref || "") || [])[1];
   const what = (e) => {

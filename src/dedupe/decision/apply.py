@@ -1,10 +1,11 @@
 """Turn scored pairs into decisions: auto_merge / review / reject, with the rule (or score zone) that decided."""
+import json
 from pathlib import Path
 
 import duckdb
 
 from dedupe import crypto
-from dedupe.scoring.comparisons import pairs_view_sql
+from dedupe.scoring.comparisons import pairs_view_sql, spec
 
 from .conditions import NotInUse, compile_condition
 from .config import PRECEDENCE, DecisionConfig
@@ -12,6 +13,11 @@ from .config import PRECEDENCE, DecisionConfig
 ZONE_REASON = {"auto_merge": "score at or above the auto-merge threshold", "review": "score between the review and auto-merge thresholds",
                "reject": "score below the review threshold"}
 NO_RULE_REASON = "no matching rule applies, so the records stay apart (the score is not used)"
+
+
+def _names_own_fields(when: dict) -> bool:
+    text = json.dumps(when)
+    return '"own_fields"' in text or '"comparison": "x_' in text
 
 
 def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, out: Path) -> dict:
@@ -25,6 +31,10 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
             continue
         try:
             fire[r.id] = compile_condition(r.when)
+            if r.type == "not_enough_evidence" and spec().custom and not _names_own_fields(r.when):
+                # written for person data, before the project had fields of its own: it cannot know that one of them agreeing IS
+                # evidence, and would throw out every pair without a person's name or birth date
+                fire[r.id] = f"({fire[r.id]} AND NOT coalesce({compile_condition({'own_fields': 'agree'})}, false))"
             rules.append(r)
         except NotInUse:              # the rule names a field this project no longer defines: it cannot fire, and the run says so
             skipped.append(r.id)

@@ -160,3 +160,40 @@ def test_uploads_are_capped_and_named_safely(tmp_path):
     r = c.post(P + "/uploads?filename=../../etc/<x>.csv", content=b"a,b\n1,2\n", headers=hdr(s, "platform_admin"))
     assert r.status_code == 201 and r.json()["filename"] == "_x_.csv"
     assert c.post(P + "/uploads?filename=x.csv", content=b"a,b\n1,2\n", headers=hdr(s, "steward")).status_code == 403
+
+
+def test_a_projects_own_fields_reach_the_forms_and_rules_on_them_are_checked_when_saved(api):
+    c, s, _, path, _ = api
+    admin, analyst = hdr(s, "platform_admin", "u-ops"), hdr(s, "analyst")
+    cat = c.get(P + "/rules-catalogue", headers=analyst).json()
+    assert cat["own_fields"] == [] and cat["settings_in_use"] and "text" in cat["kinds"] and cat["search"]["how"]["sounds"]
+    assert any(r["name"] == "pan" and r["standard"] for r in cat["search"]["built_in"])
+    settings = c.get(P + "/config/settings/default", headers=analyst).json()["content"]
+    settings["custom_fields"] = [{"name": "note", "title": "Client note", "kind": "text"}, {"name": "gstin", "kind": "code", "identifier": True}]
+    twice = {**settings, "custom_fields": settings["custom_fields"] * 2}
+    refused = c.post(P + "/config/settings/propose", json={"content": twice, "reason": "the same field twice"}, headers=analyst)
+    assert refused.status_code == 422 and "same name" in refused.json()["error"]["message"]           # the engine's own sentence, not "value_error"
+    assert c.post(P + "/config/settings/propose", json={"content": settings, "reason": "match on the note too"}, headers=analyst).status_code == 200
+    cat = c.get(P + "/rules-catalogue", headers=analyst).json()                                         # a version that waits counts already
+    note, gstin = cat["own_fields"]
+    assert not cat["settings_in_use"] and (note["comparison"], note["title"], note["finds_pairs"]) == ("x_note", "Client note", True)
+    assert [w["levels"] for w in note["ways"]][:2] == [["identical"], ["identical", "same words in any order"]]
+    assert gstin["ways"] == [{"words": "is the same", "levels": ["identical"]}] and gstin["identifier"]
+    assert next(x for x in cat["comparisons"] if x["name"] == "x_note")["own"]
+    # a matching rule on an own field: saved with a way of agreeing the field has, refused in words with one it does not have
+    rules = c.get(P + "/config/decision/default", headers=analyst).json()["content"]
+    rule = {"id": "match_note", "type": "auto_merge", "reason": "Client note is the same", "when": {"comparison": "x_note", "in": ["identical", "same words in any order"]}}
+    bad = {**rules, "rules": [*rules["rules"], {**rule, "when": {"comparison": "x_note", "is": "roughly alike"}}]}
+    refused = c.post(P + "/config/decision/propose", json={"content": bad, "reason": "a level that does not exist"}, headers=analyst)
+    assert refused.status_code == 422 and "has no level" in refused.json()["error"]["message"]
+    good = {**rules, "rules": [*rules["rules"], rule]}
+    assert c.post(P + "/config/decision/propose", json={"content": good, "reason": "merge on the same note"}, headers=analyst).status_code == 200
+    # the mapping: a column fills the own field; the preview counts it and the data page shows where it comes from
+    conn = {**csv_connection(path), "attributes": [], "custom": {"note": "internal_note"}}
+    shown = c.post(P + "/connections/preview", json=conn, headers=admin).json()
+    assert shown["filled"]["note (your own field)"] == shown["sample_size"]
+    assert c.post(P + "/connections", json={"connection": conn, "reason": "the note is a field of ours"}, headers=admin).status_code == 200
+    listed = c.get(P + "/connections", headers=hdr(s, "viewer")).json()[0]
+    assert listed["own_fields"] == {"note": "internal_note"} and listed["fields_mapped"] == 6
+    guide = c.get(P + "/golden-record-guide", headers=analyst).json()
+    assert guide["extra_columns"] == []                    # the connection is not in use yet

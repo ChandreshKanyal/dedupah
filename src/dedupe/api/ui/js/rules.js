@@ -3,14 +3,14 @@
 // ---- rules of a project --------------------------------------------------------------------------------------------------
 // One page per kind of rule. It reads top to bottom: what is live now (in plain words), changes waiting to be made live, and the version
 // history folded away. The editor opens only when someone presses "Change the rules".
-const CONFIGS = [["decision", "Matching rules"], ["survivorship", "Golden record"], ["settings", "Technical settings"]];
+const CONFIGS = [["decision", "Matching rules"], ["survivorship", "Golden record"], ["settings", "Fields and search"]];
 const CONFIG_INTRO = {
   decision: "How the engine decides whether two records belong to the same person.",
   survivorship: "Which value a person's golden record keeps when their records disagree.",
-  settings: "Technical settings of a run. Change them together with your administrator.",
+  settings: "What is compared beside the built-in customer fields, and how the engine finds the pairs it compares.",
 };
 const CONFIG_HEAD = { decision: ["What the matching rules in use do", "Change the matching rules"], survivorship: ["What the golden-record rules in use do", "Change the golden-record rules"],
-  settings: ["The technical settings in use", "Change the technical settings"] };
+  settings: ["The fields and search in use", "Change the fields and search"] };
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 // the same content whatever the key order (a saved version comes back from the server in its own order)
 const sorted = (x) => (Array.isArray(x) ? x.map(sorted) : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sorted(x[k])])) : x);
@@ -75,7 +75,7 @@ async function rulesPanel(p, name, editing) {
   const canEdit = can("config.propose");
   const optional = name === "settings";
   const now = !second && can("config.activate");          // one-person project: what is saved is in use at once
-  const what = name === "decision" ? "matching rules" : name === "survivorship" ? "golden-record rules" : "technical settings";
+  const what = name === "decision" ? "matching rules" : name === "survivorship" ? "golden-record rules" : "fields and search settings";
   const proposed = async (content, reason) => {
     if (second && (reason || "").trim().length < 10) throw new Error("Say why in at least 10 characters: the person who approves it reads this.");   // U1-06
     reason = reason || (live ? "Changed the " : "Chose the ") + what;      // one-person project: nobody else reads the reason, it is not asked
@@ -128,19 +128,21 @@ async function rulesPanel(p, name, editing) {
       (latest.status === "active" ? " (in use)" : waiting(latest) ? " (waiting, not in use yet)" : "") + "." + after)
       : el("div", { class: "notice", role: "note" }, "You are starting from the standard " + (optional ? "values" : "rules") + "." + after);
     if (name === "decision") {
-      const [cat, conns] = await Promise.all([api("GET", "/rules-catalogue"), api("GET", P(pid) + "/connections")]);
-      const present = new Set(conns.flatMap((c) => Object.keys(c.fields || {})));
-      body = [note, matchingEditor(startFrom.content, cat, proposed, null, { ...saving, present })];
+      const [cat, conns] = await Promise.all([api("GET", P(pid) + "/rules-catalogue"), api("GET", P(pid) + "/connections")]);
+      const present = new Set([...conns.flatMap((c) => Object.keys(c.fields || {})), ...useOwnFields(cat)]);
+      body = [note, cat.own_fields.length && !cat.settings_in_use ? el("div", { class: "notice", role: "note" }, "Some of your own fields wait to be put in use (Fields and search). " +
+        "A rule on a field that is not in use yet is skipped by a run.") : null, matchingEditor(startFrom.content, cat, proposed, null, { ...saving, present })];
     } else if (name === "survivorship") {
       const [guide, conns] = await Promise.all([api("GET", P(pid) + "/golden-record-guide"), api("GET", P(pid) + "/connections")]);
       const present = new Set(conns.flatMap((c) => Object.keys(c.fields || {})));
       body = [note, goldenForm(startFrom.content, guide, proposed, null, { ...saving, present })];
-    } else body = [note, jsonEditor(startFrom.content, proposed, cancel)];
+    } else body = [note, setupForm(startFrom.content, await api("GET", P(pid) + "/rules-catalogue"), proposed, cancel, saving)];
   } else {
     const content = (await shown).content;
-    if (name === "decision") body = matchingSummary(content, await api("GET", "/rules-catalogue"));
+    const cat = name === "survivorship" ? null : await api("GET", P(pid) + "/rules-catalogue");
+    if (name === "decision") { useOwnFields(cat); body = matchingSummary(content, cat); }
     else if (name === "survivorship") body = goldenSummary(content, await api("GET", P(pid) + "/golden-record-guide"));
-    else body = settingsSummary(content);
+    else body = setupSummary(content, cat);
   }
 
   // ---- history, folded away
@@ -163,24 +165,6 @@ async function rulesPanel(p, name, editing) {
   return wrap;
 }
 
-// The run settings: a short list in view mode, JSON in the editor (they are technical).
-function settingsSummary(content) {
-  const entries = Object.entries(content || {});
-  if (!entries.length) return empty("The built-in run settings are used.");
-  return kv(entries.map(([k, v]) => [label(k), v === null ? el("span", { class: "muted" }, "not set") : typeof v === "object" ? el("code", {}, JSON.stringify(v)) : String(v)]));
-}
-function jsonEditor(content, propose, cancel) {
-  const editor = el("textarea", { spellcheck: "false", rows: "16", class: "code" });
-  editor.value = JSON.stringify(content, null, 2);
-  const why = el("input", { type: "text", maxlength: "300" });
-  const err = errBox();
-  const save = async () => {
-    let parsed;
-    try { parsed = JSON.parse(editor.value); } catch (_) { fail(err, "That is not valid JSON.", editor); return; }
-    try { await propose(parsed, why.value); } catch (e) { fail(err, e.message); }
-  };
-  return el("div", {}, field("Settings (JSON). The server checks them.", editor), saveBar(why, err, save, cancel));
-}
 // The bottom of every editor: why, then save or cancel.
 // `opts.solo`: one-person project, saving puts the version in use and no reason is asked; `opts.live`: a version is in use already.
 function saveBar(why, err, save, cancel, opts) {
@@ -227,6 +211,7 @@ function describeRule(node, cat) {
     if (node.op === "both_gte") return f + " both at least " + node.value;
     if (node.op === "both_lte") return f + " both at most " + node.value;
   }
+  if (node.own_fields) return "one of your own fields agrees";
   if (node.score) return (node.score === "probability" ? "match score " + node.op + " " + Math.round(node.value * 100) + "%" : "match weight " + node.op + " " + node.value);
   return JSON.stringify(node);
 }
@@ -289,6 +274,16 @@ const findable = (ps) => ps.some((p) => STRONG_COLUMNS.has(p.col)) || new Set(ps
 // "Never the same when ... differ": columns where two different values mean two different people
 const NEVER_COLUMNS = { pan: ["different PANs", "PANs"], aadhaar: ["different Aadhaar", "Aadhaar numbers"], gov_id: ["different document numbers", "passport, licence or voter IDs"],
   customer_number: ["different customer numbers", "customer numbers"], gender: ["different gender", "genders"] };
+// A project's own fields join the columns a rule can use (from the project's catalogue); returns the data-field keys they stand for.
+function useOwnFields(cat) {
+  for (const k of Object.keys(MATCH_COLUMNS)) if (k.startsWith("x_")) { delete MATCH_COLUMNS[k]; delete NEVER_COLUMNS[k]; STRONG_COLUMNS.delete(k); }
+  for (const f of cat.own_fields || []) {
+    MATCH_COLUMNS[f.comparison] = [f.title, ["own:" + f.name], f.ways.map((w) => [w.words, w.levels])];
+    NEVER_COLUMNS[f.comparison] = [f.differs, f.title.toLowerCase() + " values"];
+    if (f.finds_pairs) STRONG_COLUMNS.add(f.comparison);
+  }
+  return (cat.own_fields || []).map((f) => "own:" + f.name);
+}
 const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
 // The columns of a rule the form can show (one condition, or all of several, each a column with one of its ways to agree); null for anything else.
 function matchParts(when) {
@@ -418,7 +413,7 @@ function matchingEditor(content, cat, propose, cancel, opts) {
   const neverSel = el("select", { "aria-label": "Column" }, neverCols.map((k) => el("option", { value: k }, MATCH_COLUMNS[k][0])));
   const addNever = () => {
     const k = neverSel.value;
-    state.rules.push({ id: ruleId("never_", k, state.rules), type: "never_merge", reason: "Two different " + NEVER_COLUMNS[k][1] + ": never the same person",
+    state.rules.push({ id: ruleId("never_", k, state.rules), type: "never_merge", reason: "Two different " + NEVER_COLUMNS[k][1] + ": never the same " + (k.startsWith("x_") ? "record" : "person"),
       when: { comparison: k, is: NEVER_COLUMNS[k][0] } });
     draw();
   };

@@ -8,13 +8,20 @@ import tempfile
 from pathlib import Path
 
 from dedupe import crypto
+from dedupe.custom import spec_of_run
 from dedupe.decision.apply import decide
 from dedupe.decision.config import DecisionConfig
+from dedupe.scoring.comparisons import use
 
 ZONES = ("auto_merge", "review", "reject")
 
 
 def dry_run(work: Path, candidate: DecisionConfig, samples: int = 5) -> dict:
+    with use(spec_of_run(work)):          # the fields the run compared: a rule on one of the project's own fields is tried too
+        return _dry_run(work, candidate, samples)
+
+
+def _dry_run(work: Path, candidate: DecisionConfig, samples: int) -> dict:
     std, index = work / "standardised.parquet", work / "candidates.index.parquet"
     scored, before = work / "scored_pairs.parquet", work / "decisions.parquet"
     for f in (std, index, scored, before):

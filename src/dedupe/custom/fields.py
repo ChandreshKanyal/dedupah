@@ -197,6 +197,16 @@ class CustomField(BaseModel):
         return Comparison(self.col, missing, tuple(levels), tf_table_sql=tf, else_label=else_label, title=self.label,
                           agree_from=agree, primary=primary)
 
+    def ways(self) -> list[tuple[str, list[str]]]:
+        """The ways two records can agree on this field, strictest first: words for a rule form, and the comparison levels each one covers
+        (a looser way includes the stricter ones)."""
+        said = {"text": ["is exactly the same", "has the same words in any order", "has the same words, small spelling slips allowed", "is similar"],
+                "code": ["is the same", "is the same or one character apart"], "number": ["is equal", "is equal or close"],
+                "date": ["is the same day", "is the same day or close to it", "has the same year"]}
+        labels = [lv.label for lv in self.comparison().levels]
+        words = said.get("text" if self.kind in _TEXTUAL else self.kind, ["is the same"])
+        return [(words[i], labels[:i + 1]) for i in range(len(labels))]
+
     # ---- finding candidate pairs (blocking) ---------------------------------------------------------------------------------------
     def default_blocking(self) -> list[Rule]:
         """The rules a field gets without the project writing any: enough for its duplicates to be found at all."""

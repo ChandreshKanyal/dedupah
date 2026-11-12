@@ -12,7 +12,7 @@ router = APIRouter()
 UI = Path(__file__).parent / "ui"
 # The portal script, one file per area of the portal. They share one scope and index.html loads them in this order: each may use what
 # the files before it define.
-SCRIPTS = ("core", "words", "shell", "home", "projects", "runs", "rules", "data", "results", "review", "admin", "start")
+SCRIPTS = ("core", "words", "shell", "home", "projects", "runs", "rules", "fields", "data", "results", "review", "admin", "start")
 FILES = {"": ("index.html", "text/html; charset=utf-8"), **{f"js/{n}.js": (f"js/{n}.js", "text/javascript; charset=utf-8") for n in SCRIPTS},
          "style.css": ("style.css", "text/css; charset=utf-8"),
          **{n: (n, "image/png") for n in ("logo-light.png", "logo-dark.png", "wordmark-light.png", "wordmark-dark.png", "favicon.png")}}

@@ -32,7 +32,7 @@ async function quickRun(pid) {
   const key = uuid();
   const ver = (n) => "the ones in use (version " + st.cfg[n].live.version + ")";
   const body = el("div", {}, kv([["Data", st.data.map((c) => c.id).join(", ")], ["Matching rules", ver("decision")], ["Golden record", ver("survivorship")],
-    ["Technical settings", st.cfg.settings.live ? ver("settings") : "standard values"]]),
+    ["Fields and search", st.cfg.settings.live ? ver("settings") : "standard values"]]),
   el("label", { class: "check" }, full, el("span", {}, "Process everything again", el("span", { class: "muted" },
     "Slower. Otherwise only what changed since the last run is processed again; customers are still formed from all records."))));
   const choice = await dialog("Start a run of " + projectName(pid) + "?", body, "Start run", async () => "start", false, ["Change options", "options"]);
@@ -113,7 +113,7 @@ async function newRun(pid) {
     return startRun(pid, [...chosen], null, reason.value, key, load.value() === "full", can("config.read") ? rules : null);
   };
   const rulesParts = () => [section(2, "Matching rules", rulePart("decision", "matching", true)), section(3, "Golden record", rulePart("survivorship", "golden", true)),
-    section(4, "Technical settings", rulePart("settings", "technical", false))];
+    section(4, "Fields and search", rulePart("settings", "technical", false))];
   const section = (n, title, body, extra) => el("section", { class: "run-part" }, el("div", { class: "title-row" }, el("h2", { class: "section" }, n + ". " + title), extra || null), body);
   show(top, cache.projects.length > 1 ? el("div", { class: "narrow" }, field("Project", projSel)) : null,
     section(1, "Data", dataPart, pickAll),
@@ -132,7 +132,7 @@ function runUsed(r) {
   const part = (k, v) => el("span", {}, el("strong", {}, k + ": "), v);
   const parts = [part("Data", r.connections.length ? r.connections.map((c) => c.id + " version " + c.version).join(", ") : "imported"),
     part("Matching rules", ver("decision", "standard (built in)")), part("Golden record", ver("survivorship", "standard (built in)")),
-    part("Technical settings", ver("settings", "standard values")), part("Load", ((r.options || {}).full ? LOAD_WORDS.full : LOAD_WORDS.incremental).toLowerCase())];
+    part("Fields and search", ver("settings", "standard values")), part("Load", ((r.options || {}).full ? LOAD_WORDS.full : LOAD_WORDS.incremental).toLowerCase())];
   return el("p", { class: "run-used" }, parts.flatMap((x, i) => (i ? [" · ", x] : [x])));
 }
 // One run. Finished: Overview (what came out, in one sentence; the engine's details folded away), Results (the files) and Customers (find a
@@ -206,8 +206,10 @@ async function customersPanel(pid, rid, st) {
   const again = (patch) => run(async () => wrap.replaceWith(await customersPanel(pid, rid, { ...st, ...patch })));
   const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: "Name, person ID, whole mobile number or email", class: "wide-search" });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") again({ q: q.value.trim(), offset: 0 }); });
-  const cols = CUSTOMER_COLUMNS.map((c) => [c, r.columns.indexOf(c)]).filter(([, i]) => i >= 0);
-  const TITLES = { person_id: "Person ID", record_count: "Records", sources: "Sources" };
+  // the sources' own columns (a project's own fields among them) come after the built-in ones: a company or a product has no name or birth date
+  const extras = r.columns.filter((c) => c.startsWith("extra_")).slice(0, 4);
+  const cols = [...CUSTOMER_COLUMNS.slice(0, -2), ...extras, ...CUSTOMER_COLUMNS.slice(-2)].map((c) => [c, r.columns.indexOf(c)]).filter(([, i]) => i >= 0);
+  const TITLES = { person_id: "Person ID", record_count: "Records", sources: "Sources", ...Object.fromEntries(extras.map((c) => [c, cap(label(c.slice(6)))])) };
   const cell = (c, v) => (v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v));
   const last = Math.min(st.offset + size, r.total);
   add(wrap, el("div", { class: "row", role: "search" }, q, btn("Search", () => again({ q: q.value.trim(), offset: 0 }), "", "search"),

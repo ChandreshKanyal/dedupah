@@ -16,12 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from dedupe.governance.impact import dry_run
 from dedupe.governance.store import MODELS, ConfigError
 from dedupe.review.service import ReviewError, ReviewService
+from dedupe.scoring.comparisons import spec, use
 from dedupe.store.judgments import JudgmentError
 from dedupe.survivorship.config import GOLDEN_FIELDS
 
 from .auth import Principal
 from .guards import _context, _services, require
-from .routes_read import PERSON_ID, PID, RID, ConfigName
+from .routes_read import PERSON_ID, PID, RID, ConfigName, project_spec
 from .scope import RUN_ID, project_scope, run_scope
 
 router = APIRouter()
@@ -164,12 +165,18 @@ def _conflict(e: Exception) -> HTTPException:
     return HTTPException(409, str(e)[:300])
 
 
-def _invalid_config(name: str, content: dict) -> HTTPException:
-    """Field names and error types only: never echo what was typed."""
+def _invalid_config(name: str, content: dict, store=None) -> HTTPException:
+    """Field names and error types only: never echo what was typed. The exception: the engine's own sentences about a project's fields,
+    search rules and matching rules (names of fields and levels the project chose, never data), which say what to fix."""
     try:
-        MODELS[name].model_validate(content)
+        with use(project_spec(store) if store is not None and name == "decision" else spec()):
+            MODELS[name].model_validate(content)
     except ValueError as err:
-        fields = [{"field": ".".join(str(x) for x in e["loc"]), "problem": e["type"]} for e in getattr(err, "errors", lambda: [])()]
+        errors = getattr(err, "errors", lambda: [])()
+        said = [str(e.get("msg", "")).removeprefix("Value error, ") for e in errors if e["type"] == "value_error"] if name in ("settings", "decision") else []
+        if said:
+            return HTTPException(422, ("Not saved: " + "; ".join(said[:3]))[:600])
+        fields = [{"field": ".".join(str(x) for x in e["loc"]), "problem": e["type"]} for e in errors]
         return HTTPException(422, "The configuration is not valid: " + ", ".join(f"{f['field']} ({f['problem']})" for f in fields[:10]))
     return HTTPException(422, "The configuration is not valid.")
 
@@ -293,9 +300,12 @@ def decline_pending(request: Request, body: DeclineIn, project_id: str = PID, ju
 def propose(request: Request, name: ConfigName, body: ProposeIn, project_id: str = PID, p: Principal = PROPOSE):
     store = project_scope(request, project_id).configs
     try:
-        version = store.propose(name, body.content, p.actor, body.reason)
+        # matching rules are checked against the fields this project compares: a rule on one of its own fields with a way of agreeing that
+        # field does not have is refused here, not when the next run starts
+        with use(project_spec(store) if name == "decision" else spec()):
+            version = store.propose(name, body.content, p.actor, body.reason)
     except ConfigError as e:
-        raise (_invalid_config(name, body.content) if str(e).startswith("invalid") else _conflict(e)) from None
+        raise (_invalid_config(name, body.content, store) if str(e).startswith("invalid") else _conflict(e)) from None
     _log(request, p, "config_change", "propose", f"{project_id}/{name}:{version}")
     return {"name": name, "version": version, "status": "proposed"}
 

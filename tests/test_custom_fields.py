@@ -140,6 +140,17 @@ def test_a_rule_on_a_field_the_project_dropped_is_skipped_not_fatal(tmp_path):
     assert s["decisions"]["rules_not_applied"] == ["same_old_code"]
 
 
+def test_evidence_rules_saved_before_the_project_had_own_fields_do_not_throw_its_pairs_out(tmp_path):
+    rows, truth = _companies()
+    dec = json.loads(open("configs/decision_default.json", encoding="utf-8").read())
+    old = next(r for r in dec["rules"] if r["id"] == "not_enough_evidence")
+    old["when"]["not"]["any"] = [c for c in old["when"]["not"]["any"] if "own_fields" not in c]       # as every project saved it before
+    (tmp_path / "decision.json").write_text(json.dumps(dec), encoding="utf-8")
+    run_pipeline(PipelineConfig(_sources(tmp_path, rows), tmp_path / "work", custom_fields=FIELDS, decision_config=tmp_path / "decision.json"))
+    precision, recall = _quality(tmp_path / "work", truth)
+    assert precision >= 0.97 and recall >= 0.85
+
+
 def test_a_rule_can_use_a_custom_field(tmp_path):
     rows, _ = _companies(60)
     dec = {"auto_merge_at": 0.9, "review_at": 0.1, "use_score": False,

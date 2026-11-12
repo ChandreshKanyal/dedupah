@@ -9,6 +9,8 @@ Connection settings are untrusted input (see `dedupe.mapping.check`): per-type a
 variable starting with DEDUPE_SRC_, files inside DEDUPE_DATA_ROOTS or uploaded to this project, SQL as one SELECT. Looking inside a source reads
 real customer data: it is rate limited, logged (never a value), and values leave the server only shortened.
 """
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
@@ -131,8 +133,9 @@ def _summary(configs, name: str) -> dict:
     live = next((v for v in vs if v.status == "active"), None)
     content = configs.get(name, live.version) if live else configs.get(name, vs[-1].version)
     fields = {f: (c if isinstance(c, str) else "(combined columns)") for f, c in (content.get("fields") or {}).items()}
-    return {"id": name.split("/", 1)[1], "type": content["connector"].get("type"), "fields_mapped": len(fields), "fields": fields,
+    return {"id": name.split("/", 1)[1], "type": content["connector"].get("type"), "fields_mapped": len(fields) + len(content.get("custom") or {}), "fields": fields,
             "record_id": content.get("record_id"), "extra_columns": list(content.get("attributes") or []),
+            "own_fields": {f: (c if isinstance(c, str) else "(combined columns)") for f, c in (content.get("custom") or {}).items()},
             "live_version": live.version if live else None, "latest_version": vs[-1].version, "latest_status": vs[-1].status,
             "updated_at": vs[-1].proposed_at, "updated_by": vs[-1].proposed_by}
 
@@ -257,6 +260,9 @@ def preview(request: Request, body: SourceConfig, project_id: str = PID, unmask:
         raise HTTPException(422, str(e)) from None
     n = table.num_rows
     filled = {f: sum(1 for v in table.column(f).to_pylist() if v not in (None, "")) for f in CANONICAL_FIELDS if f in body.fields}
+    if body.custom:                                 # the project's own fields travel in the attributes JSON under their name
+        carried = [json.loads(v) if v else {} for v in table.column("attributes").to_pylist()]
+        filled.update({f"{f} (your own field)": sum(1 for row in carried if row.get(f) not in (None, "")) for f in body.custom})
     _log(request, p, "source_preview", body.source_id[:40])
     if reveal:
         _log_unmask(request, p, f"{project_id}/source-sample", reason, "mapped sample")
