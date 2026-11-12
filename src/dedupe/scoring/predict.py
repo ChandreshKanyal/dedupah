@@ -6,7 +6,7 @@ import pyarrow as pa
 
 from dedupe import crypto
 
-from .comparisons import COMPARISONS
+from .comparisons import comparisons
 from .levels import level_matrix, tf_matrix
 from .model import Model
 from .train import adjusted_weights
@@ -28,7 +28,7 @@ def score(con: duckdb.DuckDBPyConnection, model: Model, out_path: Path) -> dict:
     prob = 1.0 / (1.0 + np.exp2(-np.clip(weight, -60, 60)))
     cols = {"l_rid": ids.column(0), "r_rid": ids.column(1), "rules": ids.column(2),
             "probability": pa.array(prob), "match_weight": pa.array(weight.astype(np.float32))}
-    for j, c in enumerate(COMPARISONS):
+    for j, c in enumerate(comparisons()):
         cols[f"lv_{c.name}"] = pa.array(L[:, j].astype(np.int8))
         cols[f"w_{c.name}"] = pa.array(W[:, j].astype(np.float32))
     out_path.parent.mkdir(parents=True, exist_ok=True)

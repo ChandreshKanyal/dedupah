@@ -7,6 +7,7 @@ only a keyed token and the last four digits do. Set DEDUPE_TOKEN_KEY in producti
 """
 import argparse
 import json
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 import pyarrow as pa
 
 from dedupe import crypto
+from dedupe.scoring.comparisons import spec
 
 from . import dates
 from . import identifiers as ids
@@ -124,6 +126,28 @@ _PROFILE_SQL = {
     "identifier": "coalesce(pan, aadhaar_token, passport_no, dl_no, voter_id, customer_number) IS NOT NULL",
     "record_date": "record_date IS NOT NULL",
 }
+_ARROW = {"VARCHAR": S, "DOUBLE": pa.float64()}
+
+
+def schema() -> pa.Schema:
+    """The standardised columns of the spec in force: the fixed ones plus the project's own fields."""
+    return pa.schema([*SCHEMA, *((c, _ARROW[t]) for f in spec().custom for c, t in f.columns().items())])
+
+
+def _custom_values(attributes: str | None, fields) -> dict:
+    """The project's own fields, read from the record's extra columns: by the field's name, else by a column whose name reads the same
+    ('Company Name' for company_name)."""
+    out = {}
+    try:
+        given = json.loads(attributes) if attributes else {}
+    except ValueError:
+        given = {}
+    loose = {re.sub(r"[^a-z0-9]+", "_", str(k).lower()).strip("_"): v for k, v in given.items()} if isinstance(given, dict) else {}
+    for f in fields:
+        out.update(f.clean(given.get(f.name, loose.get(f.name)) if isinstance(given, dict) else None))
+    return out
+
+
 STANDARDISE_VERSION = 3      # raise when standardisation changes what it writes for the same input: earlier runs' rows are then not reused
 
 
@@ -156,8 +180,10 @@ def source_report(std_path: Path) -> dict:
 
 def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with crypto.open_writer(out_path, SCHEMA) as w:
+    full, fields = schema(), spec().custom
+    with crypto.open_writer(out_path, full) as w:
         for batch in crypto.iter_batches(in_path, batch_size):
+            attrs = batch.column("attributes").to_pylist() if fields and "attributes" in batch.schema.names else None
             # a canonical file without some fields (older files, other producers) is treated as having them all empty
             cols = {c: batch.column(c).to_pylist() if c in batch.schema.names else [None] * batch.num_rows for c in _RAW_FIELDS}
             rows = []
@@ -169,8 +195,10 @@ def run(in_path: Path, out_path: Path, batch_size: int = 50_000) -> dict:
                 given = [f for f in _VALIDATION if raw[f] and str(raw[f]).strip()]
                 row["supplied_fields"] = ",".join(given)
                 row["invalid_fields"] = ",".join(f for f in given if not _VALIDATION[f](raw, row))
+                if fields:
+                    row.update(_custom_values(attrs[i] if attrs else None, fields))
                 rows.append(row)
-            w.write_table(pa.Table.from_pylist(rows, schema=SCHEMA))
+            w.write_table(pa.Table.from_pylist(rows, schema=full))
     return {**source_report(out_path), "output": str(out_path)}
 
 

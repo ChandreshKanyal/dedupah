@@ -21,7 +21,7 @@ starting guess. It is tested on SYNTHETIC data only.
 """
 import numpy as np
 
-from .comparisons import COMPARISONS, DOB, STRONG_ID
+from .comparisons import DOB, comparisons
 
 MIN_SEEDS = 20           # identifier-proven pairs needed, of EACH kind (same / different), to learn from identifiers
 MIN_PAIRS = 150          # candidate pairs needed for EM to find a pattern
@@ -29,15 +29,34 @@ MIN_PLAUSIBLE = 15       # plausible matches in the starting guess
 ITERATIONS = 40
 SMOOTH = 0.5             # pseudo-count per level so an unseen level never gets weight -infinity
 WEIGHT_CAP_BITS = 9.0    # no single comparison can contribute more than this either way
+U_KEEP = 0.05            # taking the matches out of u never leaves less than this share of the measured value (the estimate is noisy)
 TEMPER = 0.9             # shrinks every learned weight a little: the independence assumption makes EM over-confident (0.8 cost recall once the prior became the random-pair prior)
-IX = {c.name: i for i, c in enumerate(COMPARISONS)}
 
 
 def plausible_matches(L: np.ndarray) -> np.ndarray:
     """A rough, hand-set first guess: names that sound alike plus some other agreeing evidence. Only the STARTING point of EM."""
-    name = L[:, IX["name"]]
-    agree = ((L[:, IX["phone"]] >= 1).astype(int) + (L[:, IX["email"]] >= 1) + np.isin(L[:, IX["dob"]], (4, 5))
-             + (L[:, IX["address"]] >= 3) + (L[:, IX["address"]] == 5))
+    comps = comparisons()
+    ix = {c.name: i for i, c in enumerate(comps)}
+
+    def col(name):
+        return L[:, ix[name]] if name in ix else np.full(len(L), -1, dtype=L.dtype)
+    name = col("name").astype(int)
+    agree = ((col("phone") >= 1).astype(int) + (col("email") >= 1) + np.isin(col("dob"), (4, 5))
+             + (col("address") >= 3) + (col("address") == 5))
+    # the project's own fields: a name-like text stands in for the name (its top level as an identical name, a close one as a near
+    # name); every other field that agrees counts as one more agreeing field
+    primary = "name" in ix
+    for j, c in enumerate(comps):
+        if c.agree_from is None:
+            continue
+        if c.primary:
+            primary = True
+            top = max(l.value for l in c.levels)
+            name = np.maximum(name, np.where(L[:, j] >= top, 5, np.where(L[:, j] >= c.agree_from, 4, 0)))
+        else:
+            agree = agree + (L[:, j] >= c.agree_from)
+    if not primary:          # nothing name-like to lean on: two agreeing fields are the starting guess
+        return agree >= 2
     return ((name >= 5) & (agree >= 1)) | ((name >= 4) & (agree >= 2)) | (agree >= 3)
 
 
@@ -61,32 +80,37 @@ def fit_em(L: np.ndarray, u_rand: dict, fixed: dict, pairs_total: float | None =
     total = float(pairs_total or n)
     resp = np.where(plausible_matches(L), 0.9, 0.02)
     free = {}
-    for j, c in enumerate(COMPARISONS):
+    for j, c in enumerate(comparisons()):
         lv = [l for l in range(c.n_levels) if l not in fixed.get(c.name, {})]
         u = np.array([u_rand[c.name][l] for l in lv])
         free[j] = (lv, u / u.sum())
-    log_ratio = {j: np.zeros(c.n_levels) for j, c in enumerate(COMPARISONS)}
+    log_ratio = {j: np.zeros(c.n_levels) for j, c in enumerate(comparisons())}
     fixed_part = np.zeros(n)
-    for j, c in enumerate(COMPARISONS):
+    for j, c in enumerate(comparisons()):
         for l, w in fixed.get(c.name, {}).items():
             log_ratio[j][l] = w
             fixed_part[L[:, j] == l] += w
     cap = WEIGHT_CAP_BITS * np.log(2)
-    lam, done = 0.5, 0
+    lam, done = float(np.clip(resp.sum() / total, 1e-12, 0.5)), 0
     for _ in range(ITERATIONS):
         done += 1
-        for j in range(len(COMPARISONS)):
+        for j in range(len(comparisons())):
             lv, u = free[j]
             if not lv:
                 continue
             in_scope = np.isin(L[:, j], lv)
             tot = resp[in_scope].sum() + SMOOTH * len(lv)
             m = np.array([(resp[L[:, j] == l].sum() + SMOOTH) / tot for l in lv])
+            # u was measured on random pairs, and some random pairs ARE matches. For a near-unique value (an exact phone, a company's
+            # name) those few matches are most of what a random pair ever shows at the level, so the measured u is really m seen through
+            # the match rate, and the level looks far weaker than it is. Take the matches' share out: u_nonmatch = (u - lam*m) / (1 - lam).
+            u = np.maximum((u - lam * m) / (1 - lam), u * U_KEEP)
+            u = u / u.sum()
             for l, wl in zip(lv, np.clip(TEMPER * np.log(m / u), -cap, cap), strict=True):
                 log_ratio[j][l] = wl
         lam = float(np.clip(resp.sum() / total, 1e-12, 0.5))          # matches among all pairs: matches outside the candidates are ~0
         logit = np.log(lam / (1 - lam)) + fixed_part
-        for j in range(len(COMPARISONS)):
+        for j in range(len(comparisons())):
             lv, _ = free[j]
             known = np.isin(L[:, j], lv)
             logit[known] += log_ratio[j][L[known, j]]
@@ -95,7 +119,7 @@ def fit_em(L: np.ndarray, u_rand: dict, fixed: dict, pairs_total: float | None =
         resp = new
         if moved < 1e-4:
             break
-    weights = {c.name: [float(log_ratio[j][l]) for l in range(c.n_levels)] for j, c in enumerate(COMPARISONS)}
+    weights = {c.name: [float(log_ratio[j][l]) for l in range(c.n_levels)] for j, c in enumerate(comparisons())}
     likely = int((resp >= 0.5).sum())
     return weights, float(np.log(lam / (1 - lam))), {"iterations": done, "match_share": round(float(resp.mean()), 4) if n else 0.0,
                                                       "prior_bits": round(float(np.log2(lam / (1 - lam))), 2),
@@ -104,8 +128,9 @@ def fit_em(L: np.ndarray, u_rand: dict, fixed: dict, pairs_total: float | None =
 
 def fixed_levels(strong_bits: dict, age_weights: dict) -> dict:
     ln2 = float(np.log(2))
-    out = {name: {l: b * ln2 for l, b in bits.items()} for name, bits in strong_bits.items() if name in STRONG_ID}
-    out["dob"] = dict(age_weights)
+    out = {name: {l: b * ln2 for l, b in bits.items()} for name, bits in strong_bits.items()}
+    if age_weights:
+        out["dob"] = dict(age_weights)
     return out
 
 

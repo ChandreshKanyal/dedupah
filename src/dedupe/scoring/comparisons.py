@@ -1,7 +1,9 @@
 """Field comparisons for pair scoring. Each comparison is an ordered ladder of levels (first matching level wins).
 Level -1 means "not comparable" (a value is missing on either side): it contributes nothing, never evidence against.
 Conditions are SQL over a pairs table with l_<col> / r_<col> columns."""
-from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,11 @@ class Comparison:
     levels: tuple  # ordered high -> low; implicit final level 0 = "otherwise"
     tf_table_sql: str | None = None  # SELECT key, tf FROM records ...
     else_label: str = "different"
+    title: str = ""                  # the field's name as the user wrote it (custom fields)
+    # the starting guess of the self-learning mode (EM), for fields a project defines itself: levels at or above `agree_from` count as one
+    # agreeing field; a `primary` field (a name-like text) plays the part the person's name plays for the built-in fields
+    agree_from: int | None = None
+    primary: bool = False
 
     @property
     def n_levels(self) -> int:
@@ -140,15 +147,66 @@ GENDER = Comparison("gender", _either_missing("gender"), (Level(1, "same gender"
 CUSTOMER_NUMBER = Comparison("customer_number", _either_missing("customer_number"),
                              (Level(1, "same customer number", "l_customer_number = r_customer_number"),), else_label="different customer numbers")
 
-COMPARISONS = [NAME, DOB, PHONE, EMAIL, PAN, AADHAAR, GOV_ID, ADDRESS, GENDER, CUSTOMER_NUMBER]
-STRONG_ID = ("pan", "aadhaar", "gov_id")  # used to seed EM: agreement ~ same person, disagreement ~ different people
+BUILTIN = (NAME, DOB, PHONE, EMAIL, PAN, AADHAAR, GOV_ID, ADDRESS, GENDER, CUSTOMER_NUMBER)
+# Evidence in bits for identifier comparisons. Principle: a valid government ID is shared by two different people
+# with probability ~1e-4 (data entry / OCR collisions) and differs for one person with probability ~1e-2.
+# These comparisons also seed the learning: agreement ~ same person, disagreement ~ different people.
+STRONG_BITS = {
+    "pan": {1: 13.2, 0: -6.6},
+    "aadhaar": {3: 13.2, 2: 8.0, 0: -6.6},
+    "gov_id": {1: 13.2, 0: -4.0},
+}
 
-RECORD_COLUMNS = [
+BUILTIN_COLUMNS = (
     "name_clean", "name_first", "name_last", "name_first_is_initial", "name_first_phon", "name_last_phon", "name_tokens_phon",
     "dob", "dob_year", "dob_month", "dob_day", "dob_placeholder", "birth_year_min", "birth_year_max", "mobile", "mobile_alt", "email_key", "pan",
     "aadhaar_token", "aadhaar_last4", "passport_no", "dl_no", "voter_id", "address_pin", "address_house",
     "address_norm", "city", "gender", "customer_number",
-]
+)
+
+
+@dataclass(frozen=True)
+class MatchSpec:
+    """What one run compares and how: the built-in customer comparisons plus whatever the project defined itself (dedupe.custom). Everything
+    downstream (levels, learning, scoring, rules, review) reads the spec in force instead of a fixed list, so a project can match companies,
+    products or any other records on its own columns."""
+    comparisons: tuple = BUILTIN
+    record_columns: tuple = BUILTIN_COLUMNS      # columns of `records` a pair carries as l_<col> / r_<col>
+    strong_bits: dict = field(default_factory=lambda: STRONG_BITS)   # comparison -> {level: bits}: identifiers, never learned
+    fixed_bits: dict = field(default_factory=dict)                   # comparison -> {level: bits}: weights the project set by hand
+    custom: tuple = ()                           # the project's own fields (dedupe.custom.CustomField)
+    blocking: tuple = ()                         # blocking rules for them (dedupe.blocking.Rule)
+    within_source: bool = True                   # False: only records of DIFFERENT sources are compared (linking two files)
+
+    @property
+    def strong_id(self) -> tuple:
+        return tuple(self.strong_bits)
+
+
+DEFAULT_SPEC = MatchSpec()
+_ACTIVE: ContextVar[MatchSpec] = ContextVar("match_spec", default=DEFAULT_SPEC)
+
+
+def spec() -> MatchSpec:
+    return _ACTIVE.get()
+
+
+def comparisons() -> tuple:
+    return _ACTIVE.get().comparisons
+
+
+def comparison(name: str) -> Comparison | None:
+    return next((c for c in comparisons() if c.name == name), None)
+
+
+@contextmanager
+def use(s: MatchSpec):
+    """Run a block of work under a project's own spec (one run, or one request reading a run's results)."""
+    token = _ACTIVE.set(s)
+    try:
+        yield s
+    finally:
+        _ACTIVE.reset(token)
 
 
 def level_case_sql(c: Comparison) -> str:
@@ -163,6 +221,6 @@ def tf_key_case_sql(c: Comparison) -> str:
 
 def pairs_view_sql(src_pairs: str, records: str = "records") -> str:
     """SQL producing the wide pairs table (l_*/r_* columns) from a table with l_rid, r_rid."""
-    cols = ", ".join(f"a.{c} AS l_{c}, b.{c} AS r_{c}" for c in RECORD_COLUMNS)
+    cols = ", ".join(f"a.{c} AS l_{c}, b.{c} AS r_{c}" for c in spec().record_columns)
     return (f"SELECT p.*, {cols} FROM {src_pairs} p "
             f"JOIN {records} a ON a.rid = p.l_rid JOIN {records} b ON b.rid = p.r_rid")

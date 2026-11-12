@@ -17,17 +17,17 @@ approver for big merges, splits and identifier overrides.
 import json
 import uuid
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 import duckdb
 
 from dedupe import crypto
-from dedupe.scoring.comparisons import COMPARISONS
+from dedupe.custom import spec_of_run
 from dedupe.store import JudgmentError, JudgmentStore
 from dedupe.survivorship.config import GOLDEN_FIELDS
 
 SENSITIVE = ("customer_number", "pan", "mobile", "mobile_alt", "email", "passport_no", "dl_no", "voter_id", "aadhaar_token", "aadhaar_last4")
-_LABELS = {c.name: c.labels() for c in COMPARISONS}
 MAX_PAIRS_PER_ACTION = 500
 
 
@@ -64,6 +64,11 @@ class ReviewService:
                   "std": w / "standardised.parquet", "canon": w / "canonical.parquet"}
 
     # ---- helpers -------------------------------------------------------------------------------------------------
+    @cached_property
+    def comparisons(self) -> tuple:
+        """What this run compared: the built-in fields plus the project's own (read from the run's settings)."""
+        return spec_of_run(self.work).comparisons
+
     def _con(self):
         return crypto.connect()
 
@@ -115,9 +120,9 @@ class ReviewService:
                 return {"probability": pair["probability"], "contributions": [], "decided_by": pair["decided_by"], "reason": pair["reason"]}
             rec = dict(zip([d[0] for d in con.description], row, strict=True))
         contrib = []
-        for c in COMPARISONS:
+        for c in self.comparisons:
             lv = rec.get(f"lv_{c.name}")
-            contrib.append({"comparison": c.name, "level": "not comparable (a value is missing)" if lv is None or lv < 0 else _LABELS[c.name].get(lv, str(lv)),
+            contrib.append({"comparison": c.name, **({"title": c.title} if c.title else {}), "level": "not comparable (a value is missing)" if lv is None or lv < 0 else c.labels().get(lv, str(lv)),
                             "bits": round(float(rec.get(f"w_{c.name}") or 0.0), 2)})
         contrib.sort(key=lambda x: -abs(x["bits"]))
         return {"probability": round(float(pair["probability"]), 4), "match_weight_bits": round(float(rec["match_weight"]), 2),

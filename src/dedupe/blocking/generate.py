@@ -4,6 +4,7 @@ from pathlib import Path
 import duckdb
 
 from dedupe import crypto
+from dedupe.scoring.comparisons import spec
 
 from .rules import DEFAULT_RULES, Rule
 
@@ -19,7 +20,7 @@ def generate(std_path: Path, out_path: Path, rules: list[Rule] | None = None, ca
     Aadhaar, passport, ...): such a block is one person with many records and is linked with a star and a chain instead.
     Returns per-rule stats. The connection keeps `records` and `rule_pairs` for reporting.
     """
-    rules = rules or DEFAULT_RULES
+    rules = DEFAULT_RULES if rules is None else rules
     con = con or crypto.connect()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     con.execute(f"""CREATE OR REPLACE TABLE records AS
@@ -50,6 +51,8 @@ def generate(std_path: Path, out_path: Path, rules: list[Rule] | None = None, ca
                 GROUP BY 1, 2, 3""")
         stats[rule.name] = {"blocks": con.execute("SELECT count(*) FROM blocks").fetchone()[0],
                             "capped_blocks": capped[0], "records_in_capped_blocks": int(capped[1])}
+    if not spec().within_source:      # linking files: two records of one source are never compared (each source is taken as free of duplicates)
+        con.execute("DELETE FROM rule_pairs p USING records a, records b WHERE a.rid = p.l AND b.rid = p.r AND a.source_id = b.source_id")
     con.execute(f"""COPY (SELECT l AS l_rid, r AS r_rid, list(DISTINCT rule ORDER BY rule) AS rules
                     FROM rule_pairs GROUP BY l, r) TO '{out_path}' ({crypto.fmt()})""")
     con.execute(f"COPY (SELECT rid, source_id, source_record_id FROM records) TO '{out_path.with_suffix('.index.parquet')}' ({crypto.fmt()})")

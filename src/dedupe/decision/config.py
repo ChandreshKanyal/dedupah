@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from .conditions import compile_condition
+from .conditions import NotInUse, compile_condition
 
 RuleType = Literal["never_merge", "auto_merge", "force_review", "not_enough_evidence"]
 # Precedence when several rules fire: a veto always wins, then forced review, then auto-merge, then 'not enough evidence'
@@ -31,7 +31,10 @@ class Rule(BaseModel):
 
     @model_validator(mode="after")
     def _compiles(self):
-        compile_condition(self.when)  # fail at load time, not at run time
+        try:
+            compile_condition(self.when)  # fail at load time, not at run time
+        except NotInUse:
+            pass                          # one of the project's own fields: checked by the run, which knows them
         if self.priority_offset and self.type != "force_review":
             raise ValueError(f"rule {self.id!r}: priority_offset only applies to force_review rules (it orders the review queue)")
         return self

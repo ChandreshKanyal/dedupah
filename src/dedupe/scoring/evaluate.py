@@ -7,7 +7,7 @@ import numpy as np
 
 from dedupe import crypto
 
-from .comparisons import COMPARISONS
+from .comparisons import comparisons
 
 THRESHOLDS = (0.5, 0.8, 0.9, 0.95, 0.99, 0.999)
 
@@ -55,7 +55,7 @@ def evaluate(con: duckdb.DuckDBPyConnection, scored: Path, data_dir: Path, repor
     for _, pa_, pb_ in fp_rows:
         for t in trap_map.get(pa_, set()) | trap_map.get(pb_, set()):
             fp_trap[t] += 1
-    names = [c.name for c in COMPARISONS]
+    names = [c.name for c in comparisons()]
     W = np.array(con.execute(f"SELECT {', '.join('w_' + n for n in names)} FROM sp WHERE is_true AND probability < {report_threshold}").fetchall() or np.zeros((0, len(names))))
     fn_weakest = Counter(names[i] for i in W.argmin(axis=1)) if len(W) else Counter()
     Wf = np.array(con.execute(f"SELECT {', '.join('w_' + n for n in names)} FROM sp WHERE NOT is_true AND probability >= {report_threshold}").fetchall() or np.zeros((0, len(names))))

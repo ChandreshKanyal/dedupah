@@ -12,12 +12,14 @@ Nodes:
     {"field": "dob_year", "op": "both_born_within_last", "value": 18}  both born in the last N years (relative to today, so it
                                                                         does not go stale)
     {"score": "probability", "op": ">=", "value": 0.97}   (also match_weight; ops: > >= < <= =)
-Fields are the standardised record columns (l_<field> vs r_<field>); comparisons are the scoring comparisons.
+    {"own_fields": "agree"}                              one of the project's own fields (dedupe.custom) agrees; never true for a
+                                                         project without such fields
+Fields are the standardised record columns (l_<field> vs r_<field>); comparisons are the scoring comparisons of the spec in force
+(dedupe.scoring.comparisons.spec): the built-in ones plus the project's own fields, named x_<field>.
 """
-from dedupe.scoring.comparisons import COMPARISONS, RECORD_COLUMNS
+from dedupe.scoring.comparisons import comparison, spec
 from dedupe.standardise.dates import reference_date
 
-_BY_NAME = {c.name: c for c in COMPARISONS}
 _SCORES = {"probability", "match_weight"}
 _CMP_OPS = {">", ">=", "<", "<=", "="}
 
@@ -26,10 +28,21 @@ class ConditionError(ValueError):
     pass
 
 
+class NotInUse(ConditionError):
+    """The condition names one of a project's own fields (x_...) that the spec in force does not define: the rule cannot fire. Checked
+    where the project's fields are known (a run); elsewhere the rule is accepted as written."""
+
+
+def _comparison(comp):
+    c = comparison(comp) if isinstance(comp, str) else None
+    if c is None:
+        valid = sorted(x.name for x in spec().comparisons)
+        raise (NotInUse if isinstance(comp, str) and comp.startswith("x_") else ConditionError)(f"unknown comparison {comp!r}; valid: {valid}")
+    return c
+
+
 def _label_value(comp: str, label: str) -> int:
-    if comp not in _BY_NAME:
-        raise ConditionError(f"unknown comparison {comp!r}; valid: {sorted(_BY_NAME)}")
-    labels = {v: k for k, v in _BY_NAME[comp].labels().items()}
+    labels = {v: k for k, v in _comparison(comp).labels().items()}
     if label not in labels:
         raise ConditionError(f"comparison {comp!r} has no level {label!r}; valid: {sorted(labels)}")
     return labels[label]
@@ -54,8 +67,7 @@ def compile_condition(node: dict) -> str:
         return f"(NOT {compile_condition(node['not'])})"
     if "comparison" in node:
         comp = node["comparison"]
-        if comp not in _BY_NAME:
-            raise ConditionError(f"unknown comparison {comp!r}; valid: {sorted(_BY_NAME)}")
+        _comparison(comp)
         col = f"lv_{comp}"
         if node.get("missing") is True:
             return f"({col} = -1)"
@@ -70,8 +82,8 @@ def compile_condition(node: dict) -> str:
         raise ConditionError(f"comparison condition needs one of is/is_not/in/not_in/missing: {node!r}")
     if "field" in node:
         f, op = node["field"], node.get("op")
-        if f not in RECORD_COLUMNS:
-            raise ConditionError(f"unknown field {f!r}; valid: {RECORD_COLUMNS}")
+        if f not in spec().record_columns:
+            raise (NotInUse if isinstance(f, str) and f.startswith("x_") else ConditionError)(f"unknown field {f!r}; valid: {list(spec().record_columns)}")
         both = f"l_{f} IS NOT NULL AND r_{f} IS NOT NULL"
         if op == "differs":
             return f"({both} AND l_{f} <> r_{f})"
@@ -94,6 +106,11 @@ def compile_condition(node: dict) -> str:
             since = reference_date().year - int(_num(node["value"]))
             return f"({both} AND l_{f} >= {since} AND r_{f} >= {since})"
         raise ConditionError(f"unknown field op {op!r} (differs, same, abs_diff_gt, both_gte, both_lte, both_born_within_last)")
+    if "own_fields" in node:
+        if node["own_fields"] != "agree":
+            raise ConditionError("own_fields takes 'agree'")
+        hits = [f"lv_{c.name} >= {c.agree_from}" for c in spec().comparisons if c.agree_from is not None]
+        return "(" + " OR ".join(hits) + ")" if hits else "(FALSE)"
     if "score" in node:
         if node["score"] not in _SCORES:
             raise ConditionError(f"unknown score {node['score']!r}; valid: {sorted(_SCORES)}")

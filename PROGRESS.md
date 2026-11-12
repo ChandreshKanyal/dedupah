@@ -3,7 +3,12 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-05, session 4: every agent-review finding closed; next: engine robustness) <<<
+## >>> RESUME HERE (latest state: 2026-11-12, session 5: the engine matches on any column; next: portal screens for it) <<<
+
+**2026-11-12 (section 96):** the user wants a versatile engine with full control, like the top tools. Done in the engine: a project's own
+fields (`dedupe/custom`, settings `custom_fields`, `custom_blocking`, `fixed_weights`, `compare_within_source`; mapping `custom`). Next:
+portal screens for these (mapping + rules page), save-time check of rules on custom fields, then learning from steward decisions, a
+match-one-record API, scale. Read section 96 first.
 
 **Where we are (2026-11-05).** The whole-portal revamp is complete (sections 76-83). **Every finding of the agent review is now closed**
 (summaries in `~/agent-review/*/report-summary.txt`): platform P1-01..15 (sections 75, 84-88), engine input E1-01..17 (75, 89, 93, 94),
@@ -2244,3 +2249,40 @@ Checked every U1/U2 finding against today's code; most were fixed by round 1 and
 - **The user's direction (2026-11-05):** no phone-width work for now; the engine must be robust first, then the website on desktop.
 - Browser: tour (28 screens) no problems; round-3 checks (`~/agent-review/p7/round3.py`) no problems. Tests: upload, mapping, local-auth tests.
   Suite: 550 passed, 4 skipped before the last portal-script edits; portal and changed-area tests pass after them; ruff clean.
+
+## 96. Engine: match on any column (a project's own fields) (2026-11-12, session 5)
+
+**The user's direction (2026-11-12):** the engine must dedupe any data, be as versatile as the top tools, and give the user full control over
+what is compared and how. **Review against Splink, Zingg, Senzing, Informatica MDM, Reltio:** our engine compared only the fixed customer
+fields (`COMPARISONS` was a constant imported everywhere); every other column was carried but never matched. That was the main gap.
+
+**What was built (engine only; no portal screens yet):**
+- `scoring/comparisons.py`: `MatchSpec` (comparisons, record columns, identifier weights, hand-set weights, custom fields, blocking rules,
+  within-source flag) held in a context variable; `comparisons()`, `spec()`, `use(spec)`. Every former use of the constant reads the spec in
+  force. `STRONG_BITS` moved here. `run_pipeline` builds the spec from the settings and runs all stages under it.
+- `dedupe/custom/`: `CustomField` (kinds text, company, name, code, number, date, category, phone, email: one cleaner and one ladder of
+  levels each; `identifier` for a code such as GSTIN; `ignore_words`, `tolerance`, `similar_at`, `common_values`, `block`), `BlockingRule`
+  (parts: field + exact / prefix / first_word / sounds / words / year), `build_spec`, `spec_of_run`. No user text reaches SQL unchecked.
+- `MatchingSettings`: `custom_fields`, `custom_blocking`, `fixed_weights` (comparison -> level or "*" -> bits; `{"phone": {"*": 0}}` = the
+  phone never counts), `compare_within_source` (False = only records of different sources are paired). All four are part of the reuse hash.
+- Mapping: `SourceConfig.custom` (field name -> column expression); values travel in the `attributes` JSON under the field's name, so the
+  golden record carries them. Standardisation adds the `x_<field>` columns (schema is now `standardise.run.schema()`).
+- Rules: comparisons `x_<field>` usable in conditions; new node `{"own_fields": "agree"}` (added to the default "not enough evidence" rule,
+  which otherwise rejected every pair without person evidence); a rule on a field the project dropped is skipped and listed in
+  `decisions.rules_not_applied` instead of failing the run.
+- Text levels go word by word ("Pioneer Summit Foods" vs "Pioneer Summit Motors" were "very similar" by whole-string similarity and merged).
+  Default blocking for text: same sounds in any order, and any two words that sound the same.
+- EM (no identifiers): the random-pair rates are cleaned of the matches they contain (`u = (u - lam*m)/(1 - lam)`, floor 5%): a near-unique
+  value looked weak because the only random pairs that showed it were the duplicates themselves.
+- Review evidence lists a run's custom comparisons (`ReviewService.comparisons` from the run's settings).
+
+**Measured (synthetic, 475 company records, 272 true pairs):** with GSTIN on 60% of records: precision 1.00, recall 0.95 (id_anchored). No
+identifier: precision 1.00, recall 0.72, 53 pairs to review (unsupervised_em; 0.60 before the EM fix). Customer benchmark unchanged
+(1,200 households, seed 7: F1 0.931 with identifiers; without 0.917 -> 0.918). Tests: `tests/test_custom_fields.py` (22); suite 573 passed,
+4 skipped; ruff clean.
+
+**Not done yet / weaknesses:** no portal screens (mapping "use as my own field", rules page for fields, blocking, weights); the API does not
+check a rule's level wording against the project's own fields at save time (only the run does); with `compare_within_source` off, big
+identifier blocks lose their chain links inside one source; values written without spaces ("Nimbusvertex") are not found by blocking;
+households and person-specific cleaning still assume people. Next candidates: learning from steward decisions (as Zingg, Tamr, dedupe do), a
+match-one-record API (Senzing, Reltio), scale beyond 1M records.

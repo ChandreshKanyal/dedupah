@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .comparisons import COMPARISONS, Comparison
+from .comparisons import Comparison, comparisons
 
 
 @dataclass
@@ -26,9 +26,9 @@ class Model:
         return np.append(np.array(self.weights[c.name]), 0.0)
 
     def save(self, path: Path) -> None:
-        labels = {c.name: c.labels() for c in COMPARISONS}
+        labels = {c.name: c.labels() for c in comparisons()}
         bits = {c.name: {labels[c.name].get(i, str(i)): round(float(w) / np.log(2), 2)
-                         for i, w in enumerate(self.weights[c.name]) if i in labels[c.name]} for c in COMPARISONS}
+                         for i, w in enumerate(self.weights[c.name]) if i in labels[c.name]} for c in comparisons()}
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"bias_bits": round(self.bias / np.log(2), 2), "weights_bits_by_level": bits,
                                     "weights": self.weights, "bias": self.bias, "u_random": self.u_random,

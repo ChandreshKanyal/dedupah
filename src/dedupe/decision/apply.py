@@ -6,7 +6,7 @@ import duckdb
 from dedupe import crypto
 from dedupe.scoring.comparisons import pairs_view_sql
 
-from .conditions import compile_condition
+from .conditions import NotInUse, compile_condition
 from .config import PRECEDENCE, DecisionConfig
 
 ZONE_REASON = {"auto_merge": "score at or above the auto-merge threshold", "review": "score between the review and auto-merge thresholds",
@@ -19,8 +19,15 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
     l_rid, r_rid, probability, decision, decided_by ('score' or a rule id), reason, fired (ids of every rule that matched)."""
     con.execute(f"CREATE OR REPLACE TABLE scored AS SELECT * FROM {crypto.rp(scored)}")
     con.execute(f"CREATE OR REPLACE TEMP TABLE wide AS {pairs_view_sql('scored')}")
-    rules = [r for r in cfg.rules if r.enabled]
-    fire = {r.id: compile_condition(r.when) for r in rules}
+    rules, fire, skipped = [], {}, []
+    for r in cfg.rules:
+        if not r.enabled:
+            continue
+        try:
+            fire[r.id] = compile_condition(r.when)
+            rules.append(r)
+        except NotInUse:              # the rule names a field this project no longer defines: it cannot fire, and the run says so
+            skipped.append(r.id)
     flags = ", ".join(f"coalesce({sql}, false) AS f_{rid}" for rid, sql in fire.items())
     con.execute(f"CREATE OR REPLACE TEMP TABLE flagged AS SELECT l_rid, r_rid, probability, {flags} FROM wide" if flags
                 else "CREATE OR REPLACE TEMP TABLE flagged AS SELECT l_rid, r_rid, probability FROM wide")
@@ -47,7 +54,8 @@ def decide(con: duckdb.DuckDBPyConnection, scored: Path, cfg: DecisionConfig, ou
     out.parent.mkdir(parents=True, exist_ok=True)
     con.execute(f"COPY decisions TO '{out}' ({crypto.fmt()})")
     counts = dict(con.execute("SELECT decision, count(*) FROM decisions GROUP BY 1").fetchall())
-    return {"pairs": sum(counts.values()), **{k: counts.get(k, 0) for k in ("auto_merge", "review", "reject")}}
+    return {"pairs": sum(counts.values()), **{k: counts.get(k, 0) for k in ("auto_merge", "review", "reject")},
+            **({"rules_not_applied": skipped} if skipped else {})}
 
 
 def _q(s: str) -> str:

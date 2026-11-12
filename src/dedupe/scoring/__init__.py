@@ -1,4 +1,4 @@
-from .comparisons import COMPARISONS
+from .comparisons import BUILTIN as COMPARISONS
 from .model import Model
 from .predict import score
 from .train import train

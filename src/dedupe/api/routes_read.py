@@ -296,7 +296,7 @@ RULE_TYPES = {"never_merge": "Never merge the two records (a veto: wins over eve
 
 @router.get("/rules-catalogue")
 def rules_catalogue(p: Principal = READ_CONFIG):
-    from dedupe.scoring.comparisons import COMPARISONS
+    from dedupe.scoring.comparisons import BUILTIN as COMPARISONS
     comps = [{"name": c.name, "title": COMPARISON_TITLES.get(c.name, c.name),
               "levels": [lv.label for lv in c.levels] + [c.else_label]} for c in COMPARISONS]
     return {"comparisons": comps, "rule_types": RULE_TYPES}

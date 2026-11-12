@@ -13,7 +13,7 @@ Term-frequency adjustment then scales a level by u_random(level) / tf(value) (ra
 import duckdb
 import numpy as np
 
-from .comparisons import COMPARISONS, DOB, STRONG_ID
+from .comparisons import DOB, comparisons, spec
 from .levels import level_counts, level_matrix, materialize, prepare_tf_tables, tf_matrix
 from .model import Model
 from .unsupervised import fit_em, fixed_levels, readiness
@@ -30,20 +30,13 @@ U_FLOOR = 1e-4
 L2 = 0.2  # tuned on size experiments (2.0 over-shrank evidence: F1 .56 -> .74 on small data, .79 -> .88 at 1,200 households)
 LN2 = float(np.log(2))
 
-# Evidence in bits for identifier comparisons. Principle: a valid government ID is shared by two different people
-# with probability ~1e-4 (data entry / OCR collisions) and differs for one person with probability ~1e-2.
-STRONG_BITS = {
-    "pan": {1: 13.2, 0: -6.6},
-    "aadhaar": {3: 13.2, 2: 8.0, 0: -6.6},
-    "gov_id": {1: 13.2, 0: -4.0},
-}
 
 
 def estimate_u_random(con: duckdb.DuckDBPyConnection, n_pairs: int, seed: float = 0.42, chunk: int = 250_000) -> dict:
     """Level frequencies among random record pairs, accumulated chunk by chunk (flat memory)."""
     n = con.execute("SELECT count(*) FROM records").fetchone()[0]
     con.execute(f"SELECT setseed({seed})")
-    totals = {c.name: np.zeros(c.n_levels + 1) for c in COMPARISONS}
+    totals = {c.name: np.zeros(c.n_levels + 1) for c in comparisons()}
     for _ in range(max(1, -(-n_pairs // chunk))):
         con.execute(f"""CREATE OR REPLACE TABLE rand_pairs AS
             SELECT DISTINCT least(a, b) AS l_rid, greatest(a, b) AS r_rid FROM
@@ -52,7 +45,7 @@ def estimate_u_random(con: duckdb.DuckDBPyConnection, n_pairs: int, seed: float 
         for name, cnt in level_counts(con, "rand_pairs").items():
             totals[name] += cnt
     u = {}
-    for c in COMPARISONS:
+    for c in comparisons():
         counts = totals[c.name][: c.n_levels]  # drop the 'not comparable' slot
         u[c.name] = ((counts + ALPHA) / (counts.sum() + ALPHA * c.n_levels)).tolist()
     return u
@@ -61,8 +54,8 @@ def estimate_u_random(con: duckdb.DuckDBPyConnection, n_pairs: int, seed: float 
 def seed_masks(L: np.ndarray):
     pos = np.zeros(len(L), dtype=bool)
     neg = np.zeros(len(L), dtype=bool)
-    for j, c in enumerate(COMPARISONS):
-        if c.name in STRONG_ID:
+    for j, c in enumerate(comparisons()):
+        if c.name in spec().strong_id:
             pos |= L[:, j] >= 1
             neg |= L[:, j] == 0
     return pos & ~neg, neg & ~pos
@@ -72,7 +65,7 @@ def _design(L: np.ndarray, comps: list[int]):
     """One-hot of every level (incl. 'different'); 'not comparable' -> all zeros. Returns X and column labels."""
     cols, labels = [], []
     for j in comps:
-        c = COMPARISONS[j]
+        c = comparisons()[j]
         for l in range(c.n_levels):
             cols.append((L[:, j] == l).astype(np.float64))
             labels.append((j, l))
@@ -99,7 +92,9 @@ def fit_logistic(X: np.ndarray, y: np.ndarray, l2: float = L2, iters: int = 40):
 def tf_terms(u_rand: dict, L: np.ndarray, TF: np.ndarray) -> np.ndarray:
     """Natural-log term-frequency adjustment per pair and comparison (0 where a level has none): log(u_random(level) / tf(value)), clipped."""
     A = np.zeros(L.shape, dtype=np.float64)
-    for j, c in enumerate(COMPARISONS):
+    for j, c in enumerate(comparisons()):
+        if c.name in spec().fixed_bits:          # a weight set by hand stays exactly what the project wrote
+            continue
         has_tf = ~np.isnan(TF[:, j]) & (L[:, j] >= 1)
         if has_tf.any():
             ur = np.array(u_rand[c.name])[L[has_tf, j]]
@@ -112,7 +107,7 @@ def tf_centres(A: np.ndarray, L: np.ndarray, rows: np.ndarray) -> dict:
     the average evidence of its level, so only the difference from that average may be added: otherwise the adjustment shifts the learned
     weight itself (agent review E1-03: an exact phone went from +2.96 to -0.32 bits and exact duplicates without a PAN went to review)."""
     out = {}
-    for j, c in enumerate(COMPARISONS):
+    for j, c in enumerate(comparisons()):
         for lv in range(1, c.n_levels):
             at = (L[:, j] == lv) & (A[:, j] != 0)
             pick = at & rows if (at & rows).sum() >= 5 else at
@@ -126,7 +121,7 @@ def adjusted_weights(weights: dict, u_rand: dict, L: np.ndarray, TF: np.ndarray,
     model was fitted discriminatively, see tf_centres)."""
     W = np.zeros(L.shape, dtype=np.float64)
     A = tf_terms(u_rand, L, TF)
-    for j, c in enumerate(COMPARISONS):
+    for j, c in enumerate(comparisons()):
         tbl = np.append(np.array(weights[c.name]), 0.0)
         W[:, j] = tbl[np.where(L[:, j] < 0, c.n_levels, L[:, j])]
         centre = (centres or {}).get(c.name)
@@ -146,39 +141,44 @@ def train(con: duckdb.DuckDBPyConnection, random_pairs: int | None = None) -> Mo
 
     pos, neg = seed_masks(L)
     mode, mode_reason = readiness(L, int(pos.sum()), int(neg.sum()))
-    age_levels = {lvl: AGE_M[label] for lvl, label in DOB.labels().items() if label in AGE_M}
-    if len(age_levels) != len(AGE_M):
-        raise ValueError(f"AGE_M labels {sorted(AGE_M)} must all exist on the DOB comparison")
-    age_total = sum(u_rand["dob"][lvl] for lvl in age_levels)
-    age_w = {lvl: float(np.log(m / max(u_rand["dob"][lvl] / age_total, U_FLOOR))) for lvl, m in age_levels.items()}
+    sp = spec()
+    age_w = {}
+    if DOB in sp.comparisons:
+        age_levels = {lvl: AGE_M[label] for lvl, label in DOB.labels().items() if label in AGE_M}
+        if len(age_levels) != len(AGE_M):
+            raise ValueError(f"AGE_M labels {sorted(AGE_M)} must all exist on the DOB comparison")
+        age_total = sum(u_rand["dob"][lvl] for lvl in age_levels)
+        age_w = {lvl: float(np.log(m / max(u_rand["dob"][lvl] / age_total, U_FLOOR))) for lvl, m in age_levels.items()}
+    # never learned: identifiers, age-based birth dates, and whatever the project set by hand (which wins over the other two)
+    fixed = fixed_levels(sp.strong_bits, age_w)
+    for name, bits in sp.fixed_bits.items():
+        fixed[name] = {**fixed.get(name, {}), **{lv: b * LN2 for lv, b in bits.items()}}
     info, centres = {}, {}
     if mode == "unsupervised_em":
-        weights, bias, info = fit_em(L, u_rand, fixed_levels(STRONG_BITS, age_w), pairs_total=n * (n - 1) / 2)
+        weights, bias, info = fit_em(L, u_rand, fixed, pairs_total=n * (n - 1) / 2)
         if info["likely_matches"] > 0.6 * len(L):          # a file of near-copies, or EM found a pattern that is not "same person": say so
             mode_reason += (f"; note: {info['likely_matches']} of {len(L)} candidate pairs look like the same person, which is unusually many, "
                             "so check a sample of the merges")
     else:
-        weights = {c.name: [0.0] * c.n_levels for c in COMPARISONS}
+        weights = {c.name: [0.0] * c.n_levels for c in comparisons()}
         bias = 0.0
         if mode == "id_anchored":
             seeded = pos | neg
-            soft = [j for j, c in enumerate(COMPARISONS) if c.name not in STRONG_ID]
+            soft = [j for j, c in enumerate(comparisons()) if c.name not in sp.strong_id]
             X, labels = _design(L[seeded], soft)
             y = pos[seeded].astype(np.float64)
             coef, bias = fit_logistic(X, y)
             for (j, l), w in zip(labels, coef, strict=True):
-                weights[COMPARISONS[j].name][l] = float(w)
+                weights[comparisons()[j].name][l] = float(w)
             centres = tf_centres(tf_terms(u_rand, L, tf_matrix(con, "cand_levels")), L, seeded)
-        for name, bits in STRONG_BITS.items():
-            for l, b in bits.items():
-                weights[name][l] = b * LN2
-        for lvl, w in age_w.items():
-            weights["dob"][lvl] = w
+        for name, levels in fixed.items():
+            for l, w in levels.items():
+                weights[name][l] = w
     # the intercept is the prior for pairs with no identifier evidence; identifier-based pairs are scored as
     # intercept + identifier weight + other evidence (the identifier is evidence beyond the seeds' own prior)
     model = Model(weights=weights, bias=float(bias), u_random=u_rand,
                   meta={"random_pairs": random_pairs, "candidate_pairs": int(len(L)),
                         "seed_pairs": {"same_person": int(pos.sum()), "different_people": int(neg.sum())},
                         "scoring_mode": mode, "scoring_mode_reason": mode_reason, "em": info,
-                        "regularisation_l2": L2, "strong_id_bits": STRONG_BITS, "tf_centres": centres})
+                        "regularisation_l2": L2, "strong_id_bits": sp.strong_bits, "fixed_bits": sp.fixed_bits, "tf_centres": centres})
     return model

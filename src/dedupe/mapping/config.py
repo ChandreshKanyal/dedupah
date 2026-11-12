@@ -7,8 +7,13 @@ A field expression is one of:
     {"column": "c", "when": {"doc_type": "PAN"}}  value only when other columns equal given values
     {"column": "c", "when": {"doc_type": ["pan", "pan card"]}}  ... or are one of the values (case and spaces ignored)
     {"const": "x"}                                a constant
+
+`custom` maps the project's own fields (dedupe.custom) the same way: {"company": "Org Name"}. Their values travel in the `attributes` JSON
+under the field's name, so two sources that call the column differently still feed one field, and the golden record carries it like any
+other extra column.
 """
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +32,15 @@ class SourceConfig(BaseModel):
     record_id: str | None = None  # column holding the source's own primary key; row number if absent
     fields: dict[str, Any] = {}
     attributes: list[str] = []  # source-specific columns carried along untouched as JSON
+    custom: dict[str, Any] = {}  # the project's own field name -> field expression
+
+    @field_validator("custom")
+    @classmethod
+    def _custom_names(cls, v):
+        bad = sorted(n for n in v if not re.fullmatch(r"[a-z][a-z0-9_]{0,39}", n))
+        if bad:
+            raise ValueError(f"custom field names are lower-case letters, digits and underscores: {bad}")
+        return v
 
     @field_validator("fields")
     @classmethod
@@ -95,8 +109,9 @@ def compile_select(cfg: SourceConfig, source_columns: list[str], table: str = "b
                                  else f"CAST(row_number() OVER () + {row_offset} AS VARCHAR)")
     for name in CANONICAL_FIELDS:
         parts[name] = _expr(cfg.fields[name], used) if name in cfg.fields else "NULL"
-    if cfg.attributes:
-        pairs = ", ".join(f"{_lit(a)}, {_col(a)}" for a in cfg.attributes)
+    carried = {**{a: _col(a) for a in cfg.attributes if a not in cfg.custom}, **{n: _expr(e, used) for n, e in cfg.custom.items()}}
+    if carried:
+        pairs = ", ".join(f"{_lit(a)}, {sql}" for a, sql in carried.items())
         parts["attributes"] = f"CAST(json_object({pairs}) AS VARCHAR)"
     else:
         parts["attributes"] = "NULL"

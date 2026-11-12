@@ -455,6 +455,9 @@
         "not": {
           "any": [
             {
+              "own_fields": "agree"
+            },
+            {
               "comparison": "pan",
               "is": "same PAN"
             },

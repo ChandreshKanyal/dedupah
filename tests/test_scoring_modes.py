@@ -110,7 +110,9 @@ def test_em_learns_that_agreeing_fields_mean_a_match():
     for name, hi, lo in (("name", 7, 0), ("phone", 2, 0), ("email", 1, 0), ("gender", 1, 0)):
         agree = np.where(match, rng.random(n) < 0.9, rng.random(n) < 0.1)
         L[:, IX[name]] = np.where(agree, hi, lo)
-    u = {c.name: [0.9] + [0.1 / (c.n_levels - 1)] * (c.n_levels - 1) for c in COMPARISONS}   # agreeing by chance is rare
+    # what random pairs of this population show: a fifth of them are matches (agreeing 90% of the time), the rest agree 10% of the time
+    top = {"name": 7, "phone": 2, "email": 1, "gender": 1}
+    u = {c.name: [0.74 if lv == 0 else 0.26 if lv == top.get(c.name) else 1e-6 for lv in range(c.n_levels)] for c in COMPARISONS}
     weights, bias, info = un.fit_em(L, u, un.fixed_levels({}, {}), pairs_total=n)
     assert weights["name"][7] > 1.0 > -1.0 > weights["name"][0]
     assert weights["phone"][2] > 0 > weights["phone"][0]

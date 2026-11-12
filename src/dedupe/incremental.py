@@ -23,12 +23,13 @@ import duckdb
 from dedupe import crypto
 
 from .mapping import OUTPUT_COLUMNS
-from .scoring.comparisons import COMPARISONS, level_case_sql
+from .scoring.comparisons import comparisons, level_case_sql
 from .standardise.identifiers import _token_key
-from .standardise.run import SCHEMA as STD_SCHEMA
 from .standardise.run import STANDARDISE_VERSION
+from .standardise.run import schema as std_schema
 
-REUSE_SETTINGS = ("blocking_rules", "blocking_cap")   # the run settings that decide which pairs exist: only these must match for reuse (E2-13)
+# the run settings that decide which pairs exist and what their scores are: only these must match for reuse (E2-13)
+REUSE_SETTINGS = ("blocking_rules", "blocking_cap", "custom_fields", "custom_blocking", "fixed_weights", "compare_within_source")
 MAX_CHANGE_FOR_MODEL = 0.3          # more than this share of records new, changed or removed: learn the model again
 HASHES = "record_hashes.parquet"
 NEEDED = ("standardised.parquet", HASHES, "candidates.parquet", "candidates.index.parquet", "scored_pairs.parquet", "pipeline_summary.json")
@@ -37,8 +38,8 @@ NEEDED = ("standardised.parquet", HASHES, "candidates.parquet", "candidates.inde
 def fingerprints() -> dict:
     """What must match for an earlier run's work to be reusable. `token_key` is a keyed hash of a fixed text, never the key: a changed
     DEDUPE_TOKEN_KEY gives every Aadhaar a new token, so old and new tokens must never meet in one run (agent review E2-04)."""
-    comps = json.dumps([[c.name, c.n_levels, level_case_sql(c)] for c in COMPARISONS])
-    return {"standardise": f"{STANDARDISE_VERSION}:{hashlib.sha256(str(STD_SCHEMA).encode()).hexdigest()[:16]}",
+    comps = json.dumps([[c.name, c.n_levels, level_case_sql(c)] for c in comparisons()])
+    return {"standardise": f"{STANDARDISE_VERSION}:{hashlib.sha256(str(std_schema()).encode()).hexdigest()[:16]}",
             "comparisons": hashlib.sha256(comps.encode()).hexdigest()[:16],
             "token_key": hmac.new(_token_key(), b"dedupe incremental fingerprint", hashlib.sha256).hexdigest()[:16]}
 
@@ -89,7 +90,7 @@ def split_canonical(con: duckdb.DuckDBPyConnection, canonical: Path, out: Path) 
 
 def merge_standardised(con: duckdb.DuckDBPyConnection, prev: Path, fresh: Path, hashes: Path, out: Path) -> None:
     """All records' standardised rows: the previous run's for unchanged records, freshly standardised ones for the rest."""
-    cols = ", ".join(f.name for f in STD_SCHEMA)
+    cols = ", ".join(f.name for f in std_schema())
     con.execute(f"""COPY (
         SELECT {cols} FROM {crypto.rp(prev / 'standardised.parquet')} o
           SEMI JOIN (SELECT source_id, source_record_id FROM {crypto.rp(hashes)} ANTI JOIN changed_keys USING (source_id, source_record_id)) u

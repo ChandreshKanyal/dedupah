@@ -23,8 +23,8 @@ import pyarrow as pa
 from dedupe import crypto
 
 from . import incremental as inc
-from .blocking import DEFAULT_RULES, rules_by_name
 from .blocking import generate as block
+from .blocking import rules_by_name
 from .clustering import ClusterConfig, cluster
 from .clustering.judged import audit, constraints_from_store, drop_vetoes_overridden_by_stewards, id_aliases
 from .clustering.run import load_inputs, predictions, write_outputs
@@ -39,6 +39,7 @@ from .ingest import ingest
 from .review import build_queue
 from .scoring import score, train
 from .scoring.__main__ import load_tables
+from .scoring.comparisons import spec, use
 from .scoring.levels import materialize, prepare_tf_tables
 from .scoring.model import Model
 from .standardise.run import run as standardise
@@ -71,6 +72,11 @@ class PipelineConfig:
     model_path: Path | None = None  # where the fitted model is saved (None = <work>/../models/fs_model.json)
     previous_run: Path | None = None  # an earlier successful run of the same data: reuse its work for unchanged records (see dedupe.incremental)
     config_versions: dict | None = None  # name -> version chosen when the run was started (decision, survivorship, settings); else the active ones
+    # what is compared beyond the built-in customer fields: see governance.MatchingSettings and dedupe.custom
+    custom_fields: list = field(default_factory=list)
+    custom_blocking: list = field(default_factory=list)
+    fixed_weights: dict = field(default_factory=dict)
+    compare_within_source: bool = True
 
 
 class _Meter:
@@ -129,6 +135,17 @@ def _git_commit() -> str | None:
 
 
 def run_pipeline(cfg: PipelineConfig) -> dict:
+    """Resolves the configuration, then runs every stage under the project's own match spec."""
+    res_cfg = resolve(cfg.config_store_url, cfg.decision_config, cfg.survivorship_config, cfg.config_versions)
+    if res_cfg.settings:   # an active settings version in the store wins over the values passed in
+        cfg = dataclasses.replace(cfg, **res_cfg.settings.model_dump())
+    effective = MatchingSettings.model_validate({k: getattr(cfg, k) for k in MatchingSettings.model_fields
+                                                 if k != "blocking_rules" or cfg.blocking_rules is not None})
+    with use(effective.spec()):
+        return _run(cfg, res_cfg, effective.model_dump(mode="json"))
+
+
+def _run(cfg: PipelineConfig, res_cfg, effective: dict) -> dict:
     meter = _Meter()
     work = cfg.work
     crypto.require_in_production(os.environ.get("DEDUPE_ENV", "dev").strip().lower())
@@ -142,12 +159,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
     clusters_dir, hh_dir = work / "clusters", work / "households"
     summary: dict = {"git_commit": _git_commit(), "sources_config": str(cfg.sources) if cfg.sources else None,
                      "encryption_at_rest": {"enabled": crypto.enabled(), "key_id": crypto.active().key_id if crypto.enabled() else None}}
-    res_cfg = resolve(cfg.config_store_url, cfg.decision_config, cfg.survivorship_config, cfg.config_versions)
     dcfg, scfg = res_cfg.decision, res_cfg.survivorship
-    if res_cfg.settings:   # an active settings version in the store wins over the values passed in
-        cfg = dataclasses.replace(cfg, **res_cfg.settings.model_dump())
-    effective = {k: getattr(cfg, k) for k in MatchingSettings.model_fields}
-    effective["blocking_rules"] = effective["blocking_rules"] or [r.name for r in DEFAULT_RULES]
     summary["configs"] = {**res_cfg.used, "effective_settings": {**effective, "hash": content_hash(effective),
                                                                   "reuse_hash": content_hash({k: effective[k] for k in inc.REUSE_SETTINGS})}}
     used_dir = work / "config_used"
@@ -190,7 +202,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         with meter.stage("redact_aadhaar"):
             redact_aadhaar(p["canonical"])
     with meter.stage("blocking"):
-        gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con, rules=rules_by_name(cfg.blocking_rules))
+        gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con, rules=[*rules_by_name(effective["blocking_rules"]), *spec().blocking])
         summary["blocking"] = {"records": gen["records"], "candidate_pairs": gen["candidate_pairs"], "all_pairs": gen["all_pairs"]}
         _drop(con, "rule_pairs", "k", "blocks")
     with meter.stage("scoring"):
