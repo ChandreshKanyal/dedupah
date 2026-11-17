@@ -134,8 +134,8 @@ def dataset_rows(request: Request, name: DatasetName, project_id: str = PID, run
     from dedupe.custom import spec_of_run
     from dedupe.review.service import MASKED_KINDS
     own = spec_of_run(run_dir).custom
-    readable = tuple(f"extra_{f.name}" for f in own if f.kind not in MASKED_KINDS)
-    exact = tuple(f"extra_{f.name}" for f in own if f.kind in MASKED_KINDS)
+    readable = tuple(f.golden_col for f in own if f.kind not in MASKED_KINDS)
+    exact = tuple(f.golden_col for f in own if f.kind in MASKED_KINDS)
     try:
         page = preview(run_dir, name, limit, offset, q, readable, exact)
     except ExportError as e:

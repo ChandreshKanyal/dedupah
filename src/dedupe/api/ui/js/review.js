@@ -252,17 +252,20 @@ async function viewInbox(pidArg, statusArg, ridArg) {
 const FIELD_ORDER = ["full_name", "father_name", "dob", "gender", "marital_status", "mobile", "email", "address", "city", "state", "pincode", "pan", "aadhaar_last4", "passport_no",
   "dl_no", "voter_id", "occupation", "annual_income"];
 // A person's golden values with the project's own fields in front ("own:<title>"), for the side-by-side table.
-const withOwn = (p) => ({ ...Object.fromEntries((p.own || []).filter((o) => o.value != null).map((o) => ["own:" + o.title, o.value])), ...p.golden });
+const withOwn = (p) => ({ ...Object.fromEntries((p.own || []).filter((o) => o.value != null).map((o) => ["own:" + o.title, o.value])), ...p.golden,
+  ...Object.fromEntries(Object.entries(p.extra || {}).map(([k, v]) => ["kept:" + k, v])) });
 // The columns of a table of source records: the project's own fields first; built-in columns nobody filled are left out when it has own fields.
 function recordColumns(people) {
   const recs = people.flatMap((p) => p.records);
   const own = (people[0].own || []).map((o) => [o.title, (r) => (r.own || {})[o.name]]);
   const base = [["Name as written", (r) => r.name_as_written], ["Date of birth", (r) => r.dob], ["Mobile", (r) => r.mobile], ["Email", (r) => r.email], ["City", (r) => r.city]];
-  const cols = own.length ? [...own, ...base.filter(([, f]) => recs.some((r) => f(r)))] : base;
+  const keptNames = [...new Set(recs.flatMap((r) => Object.keys(r.kept || {})))];
+  const kept = keptNames.map((k) => [k + " (kept)", (r) => (r.kept || {})[k]]);
+  const cols = [...(own.length ? [...own, ...base.filter(([, f]) => recs.some((r) => f(r)))] : base), ...kept];
   return [cols.map((c) => c[0]), (r) => cols.map(([, f]) => el("td", {}, f(r) == null ? "" : String(f(r))))];
 }
 function fieldDiff(a, b) {
-  const rank = (k) => (k.startsWith("own:") ? -1 : (FIELD_ORDER.indexOf(k) + 99) % 199);
+  const rank = (k) => (k.startsWith("own:") ? -1 : k.startsWith("kept:") ? 999 : (FIELD_ORDER.indexOf(k) + 99) % 199);
   const keys = [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].sort((x, y) => rank(x) - rank(y));
   const norm = (v) => String(v).trim().toLowerCase().replace(/[\s.,-]+/g, " ");
   return el("div", { class: "scroll" }, el("table", { class: "diff" }, head(["Field", W().Person + " A", W().Person + " B", "Compared"]), el("tbody", {}, keys.map((k) => {
@@ -271,7 +274,7 @@ function fieldDiff(a, b) {
     const same = !one && norm(x) === norm(y);
     const masked = String(x).includes("*") || String(y).includes("*");
     const verdict = one ? ["Only on one side", "muted"] : same ? [masked ? "Looks the same (masked)" : "Same", "same"] : ["Differs", "differs"];
-    return el("tr", {}, el("th", { scope: "row" }, k.startsWith("own:") ? k.slice(4) : fieldTitle(k)), el("td", {}, x == null ? "" : String(x)), el("td", {}, y == null ? "" : String(y)), el("td", { class: "flag " + verdict[1] }, verdict[0]));
+    return el("tr", {}, el("th", { scope: "row" }, k.startsWith("own:") ? k.slice(4) : k.startsWith("kept:") ? k.slice(5) + " (kept)" : fieldTitle(k)), el("td", {}, x == null ? "" : String(x)), el("td", {}, y == null ? "" : String(y)), el("td", { class: "flag " + verdict[1] }, verdict[0]));
   }))));
 }
 function recordsTable(p) {
@@ -366,11 +369,11 @@ async function viewPerson(pid, rid, person, reveal) {
   const v = await api("GET", base + "/people/" + encodeURIComponent(person) + (reveal ? "?" + unmaskQuery(reveal) : ""));
   await refreshCache();
   const writer = can("judgment.write");
-  const correct = async (fieldName, current) => {
+  const correct = async (fieldName, current, title) => {
     const value = el("input", { type: "text", maxlength: "200", value: current == null || String(current).includes("*") ? "" : String(current) });
     const why = el("textarea", { class: "plain", maxlength: "300" });
     const err = errBox();
-    const out = await dialog("Correct " + fieldTitle(fieldName), el("div", {}, el("p", { class: "hint" }, "The golden record of " + person + " will show this value from the project's next run on, whatever the sources say. Leave it empty to clear the field."),
+    const out = await dialog("Correct " + (title || fieldTitle(fieldName)), el("div", {}, el("p", { class: "hint" }, "The golden record of " + person + " will show this value from the project's next run on, whatever the sources say. Leave it empty to clear the field."),
       field("New value", value), field("Why? (at least 10 characters; it is recorded)", why), err), "Save correction", async () => {
       try {
         return await api("POST", base + "/people/" + person + "/override", { field: fieldName, value: value.value.trim() || null, reason: why.value.trim() }, { "Idempotency-Key": uuid() });
@@ -389,8 +392,10 @@ async function viewPerson(pid, rid, person, reveal) {
     const out = await api("POST", base + "/people/" + person + "/split", { parts: [chosen.map(key), rest.map(key)], reason: why }, { "Idempotency-Key": uuid() });
     say("Split recorded" + (out.pending_approval ? ". It waits for a second person." : ". The records become separate people at the project's next run."), "good");
   };
-  const golden = Object.entries(v.golden || {}).map(([k, val]) => [fieldTitle(k), el("span", { class: "title-row" }, String(val),
-    writer ? btn("Correct", () => correct(k, val), "small ghost", "edit", { "aria-label": "Correct " + label(k) }) : null)]);
+  // a value with its Correct button: built-in fields, the project's own fields and the kept columns alike
+  const valueCell = (column, title, val) => el("span", { class: "title-row" }, String(val),
+    writer ? btn("Correct", () => correct(column, val, title), "small ghost", "edit", { "aria-label": "Correct " + title }) : null);
+  const golden = Object.entries(v.golden || {}).map(([k, val]) => [fieldTitle(k), valueCell(k, fieldTitle(k), val)]);
   const [recTitles, recCells] = recordColumns([v]);
   const rows = v.records.map((r) => {
     const cb = writer && v.records.length > 1 ? el("input", { type: "checkbox", "aria-label": "Select record " + r.source_id + " " + r.source_record_id }) : null;
@@ -406,8 +411,10 @@ async function viewPerson(pid, rid, person, reveal) {
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run", R(pid, rid)), crumb(W().Many, R(pid, rid) + "/customers"), person)),
   v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map((f) => ((v.own || []).find((o) => "extra_" + o.name === f) || { title: fieldTitle(f) }).title).join(", ") + ". The golden record shows the best-supported value.") : null,
   el("h2", { class: "section" }, "Golden record"),
-  golden.length || (v.own || []).some((o) => o.value != null) ? kv([...(v.own || []).filter((o) => o.value != null).map((o) => [o.title, String(o.value)]), ...golden]) : empty("No values."),
-  Object.keys(v.extra || {}).length ? [el("h3", { class: "section" }, "Other columns from the sources"), kv(Object.entries(v.extra).map(([k, val]) => [label(k), String(val)]))] : null,
+  golden.length || (v.own || []).some((o) => o.value != null) ? kv([...(v.own || []).filter((o) => o.value != null).map((o) => [o.title, valueCell(o.column, o.title, o.value)]), ...golden])
+    : empty("No values."),
+  Object.keys(v.extra || {}).length ? [el("h3", { class: "section" }, "Other columns from the sources"),
+    kv(Object.entries(v.extra).map(([k, val]) => [k, valueCell("extra_" + k.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""), k, val)]))] : null,
   el("h2", { class: "section" }, "Source records"),
   table([...(writer && v.records.length > 1 ? [""] : []), "Source", "Record", ...recTitles], rows),
   writer && v.records.length > 1 ? el("div", { class: "row" }, btn("Split the ticked records into a new " + W().person, split, "", "split"),

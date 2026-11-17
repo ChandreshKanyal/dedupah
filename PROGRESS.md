@@ -2399,3 +2399,34 @@ on New project). Filled number = done, thick outline = the next step, grey = the
 Matching rules, Golden record (each says "not chosen yet" until it is), Fields and search (optional). Page titles say "Rules: Matching
 rules". The old wizard bar (`setupSteps`) is gone; guided Back / Next follow Data > Matching rules > Golden record > the project page.
 Checked in a browser on an empty project and a finished one (every step and tab, `~/agent-review/own/j2.py`): 0 problems.
+
+## 102. Nothing a person chooses disappears: end-to-end sweep (2026-11-17, session 5)
+
+**The user's report:** a column kept as an extra column vanished from the preview and could not be used in rules; "think of this as
+production-grade software that works from start to end". Memory `production-grade-end-to-end`. Every choice was traced through every later
+screen; what was missing or silently ignored was fixed:
+- **Kept columns** show in the mapping preview (new preview: every column with what it is used for and how many rows fill it; real
+  column titles), on the source page, the coverage table, the list (masked, found by the whole value), the record page and Review (side by
+  side and per record, masked). **Rules can use a kept column:** choosing it (also under "Never the same when") turns it into a field of
+  the project's own that reads that column in every source (`CustomField.column`, read by `standardise._custom_values`; no mapping changes).
+- **Corrections** of own fields and kept columns (Correct buttons on the record page; API and judgment store accept `extra_<name>`); the
+  run page says how many corrections it applied (`golden.steward_overrides_applied`).
+- **Said, never skipped quietly:** the run page's first screen lists rules not applied (field not compared), own fields with no value in
+  any record (`own_fields_empty`), kept columns not carried, columns that appeared late. The rules page marks a rule whose field the project
+  does not compare. The rules try-out names rules it could not try. Removing a field that rules use asks first and names the rules. A
+  field waiting for approval says so (mapping and rules). A source mapping a field the project does not define is marked on its page.
+- **Sources with only their own fields** (no name, PAN or mobile) were refused by the save check: any matchable column or own field now
+  counts (`mapping.check.MATCHABLE`).
+- **Person or not:** a customer project that adds a field of its own stays a customer project (words, starter rules, households) unless no
+  source maps a person's name (`routes_read.about_people`; the pipeline turns households off only when no record has a person's name).
+- **Two columns for one field** (first and last name; mobile and landline): the mapping asks "Join them" / "Use as a fallback" / "Use
+  only this" instead of silently taking the field from the first column (engine `concat` / `coalesce`). Source pages and the coverage table
+  say it in words ("first_name + last_name (joined)", "mobile, else landline").
+- Result files are named in the project's words.
+
+**Checked in a browser** on a fresh sandbox (`~/agent-review/e2e/` e1 leads with a kept lead_id used in a rule, e2 parts file with own
+fields only, e3 corrections + search + remove guard + re-run, e4 split names and phone fallback; synthetic files there): all steps as
+expected, 0 console or HTTP problems; the 28-screen tour also clean. Tests updated (allow-lists of the person view and run summary); suite 580 passed, 4 skipped; ruff clean.
+
+**Still open:** the Data and Rules pages redesign proposed to the user (cards, presets, side panel) waits for their go-ahead. Not swept yet:
+second-approval flows end to end, schedules, database destinations.

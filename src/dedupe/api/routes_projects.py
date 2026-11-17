@@ -28,7 +28,8 @@ MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's o
 CREATE = Depends(require("projects.create"))
 DELETE_DATA = Depends(require("data.delete"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
-SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "oversize_people", "largest_person", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden", "source_quality", "incremental", "duplicate_record_ids", "fields_not_read")
+SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "oversize_people", "largest_person", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden", "source_quality", "incremental", "duplicate_record_ids", "fields_not_read", "rules_not_applied",
+                "extra_columns_skipped", "own_fields_empty")
 
 
 class Strict(BaseModel):
@@ -121,9 +122,10 @@ def _project_view(sv, proj, p: Principal | None = None, request: Request | None 
     word = words = None
     if request is not None and p:
         try:
-            from .routes_read import project_settings
-            used, _ = project_settings(project_scope(request, proj.id).configs)
-            word = (used.get("record_name") or "").strip().lower() or ("record" if used.get("custom_fields") else None)
+            from .routes_read import about_people, project_settings
+            configs = project_scope(request, proj.id).configs
+            used, _ = project_settings(configs)
+            word = (used.get("record_name") or "").strip().lower() or (None if about_people(configs) else "record")
             words = (used.get("record_name_plural") or "").strip().lower() or None
         except Exception:      # noqa: BLE001  the word is decoration: a project whose settings cannot be read keeps the usual words
             word = None

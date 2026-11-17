@@ -32,7 +32,7 @@ def _dry_run(work: Path, candidate: DecisionConfig, samples: int) -> dict:
                     JOIN {crypto.rp(index)} i USING (source_id, source_record_id)""")
     with tempfile.TemporaryDirectory() as tmp:
         after = Path(tmp) / "decisions.parquet"
-        decide(con, scored, candidate, after)
+        stats = decide(con, scored, candidate, after)
         con.execute(f"""CREATE TABLE cmp AS SELECT a.l_rid, a.r_rid, a.probability, b.decision AS before, a.decision AS after,
                         b.decided_by AS before_by, a.decided_by AS after_by
                         FROM {crypto.rp(before)} b JOIN {crypto.rp(after)} a USING (l_rid, r_rid)""")
@@ -55,6 +55,8 @@ def _dry_run(work: Path, candidate: DecisionConfig, samples: int) -> dict:
     con.close()
     return {"pairs": n, "zones_before": {z: zone["before"].get(z, 0) for z in ZONES}, "zones_after": {z: zone["after"].get(z, 0) for z in ZONES},
             "moved": {f"{a} -> {b}": c for a, b, c in moves}, "changed_by_rule": by_rule, "examples": examples,
+            # rules on a field this run did not compare cannot be tried on it (a field added since): the try-out says so
+            "rules_not_applied": (stats or {}).get("rules_not_applied", []),
             "note": "decision zones only; the review queue and clusters follow from them but were not re-run"}
 
 

@@ -274,8 +274,23 @@ function runOverview(r, pid) {
   const big = s.oversize_people ? el("div", { class: "notice warn", role: "note" }, plural(s.oversize_people, wordsOf(pid).one + " has", wordsOf(pid).many + " have") +
     " unusually many records (the largest " + num(s.largest_person) + "). A shared office phone, an agent's email or a default identifier can join " +
     wordsOf(pid).diff.toLowerCase() + ": open them under " + wordsOf(pid).Many + " and split any that are not one " + wordsOf(pid).person + ".") : null;
-  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s, pid), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat(wordsOf(pid).Many, num(s.people)),
+  // what this run could not use: said on the first screen, never only in the folded details
+  const notUsed = [
+    (s.rules_not_applied || []).length ? plural(s.rules_not_applied.length, "matching rule was", "matching rules were") + " not applied, because " +
+      (s.rules_not_applied.length === 1 ? "it uses" : "they use") + " a field the project does not compare (yet): " + s.rules_not_applied.map((id) => label(id)).join(", ") +
+      ". Check the field under Rules, Fields and search (a new field must be in use before a run can use it)." : null,
+    (s.own_fields_empty || []).length ? "Fields of your own with no value in any record: " + s.own_fields_empty.join(", ") +
+      ". Rules on them never applied. Check that a column of each data source fills them (Data, the source, Edit mapping)." : null,
+    (s.extra_columns_skipped || []).length ? "Columns kept as they are but not carried into the golden record (unusual characters, or too many columns): " +
+      s.extra_columns_skipped.join(", ") + "." : null,
+    ...Object.entries(s.fields_not_read || {}).map(([src, names]) => src + ": columns that appear only after the first records were not read: " + names.join(", ") +
+      ". Add them to the mapping of " + src + " if they matter."),
+  ].filter(Boolean);
+  const notice = notUsed.length ? el("div", { class: "notice warn", role: "note" }, el("strong", {}, "Not used in this run. "), el("ul", { class: "plain" }, notUsed.map((t) => el("li", {}, t)))) : null;
+  const parts = [el("p", { class: "lead" }, sentence), notice, scoringNotice(s, pid), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat(wordsOf(pid).Many, num(s.people)),
     stat("Merged automatically", num(s.auto_merged_pairs)), stat("Sent to a person", num(s.review_items), can("queue.read") ? link("/review/" + pid) : null))];
+  const corrected = (s.golden || {}).steward_overrides_applied || 0;
+  if (corrected) parts.push(el("p", {}, plural(corrected, "value corrected by a person was", "values corrected by people were") + " applied to the golden records."));
   if (j && j.judgments_applied_to_run) {
     parts.push(el("h2", { class: "section" }, "Decisions by people this run applied"),
       kv([["Decisions applied", num(j.judgments_applied_to_run)], ...Object.entries(j.by_kind || {}).map(([k, n]) => ["  " + kindLabel(k, pid), num(n)]),

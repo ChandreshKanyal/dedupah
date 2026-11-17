@@ -117,6 +117,11 @@ def check_source(src: SourceConfig, sample_rows: int = 200) -> pa.Table:
         con.close()
 
 
+# fields that can find and compare records on their own (a gender or a city alone never pairs anything)
+MATCHABLE = ("full_name", "pan", "mobile", "mobile_alt", "email", "aadhaar", "aadhaar_reference_key", "customer_number", "passport_no", "dl_no",
+             "voter_id", "dob", "address")
+
+
 def check_sources(content: dict) -> list[dict]:
     """[] when every source is fine, else [{source_id, problem}] (the whole content is checked, not just the first failure)."""
     try:
@@ -136,8 +141,9 @@ def check_sources(content: dict) -> list[dict]:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", s.source_id):
             problems.append({"source_id": s.source_id, "problem": "a source id is 1-40 letters, digits, - or _"})
             continue
-        if not s.fields.get("full_name") and not s.fields.get("pan") and not s.fields.get("mobile"):
-            problems.append({"source_id": s.source_id, "problem": "map at least a name, PAN or mobile: without one of them no record can be matched"})
+        if not any(s.fields.get(f) for f in MATCHABLE) and not s.custom:
+            problems.append({"source_id": s.source_id, "problem": "map at least one column that records can be matched on (a name, an identifier, a phone, an "
+                                                                  "email, an address, or a field of your own): without one no record can be matched"})
         try:
             check_source(s)
         except SourceProblem as e:

@@ -51,7 +51,9 @@ async function rulesPanel(p, name, editing) {
       el("p", { class: "hint" }, "Nothing is changed: this shows how the pairs of the latest run would have been decided with this version."),
       table(["Decision", ["Now"], ["With this version"], ["Change"]], zones.map((z) => el("tr", {}, el("td", {}, { auto_merge: "Merged automatically", review: "Sent to a person", reject: "Kept apart" }[z]), el("td", { class: "num" }, num(r.zones_before[z])),
         el("td", { class: "num" }, num(r.zones_after[z])), el("td", { class: "num" }, (r.zones_after[z] - r.zones_before[z] > 0 ? "+" : "") + num(r.zones_after[z] - r.zones_before[z]))))),
-      el("p", { class: "hint" }, Object.keys(r.moved).length ? "Moved: " + Object.entries(r.moved).map(([k, n]) => k + " " + num(n)).join(", ") : "No pair changes decision."));
+      el("p", { class: "hint" }, Object.keys(r.moved).length ? "Moved: " + Object.entries(r.moved).map(([k, n]) => k + " " + num(n)).join(", ") : "No pair changes decision."),
+      (r.rules_not_applied || []).length ? el("p", { class: "warn-line" }, "Not tried: " + r.rules_not_applied.map(label).join(", ") + ". The latest run did not compare the " +
+        "field these rules use (it was added after that run). Run again to see their effect.") : null);
     result.scrollIntoView({ block: "nearest" });
   };
   const back = async (v) => {
@@ -131,12 +133,17 @@ async function rulesPanel(p, name, editing) {
       const [cat, conns] = await Promise.all([api("GET", P(pid) + "/rules-catalogue"), api("GET", P(pid) + "/connections")]);
       const present = new Set([...conns.flatMap((c) => Object.keys(c.fields || {})), ...useOwnFields(cat)]);
       body = [note, cat.own_fields.length && !cat.settings_in_use ? el("div", { class: "notice", role: "note" }, "Some of your own fields wait to be put in use (Fields and search). " +
-        "A rule on a field that is not in use yet is skipped by a run.") : null, matchingEditor(startFrom.content, cat, proposed, null, { ...saving, present })];
+        "A rule on a field that is not in use yet is skipped by a run.") : null, matchingEditor(startFrom.content, cat, proposed, null, { ...saving, present, pid })];
     } else if (name === "survivorship") {
       const [guide, conns] = await Promise.all([api("GET", P(pid) + "/golden-record-guide"), api("GET", P(pid) + "/connections")]);
       const present = new Set(conns.flatMap((c) => Object.keys(c.fields || {})));
       body = [note, goldenForm(startFrom.content, guide, proposed, null, { ...saving, present })];
-    } else body = [note, setupForm(startFrom.content, await api("GET", P(pid) + "/rules-catalogue"), proposed, cancel, { ...saving, pid })];
+    } else {
+      // the matching rules as they will be: removing a field they use asks first
+      const decVs = (await api("GET", P(pid) + "/config/decision")).filter((v) => ["proposed", "approved", "active"].includes(v.status));
+      const decision = decVs.length ? (await api("GET", P(pid) + "/config/decision/versions/" + decVs[decVs.length - 1].version)).content : null;
+      body = [note, setupForm(startFrom.content, await api("GET", P(pid) + "/rules-catalogue"), proposed, cancel, { ...saving, pid, decision })];
+    }
   } else {
     const content = (await shown).content;
     const cat = name === "survivorship" ? null : await api("GET", P(pid) + "/rules-catalogue");
@@ -238,9 +245,25 @@ function scoreScale(review, auto) {
 }
 const step = (n, title, text, ...body) => el("section", { class: "rule-step" }, el("div", { class: "step-head" }, el("span", { class: "step-no", "aria-hidden": "true" }, String(n)),
   el("div", {}, el("h3", {}, title), text ? el("p", { class: "muted" }, text) : null)), body);
+// The comparisons a rule's condition names that this project does not compare: such a rule is skipped by every run.
+function missingComparisons(node, cat) {
+  const names = new Set((cat.comparisons || []).map((c) => c.name));
+  const out = new Set();
+  const walk = (n) => {
+    if (!n || typeof n !== "object") return;
+    if (n.comparison && !names.has(n.comparison)) out.add(n.comparison);
+    for (const k of ["all", "any"]) (n[k] || []).forEach(walk);
+    walk(n.not);
+  };
+  walk(node);
+  return [...out];
+}
 function ruleRow(r, cat, control, extra) {
+  const gone = missingComparisons(r.when, cat);
   return el("div", { class: "rule" + (r.enabled === false ? " off" : "") }, control || null,
     el("div", { class: "rule-text" }, el("strong", {}, ruleTitle(r)),
+      gone.length && r.enabled !== false ? el("p", { class: "warn-line" }, "Not applied by runs: it uses " + gone.map((c) => label(c.replace(/^x_/, ""))).join(", ") +
+        ", which the project does not compare. Add it as a field of your own (Fields and search) or remove the rule.") : null,
       el("details", {}, el("summary", {}, "Details"), RULE_TITLE[r.id] && r.reason ? el("p", {}, r.reason) : null,
         el("p", { class: "muted" }, "Applies when " + describeRule(r.when, cat) + "."))), extra || null);
 }
@@ -345,8 +368,24 @@ function matchingEditor(content, cat, propose, cancel, opts) {
   // the columns this project's data has (all of them while it has no data yet)
   const known = opts.present && opts.present.size;
   const inData = (k) => !known || MATCH_COLUMNS[k][1].some((f) => opts.present.has(f));
-  const pool = Object.keys(MATCH_COLUMNS).filter(inData);
+  let pool = Object.keys(MATCH_COLUMNS).filter(inData);
   const colName = (k) => MATCH_COLUMNS[k][0] + (inData(k) ? "" : " (not in your data)");
+  // columns the sources keep as they are: a rule may use one; it then becomes a field of the project's own (the engine has to compare it)
+  let keptCols = (cat.kept_columns || []).map((c) => c.name);
+  const keptGroup = () => (keptCols.length && opts.pid && can("config.propose") ? el("optgroup", { label: "Columns kept as they are (become a field when chosen)" },
+    keptCols.map((c) => el("option", { value: "kept:" + c }, c))) : null);
+  const useKept = async (column) => {
+    const f = await newOwnField(opts.pid, column, [], { kept: true, kind: "code", why: "to use it in a matching rule" });
+    if (!f) return null;
+    const fresh = await api("GET", P(opts.pid) + "/rules-catalogue");
+    useOwnFields(fresh);
+    keptCols = (fresh.kept_columns || []).map((c) => c.name);
+    if (opts.present) opts.present.add("own:" + f.name);
+    pool = Object.keys(MATCH_COLUMNS).filter(inData);
+    say("The column " + column + " is now a field of your own (" + f.title + "): rules can use it." + (f.pending ? " The field waits for approval: until it is in use, " +
+      "runs skip rules on it." : " Its options are under Fields and search."), "good");
+    return "x_" + f.name;
+  };
   const lists = { auto_merge: el("div", { class: "rule-group" }), force_review: el("div", { class: "rule-group" }), never_merge: el("div", { class: "rule-group" }) };
   const onOff = (r, box, text) => {
     const cb = el("input", { type: "checkbox", checked: r.enabled !== false, "aria-label": text + ": on" });
@@ -368,10 +407,15 @@ function matchingEditor(content, cat, propose, cancel, opts) {
     };
     const changed = () => { r.when = matchWhen(ps); r.reason = matchWords(ps); check(); };
     const drawRows = () => fill(rows, ps.map((p, i) => {
-      const col = el("select", { "aria-label": name + ": column " + (i + 1) }, [...new Set([...pool, p.col])].map((k) => el("option", { value: k, selected: k === p.col }, colName(k))));
+      const col = el("select", { "aria-label": name + ": column " + (i + 1) }, [...new Set([...pool, p.col])].map((k) => el("option", { value: k, selected: k === p.col }, colName(k))),
+        keptGroup());
       const how = el("select", { "aria-label": name + ": how " + MATCH_COLUMNS[p.col][0] + " must agree" },
         MATCH_COLUMNS[p.col][2].map(([t], j) => el("option", { value: String(j), selected: j === p.how }, t)));
-      col.addEventListener("change", () => { p.col = col.value; p.how = 0; changed(); drawRows(); });
+      col.addEventListener("change", () => run(async () => {
+        const key = col.value.startsWith("kept:") ? await useKept(col.value.slice(5)) : col.value;
+        if (key) { p.col = key; p.how = 0; changed(); }
+        drawRows();
+      }, true));
       how.addEventListener("change", () => { p.how = Number(how.value); changed(); });
       return el("div", { class: "match-cond" }, el("span", { class: "and muted" }, i ? "and" : ""), col, how,
         ps.length > 1 ? btn("", () => { ps.splice(i, 1); changed(); drawRows(); }, "small ghost", "x", { "aria-label": "Remove " + MATCH_COLUMNS[p.col][0] + " from " + name }) : null);
@@ -409,10 +453,14 @@ function matchingEditor(content, cat, propose, cancel, opts) {
     if (cards.length) cards[cards.length - 1].querySelector("select").focus();
   };
   // step 3: add "never the same when <column> differ"
-  const neverCols = Object.keys(NEVER_COLUMNS).filter(inData);
-  const neverSel = el("select", { "aria-label": "Column" }, neverCols.map((k) => el("option", { value: k }, MATCH_COLUMNS[k][0])));
-  const addNever = () => {
-    const k = neverSel.value;
+  const neverCols = () => Object.keys(NEVER_COLUMNS).filter(inData);
+  const neverSel = el("select", { "aria-label": "Column" });
+  const drawNever = () => fill(neverSel, neverCols().map((k) => el("option", { value: k }, MATCH_COLUMNS[k][0])), keptGroup());
+  drawNever();
+  const addNever = async () => {
+    const k = neverSel.value.startsWith("kept:") ? await useKept(neverSel.value.slice(5)) : neverSel.value;
+    drawNever();
+    if (!k) return;
     state.rules.push({ id: ruleId("never_", k, state.rules), type: "never_merge", reason: "Two different " + NEVER_COLUMNS[k][1] + ": never the same " + (k.startsWith("x_") ? "record" : "person"),
       when: { comparison: k, is: NEVER_COLUMNS[k][0] } });
     draw();
@@ -480,7 +528,7 @@ function matchingEditor(content, cat, propose, cancel, opts) {
     step(1, MATCH_STEPS.auto_merge[0], MATCH_STEPS.auto_merge[1], lists.auto_merge, el("div", { class: "row" }, btn("Add a rule", () => addRule("auto_merge"), "", "plus"))),
     step(2, MATCH_STEPS.force_review[0], MATCH_STEPS.force_review[1], lists.force_review, el("div", { class: "row" }, btn("Add an ask rule", () => addRule("force_review"), "", "plus"))),
     step(3, MATCH_STEPS.never_merge[0], MATCH_STEPS.never_merge[1], lists.never_merge,
-      neverCols.length ? el("div", { class: "row" }, el("span", {}, "Never the same when"), neverSel, el("span", {}, "differs"), btn("Add", addNever, "small", "plus")) : null),
+      neverCols().length || keptCols.length ? el("div", { class: "row" }, el("span", {}, "Never the same when"), neverSel, el("span", {}, "differs"), btn("Add", addNever, "small", "plus")) : null),
     step(4, "Everything else", "Pairs that share something but that no rule above catches.",
       el("label", { class: "check" }, keep, el("span", {}, "Keep them apart", el("span", { class: "muted" }, "Only your rules decide. Easy to predict, but a duplicate your rules do not describe is missed."))),
       el("label", { class: "check" }, byScore, el("span", {}, "Let the match score decide", el("span", { class: "muted" }, "Every pair gets a score from all the columns the two records share. Finds more, but is harder to predict."))),

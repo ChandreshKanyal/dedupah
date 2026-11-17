@@ -71,6 +71,7 @@ class RecordView(BaseModel):
     dl_no: str | None = None
     voter_id: str | None = None
     own: dict[str, Any] = {}            # the project's own fields of this record (cleaned), by field name
+    kept: dict[str, Any] = {}           # the columns its source keeps as they are, by column name (masked unless revealed)
 
 
 class PersonView(BaseModel):
@@ -286,7 +287,7 @@ def config_default(request: Request, name: ConfigName, project_id: str = PID, p:
     """The built-in content, as a starting point for a project's first version."""
     ps = project_scope(request, project_id)
     content = _default_content(name)
-    own = project_spec(ps.configs).custom if name == "decision" else ()
+    own = project_spec(ps.configs).custom if name == "decision" and not about_people(ps.configs) else ()
     if own:
         # A project that matches on its own fields: the person rules alone would never merge its records. Each identifier of its own
         # decides like a PAN does, and the score decides the rest (sure pairs merge, doubtful ones go to a person).
@@ -325,6 +326,19 @@ def project_settings(configs) -> tuple[dict, bool]:
     return (configs.get("settings", vs[-1].version), vs[-1].status == "active") if vs else ({}, True)
 
 
+def about_people(configs) -> bool:
+    """Whether a project's records are people: it has no fields of its own, or one of its sources maps a person's name. A customer project
+    that adds a field of its own (a lead id) stays a customer project."""
+    s, _ = project_settings(configs)
+    if not s.get("custom_fields"):
+        return True
+    for name in configs.names("connection/"):
+        vs = [v for v in configs.versions(name) if v.status in ("proposed", "approved", "active")]
+        if vs and (configs.get(name, vs[-1].version).get("fields") or {}).get("full_name"):
+            return True
+    return False
+
+
 def project_spec(configs):
     """The spec (dedupe.custom) of those settings; the built-in one when they cannot be read."""
     from dedupe.custom import build_spec
@@ -353,7 +367,19 @@ def project_rules_catalogue(request: Request, project_id: str = PID, p: Principa
     finds = {f.name: bool(f.default_blocking()) or f.name in in_rules for f in spec.custom}     # can a rule on this field alone find anything
     fields = [{"name": f.name, "comparison": f.col, "title": f.label, "kind": f.kind, "identifier": f.identifier,
                "ways": [{"words": w, "levels": ls} for w, ls in f.ways()], "differs": "different", "finds_pairs": finds[f.name]} for f in spec.custom]
+    # the columns the project's sources keep as they are and that no field reads yet: a rule can turn one into a field of its own
+    used = {k for f in spec.custom for k in (f.name, f.column) if k}
+    kept: dict[str, list[str]] = {}
+    for name in ps.configs.names("connection/"):
+        vs = [v for v in ps.configs.versions(name) if v.status in ("proposed", "approved", "active")]
+        if not vs:
+            continue
+        conn = ps.configs.get(name, vs[-1].version)
+        for a in conn.get("attributes") or []:
+            if a not in used and a not in (conn.get("custom") or {}):
+                kept.setdefault(a, []).append(name.split("/", 1)[1])
     return {"comparisons": comps, "rule_types": RULE_TYPES, "own_fields": fields, "settings_in_use": in_use, "kinds": KINDS,
+            "kept_columns": [{"name": k, "sources": v} for k, v in sorted(kept.items())],
             "search": {"built_in": [{"name": r.name, "title": r.description or r.name, "standard": r in DEFAULT_RULES} for r in ALL_RULES.values()],
                        "how": HOW, "columns": BLOCK_COLUMNS}}
 

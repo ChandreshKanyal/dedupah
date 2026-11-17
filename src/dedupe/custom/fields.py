@@ -70,6 +70,9 @@ class CustomField(BaseModel):
     # duplicates, the very thing being looked for. None = yes for a person's name, no for the rest
     common_values: bool | None = None
     block: bool | None = None       # find candidate pairs through this field; None = yes for names, texts and codes, no for the rest
+    # a column the sources keep as it is ("lead_id"): the field reads its values from there when no mapping names the field itself. So a kept
+    # column can be matched on without changing every source's mapping
+    column: str = Field("", max_length=200)
 
     @field_validator("name")
     @classmethod
@@ -102,6 +105,11 @@ class CustomField(BaseModel):
     @property
     def col(self) -> str:
         return PREFIX + self.name
+
+    @property
+    def golden_col(self) -> str:
+        """Its column in the golden record (the sources' extra columns become extra_<name>, see survivorship.config.extra_column)."""
+        return "extra_" + (re.sub(r"[^a-z0-9]+", "_", (self.column or self.name).lower()).strip("_") or "x")
 
     @property
     def label(self) -> str:

@@ -199,6 +199,16 @@ async function editConnection(pid, cid) {
   const c = await api("GET", P(pid) + "/connections/" + cid);
   await connectionWizard(pid, c.latest.connector.type, JSON.parse(JSON.stringify(c.latest)), 2);
 }
+// Where a field's value comes from, in words: "first_name + last_name (joined)", "mobile, else landline", "doc_no where doc_type is PAN".
+function exprWords(e) {
+  if (typeof e === "string") return e;
+  if (!e || typeof e !== "object") return String(e);
+  if (e.concat) return e.concat.join(" + ") + " (joined)";
+  if (e.coalesce) return e.coalesce.join(", else ");
+  if (e.const !== undefined) return "always \u201c" + e.const + "\u201d";
+  if (e.column) return e.column + (e.when ? " where " + Object.entries(e.when).map(([k, v]) => k + " is " + (Array.isArray(v) ? v.slice(0, 3).join(" or ") : v)).join(" and ") : "");
+  return JSON.stringify(e);
+}
 async function viewConnection(pid, cid) {
   here(P(pid) + "/connections/" + cid);
   const base = P(pid) + "/connections/" + cid;
@@ -224,9 +234,16 @@ async function viewConnection(pid, cid) {
   const changes = pending && live ? await api("GET", base + "/diff?old=" + live.version + "&new=" + latest.version) : null;
   const shown = c.live || c.latest;
   // what the source gives: each of our fields and the column it comes from; everything technical under Details
+  const own = can("config.read") ? (await api("GET", P(pid) + "/rules-catalogue").catch(() => ({ own_fields: [] }))).own_fields : [];
   const mapRows = CANON_ORDER.filter((f) => (shown.fields || {})[f]).concat(Object.keys(shown.fields || {}).filter((f) => !CANON_ORDER.includes(f)))
-    .map((f) => el("tr", {}, el("td", {}, fieldTitle(f)), el("td", { class: "mono" }, typeof shown.fields[f] === "string" ? shown.fields[f] : JSON.stringify(shown.fields[f]))))
-    .concat(Object.entries(shown.custom || {}).map(([f, col]) => el("tr", {}, el("td", {}, label(f) + " (your own field)"), el("td", { class: "mono" }, typeof col === "string" ? col : JSON.stringify(col)))));
+    .map((f) => el("tr", {}, el("td", {}, fieldTitle(f)), el("td", { class: "mono" }, exprWords(shown.fields[f]))))
+    .concat(Object.entries(shown.custom || {}).map(([f, col]) => {
+      // a field this project does not define (the source was copied from another project, or the field was removed): its values are only kept
+      const known = own.find((x) => x.name === f);
+      return el("tr", {}, el("td", {}, known ? known.title + " (your own field)" : el("span", {}, label(f) + " ", tag("Not a field of this project", "warn"),
+        el("div", { class: "muted small" }, "Its values are only kept, not matched on. Add the field under Rules, Fields and search, or map the column again."))),
+        el("td", { class: "mono" }, exprWords(col)));
+    }));
   const settings = Object.entries(shown.connector).filter(([k]) => k !== "type").map(([k, v]) => [label(k), el("span", { class: "mono" }, String(v))]);
   const test = can("sources.manage") ? btn("Test now", async () => {
     const t = await api("POST", base + "/test");
@@ -354,6 +371,7 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
   // the project's own fields (Fields and search): a column can fill one of them, or become a new one
   let ownFields = [];
   try { if (can("config.read")) ownFields = (await api("GET", root + "/rules-catalogue")).own_fields; } catch (_) { /* mapped without them */ }
+  const ownName = (n) => (ownFields.find((f) => f.name === n) || { title: label(n) }).title;
   if (batch && !preset) here(root + "/map/" + batch.files[batch.index].upload_id);       // Back and reload come back to this file
   const original = preset ? JSON.stringify(preset) : null;            // opened again unchanged: Save only moves on
   const ofBatch = batch && batch.files.length > 1 ? " (file " + (batch.index + 1) + " of " + batch.files.length + ")" : "";
@@ -453,15 +471,16 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     src.attributes = src.attributes || [];
     src.custom = src.custom || {};
     const ownOf = (c) => Object.keys(src.custom).find((f) => src.custom[f] === c);
-    const ownName = (n) => (ownFields.find((f) => f.name === n) || { title: label(n) }).title;
     const examples = (c) => [...new Set(sample.map((r) => r[c]).filter((v) => v != null && v !== ""))].slice(0, 3);
-    const fieldOf = (c) => Object.keys(src.fields).find((f) => src.fields[f] === c);
+    // the columns a field reads: one column, several joined ("first + last name") or several as fallbacks ("mobile, else phone")
+    const partsOf = (e) => (typeof e === "string" ? [e] : e && (e.concat || e.coalesce) ? (e.concat || e.coalesce) : null);
+    const fieldOf = (c) => Object.keys(src.fields).find((f) => (partsOf(src.fields[f]) || []).includes(c));
     // one column of document numbers whose type (PAN, Aadhaar, passport ...) is in another column: each type fills its own field (U2-15)
     const isDoc = (e) => e && typeof e === "object" && e.when && e.column;
     const docsOf = (c) => Object.entries(src.fields).filter(([, e]) => isDoc(e) && e.column === c);
     const wantDocs = new Set();                            // chosen as document numbers, type column not found yet
     const useOf = (c) => (fieldOf(c) ? "f:" + fieldOf(c) : ownOf(c) ? "o:" + ownOf(c) : docsOf(c).length || wantDocs.has(c) ? "docs" : src.record_id === c ? "id" : src.attributes.includes(c) ? "keep" : "");
-    const combined = Object.keys(src.fields).filter((f) => typeof src.fields[f] !== "string" && !isDoc(src.fields[f]));
+    const combined = Object.keys(src.fields).filter((f) => !partsOf(src.fields[f]) && !isDoc(src.fields[f]));
     const seen = (col) => [...new Set(sample.map((r) => r[col]).filter((v) => v != null && String(v).trim() !== "").map((v) => String(v).trim()))];
     const docField = (v) => DOC_TYPES.find(([re]) => re.test(v));
     // the usual spellings of every type, plus the ones the sample shows: a type missing from the first rows still counts (Aadhaar rows further down)
@@ -471,13 +490,35 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       for (const v of seen(typeCol)) { const d = docField(v); if (d && !by[d[1]].includes(v.toLowerCase())) by[d[1]].push(v.toLowerCase()); }
       for (const [f, vals] of Object.entries(by)) if (typeof src.fields[f] !== "string") src.fields[f] = { column: c, when: { [typeCol]: vals } };
     };
-    const setUse = (c, use) => {
-      for (const f of Object.keys(src.fields)) if (src.fields[f] === c || (isDoc(src.fields[f]) && src.fields[f].column === c)) delete src.fields[f];
+    // a field that already comes from another column: join the two, use this one as a fallback, or use only this one (asked, never silent)
+    const JOINABLE = ["full_name", "father_name", "address", "address_alt", "related_name", "occupation"];
+    const combineAsk = async (c, f) => {
+      const cur = partsOf(src.fields[f]);
+      if (!src.fields[f] || !cur || cur.includes(c)) return "replace";
+      const join = JOINABLE.includes(f);
+      return dialog(fieldTitle(f) + " already comes from " + cur.join(" + "), el("p", {}, join
+        ? "Join the columns into one value (for example a first name and a last name, in this order: " + [...cur, c].join(", ") + "), or use only " + c + "."
+        : "Use " + c + " when " + cur.join(", ") + " is empty, or use only " + c + " (" + cur.join(", ") + " is then not used)."),
+      join ? "Join them" : "Use as a fallback", async () => "combine", false, ["Use only " + c, "replace"]);
+    };
+    const setUse = (c, use, how) => {
+      for (const f of Object.keys(src.fields)) {
+        const ps = partsOf(src.fields[f]);
+        if (ps && ps.includes(c)) {
+          const rest = ps.filter((x) => x !== c);
+          if (!rest.length) delete src.fields[f];
+          else src.fields[f] = rest.length === 1 ? rest[0] : src.fields[f].concat ? { ...src.fields[f], concat: rest } : { coalesce: rest };
+        } else if (isDoc(src.fields[f]) && src.fields[f].column === c) delete src.fields[f];
+      }
       if (src.record_id === c) src.record_id = null;
       src.attributes = src.attributes.filter((x) => x !== c);
       for (const f of Object.keys(src.custom)) if (src.custom[f] === c) delete src.custom[f];
       wantDocs.delete(c);
-      if (use.startsWith("f:")) src.fields[use.slice(2)] = c;            // a field comes from one column: another column using it lets go
+      if (use.startsWith("f:")) {
+        const f = use.slice(2);
+        const cur = partsOf(src.fields[f]);
+        src.fields[f] = how === "combine" && cur ? (JOINABLE.includes(f) ? { concat: [...cur, c], sep: f.startsWith("address") ? ", " : " " } : { coalesce: [...cur, c] }) : c;
+      }
       else if (use.startsWith("o:")) src.custom[use.slice(2)] = c;
       else if (use === "id") src.record_id = c;
       else if (use === "keep") src.attributes.push(c);
@@ -494,7 +535,8 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       const note = el("div", { class: "muted small" });
       const draw = () => {
         const cur = useOf(c);
-        const taken = (f) => (typeof src.fields[f] === "string" && src.fields[f] !== c ? " (now from " + src.fields[f] + ")" : combined.includes(f) ? " (now several columns combined)" : "");
+        const taken = (f) => (partsOf(src.fields[f]) && !partsOf(src.fields[f]).includes(c) ? " (now from " + partsOf(src.fields[f]).join(" + ") + ")"
+          : combined.includes(f) ? " (now several columns combined)" : "");
         fill(sel, el("option", { value: "", selected: cur === "" }, "Don't use"),
           el("option", { value: "id", selected: cur === "id" }, "Each row's own id" + (src.record_id && src.record_id !== c ? " (now " + src.record_id + ")" : "")),
           el("option", { value: "keep", selected: cur === "keep" }, "Keep as an extra column"),
@@ -519,16 +561,28 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
               : el("span", { class: "bad" }, "No column of this file says PAN, Aadhaar, passport, driving licence or voter ID: choose the type column.")));
           return;
         }
-        fill(note, wrong ? tag("The values do not look like " + fieldTitle(f).toLowerCase(), "warn")
+        const both = f && (partsOf(src.fields[f]) || []).length > 1 ? (src.fields[f].concat ? "Joined: " : "The first filled of: ") + partsOf(src.fields[f]).join(" + ") + ". " : "";
+        fill(note, both, wrong ? tag("The values do not look like " + fieldTitle(f).toLowerCase(), "warn")
           : role ? role[0] + (role[1] ? ": " + role[1] : "") : cur === "id" ? "Traces a golden record back to this row; not used to match"
             : cur.startsWith("o:") ? "Your own field: records are matched on it (how is set under Fields and search)"
-            : cur === "keep" ? "Carried into the golden record as it is" : t.field && !src.fields[t.field] ? "Could be " + fieldTitle(t.field).toLowerCase()
+            : cur === "keep" ? "Carried into the golden record as it is; a matching rule can still use it" : t.field && !src.fields[t.field] ? "Could be " + fieldTitle(t.field).toLowerCase()
               : t.type === "organisation_name" && !cur ? "Could be a field of your own: choose \u201cA new field of your own\u201d, kind Organisation name" : "");
       };
       sel.addEventListener("change", () => run(async () => {
+        if (sel.value.startsWith("f:")) {
+          const how = await combineAsk(c, sel.value.slice(2));
+          if (!how) { draw(); return; }
+          setUse(c, sel.value, how);
+          return;
+        }
         if (sel.value !== "new") { setUse(c, sel.value); return; }
         const f = await newOwnField(pid, c, Object.keys(src.custom));
-        if (f) { ownFields = [...ownFields, f]; setUse(c, "o:" + f.name); say("The field " + f.title + " is added. How it is compared can be changed under Fields and search.", "good"); }
+        if (f) {
+          ownFields = [...ownFields, f];
+          setUse(c, "o:" + f.name);
+          say(f.pending ? "The field " + f.title + " is saved and waits for approval: runs match on it once it is approved and in use (Rules, Fields and search)."
+            : "The field " + f.title + " is added. How it is compared can be changed under Rules, Fields and search.", "good");
+        }
         else draw();
       }, true));
       refresh.push(draw);
@@ -564,12 +618,18 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
   function previewStep() {
     const doPreview = () => run(async () => {
       const r = await api("POST", root + "/connections/preview" + (state.reason ? "?" + unmaskQuery(state.reason) : ""), state.source);
-      const cols = Object.keys(r.rows[0] || {}).filter((c) => c !== "attributes" && r.rows.some((row) => row[c] != null));
-      fill(out, el("h3", { class: "section" }, "Fields filled in " + r.sample_size + " sample rows"),
-        table(["Field", ["Rows filled"]], Object.entries(r.filled).map(([f, n]) => el("tr", {}, el("td", {}, fieldTitle(f)), el("td", { class: "num" }, n + " of " + r.sample_size)))),
-        r.rows.length ? el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your rows as the engine reads them (" + (r.unmasked ? "actual values" : "values shortened") + ")"),
+      // every column the mapping keeps: our fields, the project's own fields and the columns kept as they are, each with how it is used
+      const GROUP = { id: "Row id", field: "Matched on", own: "Your own field", kept: "Kept as is (not matched on)" };
+      const titleOf = (c) => (c.group === "id" ? "Row id" : c.group === "field" ? fieldTitle(c.key) : c.group === "own" ? ownName(c.key) : c.key);
+      const roleOf = (c) => (c.group === "field" ? ((FIELD_ROLE[c.key] || ["Golden record"])[0]) : GROUP[c.group]);
+      const cols = r.columns.filter((c) => c.group !== "id");
+      fill(out, el("h3", { class: "section" }, "What this data source gives (" + plural(r.sample_size, "sample row", "sample rows") + ")"),
+        table(["Column", "Used for", ["Rows filled"]], cols.map((c) => el("tr", {}, el("td", {}, titleOf(c)), el("td", {}, roleOf(c)),
+          el("td", { class: "num" + (c.filled ? "" : " bad") }, c.filled + " of " + r.sample_size)))),
+        cols.some((c) => !c.filled) ? el("p", { class: "warn-line" }, "A column with no value in the sample may be mapped to the wrong column of your file.") : null,
+        r.values.length ? el("div", { class: "title-row" }, el("h3", { class: "section" }, "Your rows as the engine reads them (" + (r.unmasked ? "actual values" : "values shortened") + ")"),
           revealButton(async () => doPreview())) : null,
-        r.rows.length ? wide(cols, r.rows.map((row) => el("tr", {}, cols.map((c) => el("td", {}, row[c] == null ? "" : row[c]))))) : null);
+        r.values.length ? wide(r.columns.map(titleOf), r.values.map((row) => el("tr", {}, row.map((v) => el("td", {}, v == null ? "" : String(v)))))) : null);
     });
     const save = async () => {
       const many = batch && batch.files.length > 1;

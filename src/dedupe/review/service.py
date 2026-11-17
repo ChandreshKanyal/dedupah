@@ -52,6 +52,14 @@ class ReviewPolicy:
     reveal_sensitive: bool = False
 
 
+def _json(text) -> dict:
+    try:
+        out = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
 def _mask(field: str, v):
     if v is None or field not in SENSITIVE:
         return v
@@ -193,7 +201,11 @@ class ReviewService:
         if not ids:
             return
         # a project matching on its own fields has no person's name: its first text field of a readable kind names the record instead
-        label = next((f"extra_{f.name}" for f in self.own_fields if f.kind in ("company", "text", "name")), None)
+        try:
+            have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {crypto.rp(self.f['gold'])}").fetchall()}
+        except duckdb.Error:
+            return
+        label = next((f.golden_col for f in self.own_fields if f.kind in ("company", "text", "name") and f.golden_col in have), None)
         name = f"coalesce(full_name, {label})" if label else "full_name"
         try:
             rows = con.execute(f"SELECT cluster_id, {name}, city FROM {crypto.rp(self.f['gold'])} WHERE cluster_id IN (SELECT unnest(?))", [ids]).fetchall()
@@ -226,19 +238,23 @@ class ReviewService:
         golden = {k: (v if reveal else _mask(k, v)) for k, v in zip(gcols, g, strict=True) if k in GOLDEN_FIELDS and v is not None} if g else {}
         meta = dict(zip(gcols, g, strict=True)) if g else {}
         # the sources' own extra columns: what they hold is unknown, so they are masked like identifiers unless revealed
-        mine = {"extra_" + f.name: f for f in self.own_fields}
+        mine = {f.golden_col: f for f in self.own_fields}
         extra = {k[6:]: (v if reveal else ("*" * max(len(str(v)) - 3, 0)) + str(v)[-3:]) for k, v in meta.items()
                  if k.startswith("extra_") and k not in mine and v is not None}
-        own = [{"name": f.name, "title": f.label, "value": _mask_own(f, meta.get(k), reveal)} for k, f in mine.items()]
+        own = [{"name": f.name, "title": f.label, "column": k, "value": _mask_own(f, meta.get(k), reveal)} for k, f in mine.items()]
         own_cols = "".join(f", s.{f.col}" for f in self.own_fields)
         recs = con.execute(f"""SELECT c.source_id, c.source_record_id, k.full_name, s.name_clean, s.dob, s.gender, s.mobile, s.email, k.address, s.city,
-                                      s.address_pin, s.pan, s.aadhaar_last4, s.passport_no, s.dl_no, s.voter_id{own_cols}
+                                      s.address_pin, s.pan, s.aadhaar_last4, s.passport_no, s.dl_no, s.voter_id, k.attributes{own_cols}
             FROM {crypto.rp(self.f['cl'])} c JOIN {crypto.rp(self.f['std'])} s USING (source_id, source_record_id)
             JOIN {crypto.rp(self.f['canon'])} k USING (source_id, source_record_id) WHERE c.cluster_id = ? ORDER BY 1, 2 LIMIT 50""", [person_id]).fetchall()
         rcols = ["source_id", "source_record_id", "name_as_written", "name_clean", "dob", "gender", "mobile", "email", "address", "city", "pincode",
                  "pan", "aadhaar_last4", "passport_no", "dl_no", "voter_id"]
+        own_keys = {k for f in self.own_fields for k in (f.name, f.column) if k}
         records = [{**{k: (v if reveal else _mask(k, v)) for k, v in zip(rcols, r, strict=False)},
-                    "own": {f.name: _mask_own(f, v, reveal) for f, v in zip(self.own_fields, r[len(rcols):], strict=True)}} for r in recs]
+                    "own": {f.name: _mask_own(f, v, reveal) for f, v in zip(self.own_fields, r[len(rcols) + 1:], strict=True)},
+                    # the columns the source keeps as they are (what they hold is unknown: masked like identifiers unless revealed)
+                    "kept": {k: (v if reveal else ("*" * max(len(str(v)) - 3, 0)) + str(v)[-3:]) for k, v in _json(r[len(rcols)]).items()
+                             if k not in own_keys and v not in (None, "")}} for r in recs]
         return {"person_id": person_id, "golden": golden, "record_count": meta.get("record_count", len(records)), "sources": meta.get("sources"),
                 "conflict_fields": meta.get("conflict_fields", []), "records": records, "extra": extra, "own": own}
 
@@ -317,6 +333,10 @@ class ReviewService:
 
     def override_field(self, person_id: str, field: str, value: str | None, actor: str, reason: str, action_id: str | None = None) -> dict:
         con = self._con()
+        if field not in GOLDEN_FIELDS:          # a project's own field or a kept column: only one this run's golden record has
+            have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {crypto.rp(self.f['gold'])}").fetchall()}
+            if field not in have:
+                raise ReviewError(f"this run's golden record has no column {field!r}")
         anchors = self._members(con, person_id)[:5]
         action_id = action_id or uuid.uuid4().hex[:12]
         approval = field in self.policy.four_eyes_override_fields

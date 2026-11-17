@@ -23,9 +23,15 @@ async function datasetCards(p, rid) {
   const info = await api("GET", R(p.id, rid) + "/datasets");
   const menu = (d) => moreMenu([...["xlsx", "csv", "parquet"].map((f) => [info.formats[f], () => downloadResults(p.id, rid, d.name, f)]),
     ["Write to a database", () => databaseDialog(p, rid, d)]], d.title, "Download", "download");
+  // the files in the project's own words (a vendor project has no "persons")
+  const w = wordsOf(p.id);
+  const TITLE = { person_records: w.One + "-to-record map" };
+  const DESC = { golden_records: "One row per " + w.one + ": the best value of every field, with how many source records it was built from.",
+    person_records: "Which source record belongs to which " + w.one + ". Use it to carry the id back into your own systems." };
   const card = (d, title, preview) => {
     const box = el("div");
-    return el("div", { class: "panel" }, el("div", { class: "card-head body" }, el("div", {}, el("h3", {}, title + " (" + num(d.rows) + " rows)"), el("p", { class: "muted" }, d.description)),
+    return el("div", { class: "panel" }, el("div", { class: "card-head body" }, el("div", {}, el("h3", {}, (TITLE[d.name] || title) + " (" + num(d.rows) + " rows)"),
+      el("p", { class: "muted" }, DESC[d.name] || d.description)),
       el("div", { class: "row tight" }, preview ? btn("Show a preview", () => run(async () => box.replaceChildren(await previewTable(p.id, rid, d))), "small", "list") : null, menu(d))), box);
   };
   const golden = info.datasets.find((d) => d.name === "golden_records");

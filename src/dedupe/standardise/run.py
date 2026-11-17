@@ -144,7 +144,14 @@ def _custom_values(attributes: str | None, fields) -> dict:
         given = {}
     loose = {re.sub(r"[^a-z0-9]+", "_", str(k).lower()).strip("_"): v for k, v in given.items()} if isinstance(given, dict) else {}
     for f in fields:
-        out.update(f.clean(given.get(f.name, loose.get(f.name)) if isinstance(given, dict) else None))
+        raw = None
+        if isinstance(given, dict):
+            raw = given.get(f.name)
+            if raw is None and f.column:
+                raw = given.get(f.column, loose.get(re.sub(r"[^a-z0-9]+", "_", f.column.lower()).strip("_")))
+            if raw is None:
+                raw = loose.get(f.name)
+        out.update(f.clean(raw))
     return out
 
 

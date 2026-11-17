@@ -26,6 +26,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -122,8 +123,9 @@ def _canon_split(parts) -> str:
 
 
 def _canon_override(field, value, anchors) -> str:
-    if field not in GOLDEN_FIELDS:
-        raise JudgmentError(f"unknown golden field {field!r}; valid: {sorted(GOLDEN_FIELDS)}")
+    # a built-in golden field, or the golden column of a project's own field or of a kept column (extra_<name>)
+    if field not in GOLDEN_FIELDS and not re.fullmatch(r"extra_[a-z0-9_]{1,80}", str(field)):
+        raise JudgmentError(f"unknown golden field {field!r}; valid: {sorted(GOLDEN_FIELDS)} or extra_<column>")
     if value is not None and not isinstance(value, str):
         raise JudgmentError("an override value is text (or null to clear the field)")
     anchors = sorted(_key(k) for k in anchors)

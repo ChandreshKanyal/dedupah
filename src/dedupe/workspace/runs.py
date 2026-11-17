@@ -104,8 +104,12 @@ def headline(work: Path) -> dict:
             "incremental": s.get("incremental"),
             "duplicate_record_ids": (s.get("ingest") or {}).get("duplicate_source_record_ids") or {},
             "fields_not_read": (s.get("ingest") or {}).get("fields_not_read") or {},
+            # what a run could not use, so the portal can say so instead of leaving it out silently
+            "rules_not_applied": dec.get("rules_not_applied") or [],
+            "own_fields_empty": s.get("own_fields_empty") or [],
+            "extra_columns_skipped": (s.get("golden_record") or {}).get("extra_columns_skipped") or [],
             "golden": {k: (s.get("golden_record") or {}).get(k) for k in ("trust_order", "auto_ranked_sources", "sources_without_dates", "shared_values_passed_over",
-                                                                     "values_with_source_conflict")} if s.get("golden_record") else None}
+                                                                     "values_with_source_conflict", "steward_overrides_applied")} if s.get("golden_record") else None}
 
 
 class RunJobs:

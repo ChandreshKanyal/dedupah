@@ -8,10 +8,11 @@ personal content beyond what the scrubber allows). The four-eyes rules live in t
 """
 import hashlib
 import json
+import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dedupe.governance.impact import dry_run
 from dedupe.governance.store import MODELS, ConfigError
@@ -35,7 +36,6 @@ ACTIVATE_CFG = Depends(require("config.activate"))
 MIN_REASON = 10
 MAX_BULK = 100
 KEY_PATTERN = r"^[A-Za-z0-9_-]{8,64}$"
-FieldName = Literal[tuple(sorted(GOLDEN_FIELDS))]          # type: ignore[valid-type]
 
 
 class Strict(BaseModel):
@@ -66,9 +66,17 @@ class SplitIn(Strict):
 
 
 class OverrideIn(Strict):
-    field: FieldName
+    # a golden field, or a golden-record column of a project's own field or of a column the sources keep (extra_<name>)
+    field: str = Field(min_length=1, max_length=90)
     value: str | None = Field(None, max_length=200)
     reason: str = Field(min_length=MIN_REASON, max_length=300)
+
+    @field_validator("field")
+    @classmethod
+    def _golden_column(cls, v):
+        if v not in GOLDEN_FIELDS and not re.fullmatch(r"extra_[a-z0-9_]{1,80}", v):
+            raise ValueError("not a column of the golden record")
+        return v
 
 
 class UndoIn(Strict):

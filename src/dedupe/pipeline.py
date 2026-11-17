@@ -201,6 +201,10 @@ def _run(cfg: PipelineConfig, res_cfg, effective: dict) -> dict:
             incr["records"] = d
         else:
             summary["standardise"] = standardise(p["canonical"], p["std"], cfg.batch_size)
+    if spec().custom:
+        # a field of the project's own that no record fills (its column renamed, or no source maps it): every rule on it is silent
+        filled = con.execute("SELECT " + ", ".join(f"count({f.col})" for f in spec().custom) + f" FROM {crypto.rp(p['std'])}").fetchone()
+        summary["own_fields_empty"] = [f.label for f, n in zip(spec().custom, filled, strict=True) if not n]
     if cfg.redact_aadhaar:
         with meter.stage("redact_aadhaar"):
             redact_aadhaar(p["canonical"])
@@ -272,7 +276,9 @@ def _run(cfg: PipelineConfig, res_cfg, effective: dict) -> dict:
                                                 scfg, work / "golden", overrides)
     with meter.stage("review_queue"):
         summary["review_queue"] = build_queue(con, work / "review_queue.parquet", cfg.review_min_probability, cfg.review_cap)
-    households_on = cfg.build_households if cfg.build_households is not None else not spec().custom
+    # automatic: households for people only (a project of its own fields whose records carry no person's name gets none)
+    households_on = cfg.build_households if cfg.build_households is not None else (
+        not spec().custom or con.execute(f"SELECT count(name_clean) > 0 FROM {crypto.rp(p['std'])}").fetchone()[0])
     if households_on:
         with meter.stage("households"):
             people, scores, hh, info, _ = build_households(con, p["std"], clusters_dir / "clusters.parquet", p["canonical"],

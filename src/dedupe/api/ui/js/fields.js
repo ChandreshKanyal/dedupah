@@ -51,8 +51,9 @@ function setupSummary(content, cat) {
       weights.length ? el("ul", { class: "changes" }, weights.flatMap(([c, ls]) => Object.entries(ls).map(([lv, bits]) =>
         el("li", {}, compTitle(c) + ", " + (lv === "*" ? "every level" : "“" + lv + "”") + ": " + (bits === 0 ? "never counts" : bits)))))
         : el("p", { class: "muted" }, "None: every weight is learned from the data.")),
-    step(4, "Words and limits", null, kv([["One record is called", content.record_name || (fields.length ? "record" : "customer")],
-      ["Households", content.build_households == null ? (fields.length ? "No (automatic)" : "Yes (automatic)") : content.build_households ? "Yes" : "No"], ...LIMITS.map(([k, text]) => [text, String(content[k])])])));
+    step(4, "Words and limits", null, kv([["One record is called", content.record_name || wordsOf(projectOf(shownPath)).one],
+      ["Households", content.build_households == null ? (wordsOf(projectOf(shownPath)).own ? "No (automatic: the records are not people)" : "Yes (automatic)")
+        : content.build_households ? "Yes" : "No"], ...LIMITS.map(([k, text]) => [text, String(content[k])])])));
 }
 // One own field as a row of controls. `f` is edited in place; `changed` redraws what depends on the list of fields.
 function ownFieldRow(f, isNew, changed, remove) {
@@ -116,7 +117,11 @@ function setupForm(content, cat, propose, cancel, opts) {
   };
   // ---- 1 own fields
   const fieldList = el("div", { class: "rule-group" });
-  const drawFields = () => fill(fieldList, state.custom_fields.length ? state.custom_fields.map((f) => ownFieldRow(f, fresh.has(f), others, () => {
+  const drawFields = () => fill(fieldList, state.custom_fields.length ? state.custom_fields.map((f) => ownFieldRow(f, fresh.has(f), others, async () => {
+    // matching rules that use the field stop working without it: say which, and ask first
+    const users = ((opts.decision || {}).rules || []).filter((r) => r.enabled !== false && JSON.stringify(r.when).includes('"x_' + f.name + '"'));
+    if (users.length && !(await confirmDialog("Remove the field " + ownTitle(f), "These matching rules use it and stop working until you change them: " +
+      users.map((r) => ruleTitle(r)).join("; ") + ".", "Remove anyway", true))) return;
     state.custom_fields = state.custom_fields.filter((x) => x !== f);
     state.custom_blocking = state.custom_blocking.filter((r) => !r.parts.some((p) => p.field === f.name));
     for (let i = weights.length - 1; i >= 0; i--) if (weights[i].c === f.name || weights[i].c === "x_" + f.name) weights.splice(i, 1);
@@ -271,14 +276,18 @@ function setupForm(content, cat, propose, cancel, opts) {
 }
 // Mapping screen: a new field of the project's own, made while mapping a column. Saves the project's settings with the field added and
 // returns the field ({ name, title, kind }), or null when cancelled.
-async function newOwnField(pid, column, taken) {
+// `opts.kept`: the column is one the sources keep as they are; the field then reads its values from that column in every source (no mapping
+// changes). `opts.kind`: the kind offered first. `opts.why`: where the field was made, for the history.
+async function newOwnField(pid, column, taken, opts) {
+  opts = opts || {};
   const title = el("input", { type: "text", maxlength: "60", value: column });
-  const kind = el("select", {}, Object.entries(KIND_TITLE).map(([k, t]) => el("option", { value: k }, t)));
+  const kind = el("select", {}, Object.entries(KIND_TITLE).map(([k, t]) => el("option", { value: k, selected: k === (opts.kind || "text") }, t)));
   const ident = el("input", { type: "checkbox" });
-  const identRow = el("label", { class: "check", hidden: true }, ident, "An identifier: the same value always means the same record");
+  const identRow = el("label", { class: "check", hidden: (opts.kind || "text") !== "code" }, ident, "An identifier: the same value always means the same record");
   kind.addEventListener("change", () => { identRow.hidden = kind.value !== "code"; });
   const err = errBox();
-  const body = el("div", {}, el("p", { class: "hint" }, "Records will be matched on this column too. Its kind decides how its values are cleaned and compared."),
+  const body = el("div", {}, el("p", { class: "hint" }, (opts.kept ? "The column " + column + " is kept as it is in your data. To use it in a rule, the engine compares it as a field of your own. "
+    : "Records will be matched on this column too. ") + "Its kind decides how its values are cleaned and compared."),
     field("Name of the field", title), field("Kind", kind), identRow, err);
   return dialog("A field of your own", body, "Add the field", async () => {
     const t = title.value.trim();
@@ -288,12 +297,14 @@ async function newOwnField(pid, column, taken) {
       const versions = await api("GET", base);
       const latest = versions.filter((v) => ["proposed", "approved", "active"].includes(v.status)).pop();
       const content = (await api("GET", latest ? base + "/versions/" + latest.version : base + "/default")).content;
-      const name = freeName(slug(t, "field"), [...(content.custom_fields || []).map((f) => f.name), ...taken]);
-      const f = { name, title: t, kind: kind.value, ...(kind.value === "code" && ident.checked ? { identifier: true } : {}) };
+      const name = freeName(slug(opts.kept ? column : t, "field"), [...(content.custom_fields || []).map((f) => f.name), ...taken]);
+      const f = { name, title: t, kind: kind.value, ...(kind.value === "code" && ident.checked ? { identifier: true } : {}), ...(opts.kept ? { column } : {}) };
       const proj = await api("GET", P(pid));
-      const out = await api("POST", base + "/propose", { content: { ...content, custom_fields: [...(content.custom_fields || []), f] }, reason: "Added the field " + t + " while mapping a file" });
-      if (!proj.second_approval && can("config.activate")) await api("POST", base + "/versions/" + out.version + "/activate", { reason: "Added the field " + t });
-      return f;
+      const out = await api("POST", base + "/propose", { content: { ...content, custom_fields: [...(content.custom_fields || []), f] },
+        reason: "Added the field " + t + " " + (opts.why || "while mapping a file") });
+      const now = !proj.second_approval && can("config.activate");
+      if (now) await api("POST", base + "/versions/" + out.version + "/activate", { reason: "Added the field " + t });
+      return { ...f, pending: !now };
     } catch (e) { fail(err, e.message); return undefined; }
   });
 }

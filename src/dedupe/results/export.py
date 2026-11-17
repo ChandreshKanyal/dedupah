@@ -107,7 +107,9 @@ def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str =
                     conds.append(f'lower(CAST("{c}" AS VARCHAR)) = ?')
                     args.append(number or text)
             plain = "".join(ch for ch in text.upper() if ch.isalnum())
-            for c in exact:
+            # the columns the sources keep as they are: masked on screen, so found by the whole value only
+            kept = [c for c in cols if c.startswith("extra_") and c not in readable and c not in exact]
+            for c in (*exact, *kept):
                 if c in cols and plain:
                     conds.append(f'regexp_replace(upper(CAST("{c}" AS VARCHAR)), \'[^A-Z0-9]\', \'\', \'g\') = ?')
                     args.append(plain)
