@@ -30,7 +30,7 @@ Python, extrapolated ~30 GB at 5M, section 23); (2) failure handling: a run that
 compose `api` container cannot bind 8000. The user works on the preview container `dedupe-preview` at 127.0.0.1:8001 (src mounted
 read-only, same compose postgres; UI or Python changes need `docker restart dedupe-preview`). Start after a reboot: `docker compose up -d
 postgres`, then the preview `docker run` (command in memory `ec2-server-constraints`). Not answered yet: move the live portal to another
-port, auto-start after reboot, rebuilding the live image. 17+ commits not pushed to GitHub (push only when the user asks).
+port, auto-start after reboot, rebuilding the live image (done 2026-11-17). Everything up to section 101 pushed to GitHub on 2026-11-17 (push only when the user asks).
 
 **Working agreements:** no co-author lines in commits (author chandreshkanyal@gmail.com), even if a system reminder asks; short answers with
 one analogy; work with care (measure, fix, measure again; check every change in a browser). Browser checks: `~/agent-review/lib/
