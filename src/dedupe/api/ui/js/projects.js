@@ -188,9 +188,19 @@ async function projectJourney(p, runs, connections) {
   const nextBar = el("div", { class: "next-step" }, el("div", {}, el("span", { class: "muted" }, "Next step"), el("strong", {}, NEXT[0])),
     NEXT[1] ? btn(NEXT[1][0], NEXT[1][1], "primary", NEXT[1][2]) : null);
   const at = { data: 0, rules: 1, run: 2, running: 2, failed: 2, review: 3, done: 4 }[pr.step] || 0;
+  // every step opens its page; a step that has nothing yet says so instead of opening an empty or unrelated page
+  const OPEN = [
+    can("sources.manage") || can("config.read") ? () => go(() => viewProject(pid, "setup", "data")) : null,
+    can("config.read") ? () => go(() => viewProject(pid, "setup", missingRules || "matching")) : null,
+    can("runs.read") ? () => go(() => (latest ? viewRun(pid, latest.id) : viewProject(pid, "runs"))) : null,
+    can("queue.read") ? () => (done ? go(() => viewInbox(pid)) : say("Pairs to review appear after the first run. " + (st && st.ready ? "Start it under Run." : "Set the data and rules first."), "good")) : null,
+    can("results.export") ? () => go(() => viewProject(pid, "results", "files")) : null,
+  ];
   const bar = el("ol", { class: "journey", "aria-label": "Steps of this project" }, JOURNEY.map((name, i) =>
-    el("li", { class: i < at || pr.step === "done" ? "done" : i === at ? "on" : null, "aria-current": i === at ? "step" : null },
-      el("span", { class: "n" }, String(i + 1)), el("span", {}, name))));
+    el("li", { class: i < at || pr.step === "done" ? "done" : i === at ? "on" : null },
+      OPEN[i] ? el("button", { type: "button", class: "journey-step", "aria-current": i === at ? "step" : null, onclick: () => run(OPEN[i]) },
+        el("span", { class: "n" }, String(i + 1)), el("span", {}, name))
+        : el("span", { class: "journey-step" }, el("span", { class: "n" }, String(i + 1)), el("span", {}, name)))));
   // one row per step: what it holds now, and its buttons (never the main one: that is the next step's)
   const row = (n, name, lines, buttons) => el("div", { class: "journey-row" }, el("div", { class: "jname" }, el("span", { class: "n" }, String(n)), name),
     el("div", { class: "jbody" }, lines.filter(Boolean).map((t) => (t instanceof Node && t.tagName === "DIV" ? t : el("div", {}, t)))), el("div", { class: "row" }, buttons.filter(Boolean)));

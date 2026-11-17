@@ -2379,3 +2379,12 @@ Tests: 4 new (joined names, households off/on, search in own fields, company col
 **Still not done (engine, from section 96):** with `compare_within_source` off, big identifier blocks lose chain links inside one source;
 person-specific cleaning (titles, relations in names) still runs on person fields only, which is right, but there is no per-kind check of
 it on own name fields beyond the tests. All results are synthetic.
+
+## 100. The project's five steps are clickable (2026-11-17, session 5)
+
+**The user's report:** on a project page the step bar (Data, Rules, Run, Review, Results) looked like tabs but did nothing when clicked.
+**Fix (`projects.js`, `style.css`):** each step is a button: Data -> the data page, Rules -> the rules not chosen yet (else matching rules),
+Run -> the latest run (else the runs list), Review -> the project's review (before a first run: a message saying what to do first, instead
+of opening another project's queue), Results -> the results page. Steps the person's role cannot open stay plain text. Hover underlines,
+keyboard focus is visible, the bar keeps its height. Checked in a browser on a project without data and on one with a finished run (10 clicks,
+all to the right page, 0 problems; `~/agent-review/own/j1.py`). UI tests and ruff clean.

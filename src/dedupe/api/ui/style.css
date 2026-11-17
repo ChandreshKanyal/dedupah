@@ -506,7 +506,12 @@ button.small.icon { width: 22px; }
 @media (max-width: 640px) { .todo-row { flex-wrap: wrap; } .todo-row > button { margin-left: 42px; } }
 /* A project's journey: the five steps, the next step with the page's main button, and one row per step */
 ol.journey { display: flex; gap: 0; margin: 0 0 12px; padding: 0; list-style: none; border: 1px solid var(--border); background: var(--bg-panel); }
-ol.journey li { display: flex; flex: 1; align-items: center; gap: 8px; padding: 10px 14px; border-right: 1px solid var(--border); color: var(--muted); }
+ol.journey li { display: flex; flex: 1; padding: 0; border-right: 1px solid var(--border); color: var(--muted); }
+ol.journey .journey-step { display: flex; flex: 1; align-items: center; gap: 8px; height: auto; min-height: 44px; padding: 10px 14px; margin: 0; border: 0; border-radius: 0; background: none;
+  color: inherit; font: inherit; font-weight: inherit; text-align: left; }
+ol.journey button.journey-step { cursor: pointer; }
+ol.journey button.journey-step:hover { background: var(--bg-hover, var(--bg-selected)); color: var(--text); text-decoration: underline; }
+ol.journey button.journey-step:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
 ol.journey li:last-child { border-right: 0; }
 ol.journey li.done { color: var(--text); }
 ol.journey li.on { background: var(--bg-selected); color: var(--text); font-weight: 600; }
