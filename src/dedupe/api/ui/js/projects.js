@@ -54,7 +54,7 @@ async function newProject() {
   };
   show(page("New project", "Name the project, add its data, choose how records are matched and how golden records are built, then check and run. Nothing is chosen for you.",
     [btn("Cancel", () => go(viewProjects))], crumbs(crumb("Projects", "/projects"), "New project")),
-  setupSteps(1), el("div", { class: "narrow" }, field("Name", name), field("Id (used in addresses: lower-case letters, digits and -)", id), field("Description (optional)", desc),
+  journeyBar(null, [], null), el("div", { class: "narrow" }, field("Name", name), field("Id (used in addresses: lower-case letters, digits and -)", id), field("Description (optional)", desc),
     el("label", { class: "check" }, second, el("span", {}, "Require a second person to approve changes", el("span", { class: "muted" }, "Leave this off while you work alone: then what you save is in use at once. Turn it on in the project's settings once others join."))),
     err, el("div", { class: "row" }, btn("Create and continue", create, "primary", "next"))));
   name.focus();
@@ -74,10 +74,29 @@ const OLD_TAB = { overview: ["setup"], connections: ["setup", "data"], rules: ["
   access: ["settings", "members"], activity: ["settings", "activity"] };
 const SETUP_PARTS = { data: "Data", matching: "Matching rules", golden: "Golden record", technical: "Fields and search" };
 const SETUP_CONFIG = { matching: "decision", golden: "survivorship", technical: "settings" };
-const SETUP_STEP = { data: 2, matching: 3, golden: 4 };
-function setupSteps(on, pid) {
-  const to = [null, ["settings", "general"], ["setup", "data"], ["setup", "matching"], ["setup", "golden"], ["setup"]];
-  return steps(["Project", "Data", "Matching rules", "Golden record", "Check and run"], on, pid ? (n) => go(() => viewProject(pid, ...to[n])) : null);
+// The project's five steps, the same bar on every page of a project: Data, Rules, Run, Review, Results. A filled number is a step that is done,
+// an outlined one the next step, the grey step the page you are on. Each step opens its page. `current`: index of this page's step (or null);
+// `runs`: the project's runs; `rulesPage`: where Rules opens (the rules not chosen yet). Without a project (a new one) the steps only show.
+const JOURNEY = ["Data", "Rules", "Run", "Review", "Results"];
+const STEP_OF_PAGE = { data: 0, matching: 1, golden: 1, technical: 1, runs: 2, results: 4 };
+function journeyBar(pid, runs, current, rulesPage) {
+  const pr = pid ? (cache.projects.find((x) => x.id === pid) || {}).progress || { step: "data" } : { step: "none" };
+  const at = { data: 0, rules: 1, run: 2, running: 2, failed: 2, review: 3, done: 4 }[pr.step];
+  const latest = (runs || [])[0] || null;
+  const done = (runs || []).find((r) => r.status === "succeeded") || null;
+  const OPEN = pid ? [
+    can("sources.manage") || can("config.read") ? () => go(() => viewProject(pid, "setup", "data")) : null,
+    can("config.read") ? () => go(() => viewProject(pid, "setup", rulesPage || "matching")) : null,
+    can("runs.read") ? () => go(() => (latest ? viewRun(pid, latest.id) : viewProject(pid, "runs"))) : null,
+    can("queue.read") ? () => (done ? go(() => viewInbox(pid)) : say("Pairs to review appear after the first run.", "good")) : null,
+    can("results.export") ? () => go(() => viewProject(pid, "results", "files")) : null,
+  ] : [];
+  return el("ol", { class: "journey", "aria-label": "Steps of this project" }, JOURNEY.map((name, i) => {
+    const cls = [at != null && (i < at || pr.step === "done") ? "done" : null, i === at && pr.step !== "done" ? "next" : null, i === current ? "on" : null].filter(Boolean).join(" ");
+    const inner = [el("span", { class: "n" }, String(i + 1)), el("span", {}, name)];
+    return el("li", { class: cls || null }, OPEN[i] ? el("button", { type: "button", class: "journey-step", "aria-current": i === current ? "page" : null,
+      title: i === at && pr.step !== "done" ? "Next step" : null, onclick: () => run(OPEN[i]) }, inner) : el("span", { class: "journey-step" }, inner));
+  }));
 }
 // Which parts of a project are chosen: data in use, and a version in use of the matching and golden-record rules (technical settings are optional).
 async function setupState(pid, connections) {
@@ -134,13 +153,13 @@ async function viewProject(pid, tab, sub) {
   let body;
   let title = PROJECT_PAGES[tab];
   const actions = [];
-  if (tab === "setup") { body = await setupPart(p, sub, connections, guided); title = SETUP_PARTS[sub]; }
+  if (tab === "setup") { body = await setupPart(p, sub, connections, guided, runs); title = sub === "data" ? "Data" : "Rules: " + SETUP_PARTS[sub]; }
   else if (tab === "runs") {
-    body = el("div", {}, runsTable(runs, false, pid), await schedulesPanel(p, connections));
+    body = el("div", {}, journeyBar(pid, runs, 2), runsTable(runs, false, pid), await schedulesPanel(p, connections));
     if (can("runs.start")) actions.push(btn("Start run", () => quickRun(pid), "primary", "play"));
   } else if (tab === "results") {
     title = sub === "decisions" ? "Decisions made" : "Results";
-    body = sub === "files" ? await resultsPanel(p, runs) : await decisionsPanel([p], { project: true });
+    body = sub === "files" ? el("div", {}, journeyBar(pid, runs, 4), await resultsPanel(p, runs)) : await decisionsPanel([p], { project: true });
   } else body = el("div", {}, subTabs(subs.settings, { general: "General", members: "Members", activity: "Activity" }, sub, (s) => viewProject(pid, "settings", s)),
     sub === "general" ? settingsPanel(p) : sub === "members" ? await accessPanel(pid) : await activityPanel(pid));
   show(page(title, "Project " + p.name, actions, crumbs(crumb("Projects", "/projects"), crumb(p.name, P(pid)), title), second), body);
@@ -160,7 +179,6 @@ function sameWhenShort(dec) {
   if (!words.length) return "No rule merges records by itself; " + leftoverWords(dec).toLowerCase();
   return "The same when: " + words.slice(0, 4).join(", ") + (words.length > 4 ? " and " + (words.length - 4) + " more" : "") + ".";
 }
-const JOURNEY = ["Data", "Rules", "Run", "Review", "Results"];
 // The journey page: where the project is (steps), the one thing to do next, and one row per step with what it holds now.
 async function projectJourney(p, runs, connections) {
   const pid = p.id;
@@ -187,20 +205,7 @@ async function projectJourney(p, runs, connections) {
   }[pr.step] || ["", null];
   const nextBar = el("div", { class: "next-step" }, el("div", {}, el("span", { class: "muted" }, "Next step"), el("strong", {}, NEXT[0])),
     NEXT[1] ? btn(NEXT[1][0], NEXT[1][1], "primary", NEXT[1][2]) : null);
-  const at = { data: 0, rules: 1, run: 2, running: 2, failed: 2, review: 3, done: 4 }[pr.step] || 0;
-  // every step opens its page; a step that has nothing yet says so instead of opening an empty or unrelated page
-  const OPEN = [
-    can("sources.manage") || can("config.read") ? () => go(() => viewProject(pid, "setup", "data")) : null,
-    can("config.read") ? () => go(() => viewProject(pid, "setup", missingRules || "matching")) : null,
-    can("runs.read") ? () => go(() => (latest ? viewRun(pid, latest.id) : viewProject(pid, "runs"))) : null,
-    can("queue.read") ? () => (done ? go(() => viewInbox(pid)) : say("Pairs to review appear after the first run. " + (st && st.ready ? "Start it under Run." : "Set the data and rules first."), "good")) : null,
-    can("results.export") ? () => go(() => viewProject(pid, "results", "files")) : null,
-  ];
-  const bar = el("ol", { class: "journey", "aria-label": "Steps of this project" }, JOURNEY.map((name, i) =>
-    el("li", { class: i < at || pr.step === "done" ? "done" : i === at ? "on" : null },
-      OPEN[i] ? el("button", { type: "button", class: "journey-step", "aria-current": i === at ? "step" : null, onclick: () => run(OPEN[i]) },
-        el("span", { class: "n" }, String(i + 1)), el("span", {}, name))
-        : el("span", { class: "journey-step" }, el("span", { class: "n" }, String(i + 1)), el("span", {}, name)))));
+  const bar = journeyBar(pid, runs, null, missingRules);
   // one row per step: what it holds now, and its buttons (never the main one: that is the next step's)
   const row = (n, name, lines, buttons) => el("div", { class: "journey-row" }, el("div", { class: "jname" }, el("span", { class: "n" }, String(n)), name),
     el("div", { class: "jbody" }, lines.filter(Boolean).map((t) => (t instanceof Node && t.tagName === "DIV" ? t : el("div", {}, t)))), el("div", { class: "row" }, buttons.filter(Boolean)));
@@ -229,14 +234,23 @@ async function projectJourney(p, runs, connections) {
   return el("div", {}, bar, nextBar, el("div", { class: "panel journey-steps" }, rows));
 }
 // One part of the setup on its own page. Until the first run it carries the steps and a Next button, so a new project is set up in order.
-async function setupPart(p, sub, connections, guided) {
+async function setupPart(p, sub, connections, guided, runs) {
   const order = ["data", "matching", "golden"];
   const i = order.indexOf(sub);
+  const st = can("config.read") ? await setupState(p.id, connections) : null;
+  const missing = st ? (!st.cfg.decision.live ? "matching" : !st.cfg.survivorship.live ? "golden" : null) : null;
+  // Rules is one step with three pages: the two that must be chosen say so until they are
+  const rulesTabs = sub === "data" ? null : el("div", { class: "subtabs page-sub", role: "tablist", "aria-label": "Rules" }, ["matching", "golden", "technical"].map((k) => {
+    const todo = st && ((k === "matching" && !st.cfg.decision.live) || (k === "golden" && !st.cfg.survivorship.live));
+    return el("button", { type: "button", role: "tab", "aria-selected": k === sub ? "true" : "false", onclick: () => go(() => viewProject(p.id, "setup", k)) },
+      SETUP_PARTS[k] + (k === "technical" ? " (optional)" : todo ? " (not chosen yet)" : ""));
+  }));
   const body = sub === "data" ? await projectConnections(p, connections) : await rulesPanel(p, SETUP_CONFIG[sub]);
+  const nextOf = { data: "matching", matching: "golden", golden: null };
   const nav = guided && i >= 0 ? el("div", { class: "row guide-nav" },
-    btn("Back", () => go(() => (i ? viewProject(p.id, "setup", order[i - 1]) : viewProject(p.id, "settings", "general"))), "", "prev"),
-    btn(i < 2 ? "Next: " + SETUP_PARTS[order[i + 1]] : "Next: check and run", () => go(() => viewProject(p.id, "setup", order[i + 1])), "primary", "next")) : null;
-  return el("div", {}, guided && i >= 0 ? setupSteps(SETUP_STEP[sub], p.id) : null, body, nav);
+    btn("Back", () => go(() => viewProject(p.id, "setup", i ? order[i - 1] : undefined)), "", "prev"),
+    btn(nextOf[sub] ? "Next: " + SETUP_PARTS[nextOf[sub]] : "Next: check and run", () => go(() => viewProject(p.id, "setup", nextOf[sub] || undefined)), "primary", "next")) : null;
+  return el("div", {}, journeyBar(p.id, runs, STEP_OF_PAGE[sub], missing), rulesTabs, body, nav);
 }
 async function activityPanel(pid) {
   const ACTIONS = { propose: "Saved a data source", activate: "Put a version in use", approve: "Approved a version", decline: "Declined a version", copy: "Copied a data source",

@@ -155,8 +155,8 @@ async function viewRun(pid, rid, tab) {
   if (going && can("runs.start")) actions.push(btn("Stop run", () => cancelRun(pid, rid), "danger"));
   if (again) actions.push(btn("Run again", () => run(() => quickRun(pid)), okRun ? "" : "primary", "play"));
   if (!going) actions.push(moreMenu([can("data.delete") ? ["Delete run", () => deleteRun(pid, rid), true] : null], title));
-  const top = page(title, "Started by " + r.requested_by + (r.finished_at ? ", finished " + when(r.finished_at) + "." : "."), actions,
-    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("All runs", P(pid) + "/runs"), title), runState(r));
+  const top = [page(title, "Started by " + r.requested_by + (r.finished_at ? ", finished " + when(r.finished_at) + "." : "."), actions,
+    crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("All runs", P(pid) + "/runs"), title), runState(r)), journeyBar(pid, runs, 2)];
   const used = runUsed(r);
   if (going) {
     timer = setInterval(() => run(async () => {

@@ -518,6 +518,8 @@ ol.journey li.on { background: var(--bg-selected); color: var(--text); font-weig
 ol.journey .n, .journey-row .n { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; flex: none; border: 1px solid var(--border-strong); font-size: 12px; }
 ol.journey li.done .n { background: var(--text); border-color: var(--text); color: var(--bg-panel); }
 ol.journey li.on .n { border-color: var(--text); }
+ol.journey li.next { color: var(--text); font-weight: 600; }
+ol.journey li.next .n { border: 2px solid var(--text); }
 .next-step { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; padding: 14px 16px; border: 1px solid var(--border-strong); background: var(--bg-panel); }
 .next-step > div { flex: 1; min-width: 0; }
 .next-step .muted { display: block; font-size: 12px; }

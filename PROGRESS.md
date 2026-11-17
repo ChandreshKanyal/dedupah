@@ -2388,3 +2388,14 @@ Run -> the latest run (else the runs list), Review -> the project's review (befo
 of opening another project's queue), Results -> the results page. Steps the person's role cannot open stay plain text. Hover underlines,
 keyboard focus is visible, the bar keeps its height. Checked in a browser on a project without data and on one with a finished run (10 clicks,
 all to the right page, 0 problems; `~/agent-review/own/j1.py`). UI tests and ruff clean.
+
+## 101. One step bar on every page of a project (2026-11-17, session 5)
+
+**The user's report:** the project page numbered the steps Data 1, Rules 2 ...; the setup pages showed another bar (1 Project, 2 Data, 3
+Matching rules, 4 Golden record, 5 Check and run), so Matching rules was step 2 on one page and step 3 on the next.
+**Fix (`projects.js`, `runs.js`, `style.css`):** `journeyBar(pid, runs, current, rulesPage)` is the only step bar: Data, Rules, Run,
+Review, Results, on the project page, the data page, the three rules pages, the runs list, a run and the results page (and, not clickable,
+on New project). Filled number = done, thick outline = the next step, grey = the page you are on. Rules is one step with three tabs:
+Matching rules, Golden record (each says "not chosen yet" until it is), Fields and search (optional). Page titles say "Rules: Matching
+rules". The old wizard bar (`setupSteps`) is gone; guided Back / Next follow Data > Matching rules > Golden record > the project page.
+Checked in a browser on an empty project and a finished one (every step and tab, `~/agent-review/own/j2.py`): 0 problems.
