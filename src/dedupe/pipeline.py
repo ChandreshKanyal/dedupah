@@ -58,6 +58,7 @@ class PipelineConfig:
     truth: Path | None = None  # ground-truth folder: development/synthetic evaluation only
     blocking_cap: int = 50
     household_threshold: float = 5.0
+    build_households: bool | None = None
     max_cluster_size: int = 15
     redact_aadhaar: bool = True
     review_min_probability: float = 0.0  # drop queue items whose best pair scores below this (workload control)
@@ -77,7 +78,8 @@ class PipelineConfig:
     custom_blocking: list = field(default_factory=list)
     fixed_weights: dict = field(default_factory=dict)
     compare_within_source: bool = True
-    record_name: str = ""                       # what one record is called on screen (portal wording only)
+    record_name: str = ""
+    record_name_plural: str = ""                       # what one record is called on screen (portal wording only)
 
 
 class _Meter:
@@ -270,10 +272,16 @@ def _run(cfg: PipelineConfig, res_cfg, effective: dict) -> dict:
                                                 scfg, work / "golden", overrides)
     with meter.stage("review_queue"):
         summary["review_queue"] = build_queue(con, work / "review_queue.parquet", cfg.review_min_probability, cfg.review_cap)
-    with meter.stage("households"):
-        people, scores, hh, info, _ = build_households(con, p["std"], clusters_dir / "clusters.parquet", p["canonical"],
-                                                       hh_dir, cfg.household_threshold)
-        summary["households"] = {"people": len(people), "related_pairs": len(scores), **{k: v for k, v in info.items() if k != "flags"}}
+    households_on = cfg.build_households if cfg.build_households is not None else not spec().custom
+    if households_on:
+        with meter.stage("households"):
+            people, scores, hh, info, _ = build_households(con, p["std"], clusters_dir / "clusters.parquet", p["canonical"],
+                                                           hh_dir, cfg.household_threshold)
+            summary["households"] = {"people": len(people), "related_pairs": len(scores), **{k: v for k, v in info.items() if k != "flags"}}
+    else:
+        # not a project about people: no household file at all (the results list leaves it out), and the summary says why
+        shutil.rmtree(hh_dir, ignore_errors=True)
+        summary["households"] = {"skipped": "the project matches on fields of its own; households are switched off"}
 
     if cfg.truth:
         with meter.stage("evaluation"):
@@ -290,6 +298,7 @@ def _run(cfg: PipelineConfig, res_cfg, effective: dict) -> dict:
                                         "truth_records_not_in_input": absent}
             imp = impact(con, cfg.truth, dcfg)
             summary["eval_decisions"] = {"zones": imp["zones"], "auto_merge_quality": imp["auto_merge_quality"]}
+        if households_on:
             thh, tper = truth_of_clusters(con, cfg.truth)
             e = [(a, b, s) for a, b, s, _ in scores]
             fam = evaluate_households(hh, thh, e, {(a, b): ev for a, b, _, ev in scores}, tper)
@@ -317,13 +326,15 @@ def _tables_like(con, prefix: str) -> list[str]:
 def _fmt(s: dict) -> str:
     lines = [f"records {s['ingest']['total']:,} | candidates {s['blocking']['candidate_pairs']:,} | decisions {s['decisions']['auto_merge']:,} auto / "
              f"{s['decisions']['review']:,} review / {s['decisions']['reject']:,} reject | clusters {s['clustering']['clusters']:,} | "
-             f"households {s['households']['households']:,}"]
+             f"households {s['households'].get('households', 0):,}"]
     lines.append("stage times: " + ", ".join(f"{r['stage']} {r['seconds']}s" for r in s["stages"]) + f" | total {s['total_seconds']}s | peak memory {s['peak_memory_mb']} MB")
     if "eval_clusters" in s:
-        c, d, h = s["eval_clusters"], s["eval_decisions"], s["eval_households"]["family_only"]
+        c, d = s["eval_clusters"], s["eval_decisions"]
         lines.append(f"person clusters (pairwise): precision {c['precision']:.4f} recall {c['recall']:.4f} F1 {c['f1']:.4f} | "
                      f"auto-merge precision {d['auto_merge_quality']['precision']:.4f} ({d['zones']['auto_merge']['false']} false merges), review queue {d['zones']['review']['pairs']:,} pairs")
-        lines.append(f"households (family links only): precision {h['precision']:.4f} recall {h['recall']:.4f}")
+        if "eval_households" in s:
+            h = s["eval_households"]["family_only"]
+            lines.append(f"households (family links only): precision {h['precision']:.4f} recall {h['recall']:.4f}")
     return "\n".join(lines)
 
 

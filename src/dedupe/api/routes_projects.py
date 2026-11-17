@@ -104,6 +104,7 @@ class ProjectView(BaseModel):
     runs: int = 0
     latest_run: RunView | None = None
     progress: dict | None = None                  # how far the project is (see _progress); filled in the projects list and on the start page
+    record_words: str | None = None               # its plural, when the project chose one ("person" -> "people")
     record_word: str | None = None                # what one record is called when the project is not about people ("vendor", or "record")
     you_can: list[str] | None = None              # the caller's permissions inside this project (a member keeps only what their project role allows)
 
@@ -117,15 +118,16 @@ def _run_view(run, replayed: bool = False, sv=None) -> RunView:
 def _project_view(sv, proj, p: Principal | None = None, request: Request | None = None) -> ProjectView:
     runs = sv.jobs.recent(proj.id, limit=1000)
     p = p and in_project(sv, p, proj.id)
-    word = None
+    word = words = None
     if request is not None and p:
         try:
             from .routes_read import project_settings
             used, _ = project_settings(project_scope(request, proj.id).configs)
             word = (used.get("record_name") or "").strip().lower() or ("record" if used.get("custom_fields") else None)
+            words = (used.get("record_name_plural") or "").strip().lower() or None
         except Exception:      # noqa: BLE001  the word is decoration: a project whose settings cannot be read keeps the usual words
             word = None
-    return ProjectView(**{**proj.__dict__, "second_approval": proj.second_approval}, record_word=word, you_own=bool(p and sv.workspace.is_owner(proj.id, p.sub)), runs=len(runs),
+    return ProjectView(**{**proj.__dict__, "second_approval": proj.second_approval}, record_word=word, record_words=words if word else None, you_own=bool(p and sv.workspace.is_owner(proj.id, p.sub)), runs=len(runs),
                        latest_run=_run_view(runs[0], sv=sv) if runs else None, you_can=sorted(p.permissions) if p else None,
                        progress=_progress(request, sv, proj.id, p, runs[0] if runs else None) if request is not None and p else None)
 

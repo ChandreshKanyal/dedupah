@@ -197,3 +197,17 @@ def test_a_projects_own_fields_reach_the_forms_and_rules_on_them_are_checked_whe
     assert listed["own_fields"] == {"note": "internal_note"} and listed["fields_mapped"] == 6
     guide = c.get(P + "/golden-record-guide", headers=analyst).json()
     assert guide["extra_columns"] == []                    # the connection is not in use yet
+
+
+def test_a_company_column_is_not_suggested_as_a_persons_name_and_a_weight_form_gets_a_fields_levels(api):
+    import pyarrow as pa
+
+    from dedupe.mapping.suggest import suggest
+    sample = pa.table({"org_name": ["Acme Traders Pvt Ltd", "Zenith Steels Limited", "Orbit Foods LLP", "Lotus Exports Pvt Ltd"] * 3})
+    assert not [s for s in suggest(sample) if s["field"] in ("full_name", "father_name", "related_name")]
+    people = pa.table({"cust_name": ["Asha Verma", "Ravi Kumar Rao", "Meena Iyer", "Suresh Patel"] * 3})
+    assert [s["field"] for s in suggest(people)] == ["full_name"]
+    c, s, _, _, _ = api
+    r = c.post(P + "/field-levels", json={"kind": "number", "tolerance": 5}, headers=hdr(s, "analyst"))
+    assert r.status_code == 200 and r.json()["levels"] == ["equal", "close", "different"]
+    assert c.post(P + "/field-levels", json={"kind": "colour"}, headers=hdr(s, "analyst")).status_code == 422

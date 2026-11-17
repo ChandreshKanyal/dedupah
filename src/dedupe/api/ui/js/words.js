@@ -9,6 +9,11 @@ const STATUS_LABEL = { active: "In use", proposed: "Waiting for approval", appro
 const STATUS_KIND = { active: "success", succeeded: "success", in_force: "success", failed: "danger", declined: "danger", interrupted: "danger",
   proposed: "info", approved: "info", running: "info", queued: "info", waiting_for_run: "info", pending_approval: "warn", unsure: "warn" };
 const KIND_LABEL = { same_person: "Same person", different_person: "Different people", unsure: "Not sure", split: "Split", field_override: "Corrected a field" };
+// A decision in the words of its project ("Same vendor", "Split a record"); kinds other than these keep KIND_LABEL.
+function kindLabel(kind, pid) {
+  const w = wordsOf(pid);
+  return { same_person: w.same, different_person: w.diff, split: "Split " + (w.own ? "a " + w.person : "a person") }[kind] || KIND_LABEL[kind] || label(kind);
+}
 const statusTag = (s) => tag(STATUS_LABEL[s] || label(s), STATUS_KIND[s]);
 
 // How far a project is (the server's progress.step): a short state, and the next thing to do about it.
@@ -28,9 +33,10 @@ function runTitle(r, runs) {
 // fields says "record", or the word chosen under Fields and search ("vendor").
 const manyOf = (w) => (/[^aeiou]y$/.test(w) ? w.slice(0, -1) + "ies" : /(s|x|ch|sh)$/.test(w) ? w + "es" : w + "s");
 function wordsOf(pid) {
-  const w = (cache.projects.find((p) => p.id === pid) || {}).record_word;
+  const proj = cache.projects.find((p) => p.id === pid) || {};
+  const w = proj.record_word;
   if (!w) return { own: false, one: "customer", many: "customers", One: "Customer", Many: "Customers", same: "Same person", diff: "Different people", person: "person", people: "people", Person: "Person" };
-  const many = manyOf(w);
+  const many = proj.record_words || manyOf(w);
   return { own: true, one: w, many, One: cap(w), Many: cap(many), same: "Same " + w, diff: "Different " + many, person: w, people: many, Person: cap(w) };
 }
 const LOAD_WORDS = { incremental: "Only what changed (faster)", full: "Everything again" };

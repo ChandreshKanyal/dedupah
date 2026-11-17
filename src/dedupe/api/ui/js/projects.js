@@ -232,8 +232,8 @@ async function activityPanel(pid) {
   const ACTIONS = { propose: "Saved a data source", activate: "Put a version in use", approve: "Approved a version", decline: "Declined a version", copy: "Copied a data source",
     source_inspect: "Looked inside a source", source_preview: "Previewed a mapping", upload: "Uploaded a file", create_project: "Created the project", grant_access: "Added a member",
     revoke_access: "Removed a member", set_second_approval: "Changed the approval setting", rename_project: "Renamed the project", start: "Started a run", cancel: "Cancelled a run",
-    delete_run: "Deleted a run", delete_upload: "Deleted an uploaded file", approve_match: "Decided: same person", reject_match: "Decided: different people",
-    mark_unsure: "Marked a pair not sure", undo: "Undid a decision", split_person: "Split a person", override_field: "Corrected a field", approve_pending: "Gave a second approval",
+    delete_run: "Deleted a run", delete_upload: "Deleted an uploaded file", approve_match: "Decided: " + wordsOf(pid).same.toLowerCase(), reject_match: "Decided: " + wordsOf(pid).diff.toLowerCase(),
+    mark_unsure: "Marked a pair not sure", undo: "Undid a decision", split_person: kindLabel("split", pid), override_field: "Corrected a field", approve_pending: "Gave a second approval",
     decline_pending: "Declined a decision" };
   const RULES_OF = { decision: "the matching rules", survivorship: "the golden-record rules", settings: "the fields and search settings" };
   const RULE_ACTIONS = { propose: "Saved a version of ", activate: "Put a version in use: ", approve: "Approved a version of ", decline: "Declined a version of ", rollback: "Went back to an earlier version of " };

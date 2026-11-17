@@ -67,6 +67,9 @@ def _value_score(field: str, col: str, det: dict) -> float:
     return 0.75 if det["type"] in SOFT_TYPES else 0.85
 
 
+PERSON_NAME_FIELDS = ("full_name", "father_name", "related_name")
+
+
 def suggest(sample: pa.Table, threshold: float = 0.6, profiles: dict[str, dict] | None = None) -> list[dict]:
     """Greedy best-first assignment of columns to canonical fields from column names AND detected value types.
     Returns [{field, column, confidence, why}]; `why` is "name", "values" or "name and values"."""
@@ -75,8 +78,12 @@ def suggest(sample: pa.Table, threshold: float = 0.6, profiles: dict[str, dict] 
     for col in sample.column_names:
         det = profiles.get(col) or {}
         strong_other = det.get("type") in STRONG_TYPES and det.get("share", 0) >= 0.9
+        # "org_name" holding "Acme Traders Pvt Ltd": the word "name" in the column does not make it a person's name
+        company = det.get("type") == "organisation_name" and det.get("share", 0) >= 0.5
         for field in set(_NAME_RULES) | ({det["field"]} if det.get("field") else set()):
             ns = _name_score(field, col) if field in _NAME_RULES else 0.0
+            if company and field in PERSON_NAME_FIELDS:
+                continue
             if ns and strong_other and field not in fits(det):
                 ns /= 2                        # named "pan" but the values are clearly something else (phones, GST numbers ...)
             vs = _value_score(field, col, det)

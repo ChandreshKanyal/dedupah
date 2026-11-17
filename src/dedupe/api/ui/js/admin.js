@@ -28,8 +28,8 @@ async function viewApprovals() {
     ? () => viewCompare(p.id, i.run_id, i.persons[0], i.persons[1]) : () => viewPerson(p.id, i.run_id, i.persons[0])) }, i.persons.join(" and ")) : el("span", { class: "mono" }, (i.persons || []).join(", ")));
   if (decisionRows.length) {
     sections.push(el("h2", { class: "section" }, "Review decisions waiting for a second person"),
-      table(["Project", "Decision", "People", ["Score"], "Main evidence", "Made by", "Reason", ""], decisionRows.map(({ p, i }) => el("tr", {}, el("td", {}, p.name),
-        el("td", {}, (KIND_LABEL[i.kind] || label(i.kind)) + (i.field ? ": " + fieldTitle(i.field) : "")), el("td", {}, people(p, i)), el("td", { class: "num" }, pct(i.probability)),
+      table(["Project", "Decision", "Records", ["Score"], "Main evidence", "Made by", "Reason", ""], decisionRows.map(({ p, i }) => el("tr", {}, el("td", {}, p.name),
+        el("td", {}, kindLabel(i.kind, p.id) + (i.field ? ": " + fieldTitle(i.field) : "")), el("td", {}, people(p, i)), el("td", { class: "num" }, pct(i.probability)),
         el("td", {}, (i.top_evidence || []).map((x) => comparisonTitle(x.comparison) + ": " + x.level).join("; ")), el("td", {}, i.yours ? tag("You", "info") : i.actor), el("td", {}, i.reason),
         el("td", { class: "actions-cell" }, i.yours ? tag("Someone else approves it", "warn") : can("judgment.approve")
           ? [btn("Approve", () => act(p, i, "approve"), "small primary"), btn("Decline", () => act(p, i, "decline"), "small danger")] : null)))));
@@ -242,7 +242,7 @@ async function viewAccount() {
         el("details", { class: "advanced body" }, el("summary", {}, "What these roles allow (" + me.permissions.length + ")"),
           el("ul", { class: "plain" }, me.permissions.map((x) => el("li", { class: "mono" }, x)))))),
     el("div", { class: "panel" }, el("h3", {}, "Keyboard shortcuts"), kv([["Ctrl + K", "Search projects and runs"],
-      ["S, D, U", "Review: Same person, Different people, Not sure"], ["N, P", "Review: next and previous pair"], ["Escape", "Close a menu or dialog"]])),
+      ["S, D, U", "Review: the same, different, not sure"], ["N, P", "Review: next and previous pair"], ["Escape", "Close a menu or dialog"]])),
     el("p", { class: "hint" }, "Roles are given by an administrator under Users. " + (cfg.mode === "local" ? "Changing your password signs you out of every other session." : "")));
 }
 // Admin: running the workspace (people, roles, the audit log, approvals), apart from the daily work. Shown to people who may open one of them.

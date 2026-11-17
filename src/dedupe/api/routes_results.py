@@ -129,11 +129,18 @@ def dataset_rows(request: Request, name: DatasetName, project_id: str = PID, run
                                          detail={"needs": "results.export"}, **_context(request))
         raise HTTPException(403, "Showing a whole table unmasked needs the right to export results. Open one person to see their details.")
     reveal = _unmask_gate(request, p, unmask, reason, ref)
+    # the project's own fields: names and texts are read and searched like a person's name; codes, phones and emails stay masked and are
+    # found by the whole value only (as a mobile number is)
+    from dedupe.custom import spec_of_run
+    from dedupe.review.service import MASKED_KINDS
+    own = spec_of_run(run_dir).custom
+    readable = tuple(f"extra_{f.name}" for f in own if f.kind not in MASKED_KINDS)
+    exact = tuple(f"extra_{f.name}" for f in own if f.kind in MASKED_KINDS)
     try:
-        page = preview(run_dir, name, limit, offset, q)
+        page = preview(run_dir, name, limit, offset, q, readable, exact)
     except ExportError as e:
         raise HTTPException(404, str(e)) from None
-    hide = [i for i, c in enumerate(page["columns"]) if c in SENSITIVE or c.startswith("extra_")]
+    hide = [i for i, c in enumerate(page["columns"]) if c in SENSITIVE or (c.startswith("extra_") and c not in readable)]
     if not reveal:
         for r in page["rows"]:
             for i in hide:

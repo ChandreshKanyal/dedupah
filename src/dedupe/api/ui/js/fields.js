@@ -51,7 +51,8 @@ function setupSummary(content, cat) {
       weights.length ? el("ul", { class: "changes" }, weights.flatMap(([c, ls]) => Object.entries(ls).map(([lv, bits]) =>
         el("li", {}, compTitle(c) + ", " + (lv === "*" ? "every level" : "“" + lv + "”") + ": " + (bits === 0 ? "never counts" : bits)))))
         : el("p", { class: "muted" }, "None: every weight is learned from the data.")),
-    step(4, "Words and limits", null, kv([["One record is called", content.record_name || (fields.length ? "record" : "customer")], ...LIMITS.map(([k, text]) => [text, String(content[k])])])));
+    step(4, "Words and limits", null, kv([["One record is called", content.record_name || (fields.length ? "record" : "customer")],
+      ["Households", content.build_households == null ? (fields.length ? "No (automatic)" : "Yes (automatic)") : content.build_households ? "Yes" : "No"], ...LIMITS.map(([k, text]) => [text, String(content[k])])])));
 }
 // One own field as a row of controls. `f` is edited in place; `changed` redraws what depends on the list of fields.
 function ownFieldRow(f, isNew, changed, remove) {
@@ -171,8 +172,18 @@ function setupForm(content, cat, propose, cancel, opts) {
   };
   // ---- 3 weights set by hand
   const weightList = el("div", { class: "rule-group" });
+  // the levels of an own field as the form shows it now (kind, tolerance ...), asked from the engine: no need to save first
+  const levelCache = new Map();
+  const levelsOf = (f) => {
+    const key = JSON.stringify({ ...f, name: "", title: "" });
+    if (!levelCache.has(key)) {
+      levelCache.set(key, []);
+      api("POST", P(opts.pid) + "/field-levels", { ...f, name: "f" }).then((r) => { levelCache.set(key, r.levels); drawWeights(); }).catch(() => {});
+    }
+    return levelCache.get(key);
+  };
   const comps = () => { nameAll(); return [...cat.comparisons.filter((c) => !c.own).map((c) => [c.name, c.title, c.levels]),
-    ...state.custom_fields.map((f) => { const known = cat.comparisons.find((c) => c.name === "x_" + f.name); return [f.name, ownTitle(f), known ? known.levels : []]; })]; };
+    ...state.custom_fields.map((f) => [f.name, ownTitle(f), levelsOf(f)])]; };
   const drawWeights = () => fill(weightList, weights.length ? weights.map((w, i) => {
     const all = comps();
     const cur = all.find((c) => c[0] === w.c || "x_" + c[0] === w.c) || all[0];
@@ -194,6 +205,9 @@ function setupForm(content, cat, propose, cancel, opts) {
     return [k, input, field(text, input)];
   });
   const recordName = el("input", { type: "text", maxlength: "30", value: state.record_name || "", class: "narrow-input" });
+  const recordPlural = el("input", { type: "text", maxlength: "30", value: state.record_name_plural || "", class: "narrow-input", placeholder: "made from the word above" });
+  const households = el("select", {}, el("option", { value: "", selected: state.build_households == null }, "Automatic: only when the project is about people"),
+    el("option", { value: "yes", selected: state.build_households === true }, "Yes"), el("option", { value: "no", selected: state.build_households === false }, "No"));
   drawFields();
   others();
   // ---- experts and saving
@@ -204,6 +218,8 @@ function setupForm(content, cat, propose, cancel, opts) {
     const out = { ...state, blocking_rules: cat.search.built_in.map((r) => r.name).filter((n) => builtIn.has(n)), fixed_weights: fixed, compare_within_source: !across.checked };
     for (const [k, input] of limits) out[k] = Number(input.value);
     out.record_name = recordName.value.trim();
+    out.record_name_plural = out.record_name ? recordPlural.value.trim() : "";
+    out.build_households = households.value === "" ? null : households.value === "yes";
     return out;
   };
   const editor = el("textarea", { spellcheck: "false", rows: "14", class: "code" });
@@ -219,6 +235,7 @@ function setupForm(content, cat, propose, cancel, opts) {
       try { out = JSON.parse(editor.value); } catch (_) { fail(err, "That is not valid JSON.", editor); return; }
     } else {
       if (!/^[A-Za-z ]*$/.test(recordName.value.trim())) { fail(err, "The word for one record is letters only.", recordName); return; }
+      if (!/^[A-Za-z ]*$/.test(recordPlural.value.trim())) { fail(err, "The word for several records is letters only.", recordPlural); return; }
       if (state.custom_fields.some((f) => !ownTitle(f))) { fail(err, "Give every field of your own a name."); return; }
       if (weights.some((w) => !Number.isFinite(w.bits) || Math.abs(w.bits) > 30)) { fail(err, "A weight set by hand is a number between -30 and 30."); return; }
       out = current();
@@ -245,7 +262,10 @@ function setupForm(content, cat, propose, cancel, opts) {
       "0 means it never counts, a positive number counts for a match, a negative one against (between -30 and 30; a shared PAN counts 13).",
     weightList, el("div", { class: "row" }, btn("Set a weight", () => { weights.push({ c: comps()[0][0], lv: "*", bits: 0 }); drawWeights(); }, "", "plus"))),
     step(4, "Words and limits", "Change the limits together with your administrator.",
-      field("What one record is called on screen (for example: vendor, product). Leave empty for \u201ccustomer\u201d, or \u201crecord\u201d when the project has fields of its own", recordName),
+      el("div", { class: "fields" },
+        field("What one record is called on screen (for example: vendor, product). Empty: \u201ccustomer\u201d, or \u201crecord\u201d when the project has fields of its own", recordName),
+        field("Several of them (only for a word like person / people)", recordPlural)),
+      field("Group records into households (family, shared home)", households),
       el("div", { class: "fields" }, limits.map((l) => l[2]))),
     json, saveBar(why, err, save, cancel, opts));
 }

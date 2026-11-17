@@ -213,3 +213,38 @@ def test_a_reviewer_sees_the_projects_own_fields_of_each_record(tmp_path):
     assert not {"extra_" + n for n in names} & {"extra_" + k for k in seen["extra"]}                     # not listed twice
     opened = ReviewService(work, store, ReviewPolicy(reveal_sensitive=True)).person(pid, reveal=True)
     assert all("*" not in (r["own"][code] or "") for r in opened["records"])
+
+
+def test_names_written_with_or_without_spaces_are_the_same_words_and_found():
+    f = CustomField(name="company", kind="company")
+    a, b = f.clean("NimbusVertex Foods Pvt Ltd"), f.clean("Nimbus Vertex Foods")
+    assert a["x_company_joined"] == b["x_company_joined"] == "nimbusvertexfoods"
+    level = next(lv for lv in f.comparison().levels if lv.value == 3)
+    # the level compares the sorted words or the joined letters: these two agree only through the joined letters
+    assert a["x_company_words"] != b["x_company_words"]
+    got = crypto.connect().execute("SELECT " + level.sql.replace("l_x_company_words", "?").replace("r_x_company_words", "?")
+                                   .replace("l_x_company_joined", "?").replace("r_x_company_joined", "?"),
+                                   [a["x_company_words"], b["x_company_words"], a["x_company_joined"], b["x_company_joined"]]).fetchone()[0]
+    assert got
+    assert "x_company_joined" in {r.name for r in f.default_blocking()}
+
+
+def test_a_project_of_companies_gets_no_households_unless_it_asks(tmp_path):
+    rows, _ = _companies(n=60)
+    s = run_pipeline(PipelineConfig(_sources(tmp_path, rows), tmp_path / "off", custom_fields=FIELDS))
+    assert "skipped" in s["households"] and not (tmp_path / "off" / "households").exists()
+    s = run_pipeline(PipelineConfig(_sources(tmp_path, rows), tmp_path / "on", custom_fields=FIELDS, build_households=True))
+    assert s["households"]["households"] > 0 and (tmp_path / "on" / "households" / "household_members.parquet").exists()
+
+
+def test_the_list_finds_a_record_by_its_own_fields(tmp_path):
+    from dedupe.results.export import preview
+    rows, _ = _companies(n=40)
+    run_pipeline(PipelineConfig(_sources(tmp_path, rows), tmp_path / "work", custom_fields=FIELDS))
+    name = rows[0][1].split()[-2].lower() if rows[0][1].split()[-1].lower() in ("ltd", "llp", "limited") else rows[0][1].split()[0].lower()
+    hit = preview(tmp_path / "work", "golden_records", 25, 0, name, readable=("extra_company",))
+    assert hit["total"] >= 1
+    assert preview(tmp_path / "work", "golden_records", 25, 0, name)["total"] == 0          # without it, a company is not found by name
+    code = next(r[2] for r in rows if r[2])
+    assert preview(tmp_path / "work", "golden_records", 25, 0, code.lower(), exact=("extra_gstin",))["total"] >= 1
+    assert preview(tmp_path / "work", "golden_records", 25, 0, code[:6], exact=("extra_gstin",))["total"] == 0    # never by a part

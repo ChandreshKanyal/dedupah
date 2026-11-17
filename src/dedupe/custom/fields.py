@@ -113,6 +113,7 @@ class CustomField(BaseModel):
         if self.kind in _TEXTUAL:
             cols[self.col + "_words"] = "VARCHAR"      # the words sorted: equal when the same words come in another order
             cols[self.col + "_phon"] = "VARCHAR"       # the words' sounds sorted: equal for spelling variants
+            cols[self.col + "_joined"] = "VARCHAR"     # the words without spaces: "NimbusVertex" = "Nimbus Vertex"
         return cols
 
     # ---- cleaning (standardisation) ---------------------------------------------------------------------------------------------
@@ -151,6 +152,7 @@ class CustomField(BaseModel):
         out[self.col] = " ".join(words)
         out[self.col + "_words"] = " ".join(sorted(set(words)))
         out[self.col + "_phon"] = " ".join(sorted({phonetic(w) if len(w) > 1 and not w.isdigit() else w for w in words} - {""}))
+        out[self.col + "_joined"] = "".join(words)
 
     # ---- comparing (scoring) ----------------------------------------------------------------------------------------------------
     def comparison(self) -> Comparison:
@@ -163,7 +165,7 @@ class CustomField(BaseModel):
             # "Pioneer Summit Foods" and "Pioneer Summit Motors" share most of their letters and are different companies: a whole-string
             # similarity alone calls them close. So the upper levels go word by word; the whole-string score only makes the weakest one.
             levels = [Level(4, "identical", f"{l} = {r}", l),
-                      Level(3, "same words in any order", f"{l}_words = {r}_words", l),
+                      Level(3, "same words in any order", f"({l}_words = {r}_words OR {l}_joined = {r}_joined)", l),
                       Level(2, "same words, spelled a little differently", f"{l}_phon = {r}_phon OR ({_each_word(l, r)} AND {_each_word(r, l)})"),
                       Level(1, "similar", f"jaro_winkler_similarity({l}, {r}) >= {self.similar_at!r}")]
             primary, agree = True, 2
@@ -219,7 +221,8 @@ class CustomField(BaseModel):
             two = (f"SELECT rid, w[i] || '|' || w[j] AS key FROM (SELECT rid, string_split({c}_phon, ' ')[1:{BLOCK_WORDS}] AS w FROM records "
                    f"WHERE {c}_phon IS NOT NULL), range(1, len(w)) t(i), range(i + 1, len(w) + 1) u(j)")
             return [Rule(f"{c}_sounds", _key(f"{c}_phon"), f"{what}: the same sounds in any order"),
-                    Rule(f"{c}_two_words", two, f"{what}: any two words that sound the same")]
+                    Rule(f"{c}_two_words", two, f"{what}: any two words that sound the same"),
+                    Rule(f"{c}_joined", _key(f"{c}_joined"), f"{what}: the same letters, spaces ignored")]
         if self.kind == "date":
             return [Rule(f"{c}_same", _key(c), f"{what}: the same day")]
         if self.kind == "number":

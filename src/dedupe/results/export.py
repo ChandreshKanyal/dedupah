@@ -85,9 +85,10 @@ def describe(run_dir: Path) -> list[dict]:
     return out
 
 
-def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str = "") -> dict:
+def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str = "", readable: tuple = (), exact: tuple = ()) -> dict:
     """A page of the dataset as people see it on screen (same columns and order as the files), optionally filtered by a name or id.
-    The caller masks what must be masked."""
+    The caller masks what must be masked. `readable`: more columns a search finds by any part (a project's own company or text fields);
+    `exact`: more columns it finds by the whole value only (its own codes, phones, emails, which are masked on screen)."""
     p = _path(run_dir, name)
     con = crypto.connect()
     try:
@@ -96,7 +97,7 @@ def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str =
         where, args = "", []
         if q.strip():
             text = q.strip().lower()
-            keys = [c for c in ("full_name", "person_id", "source_record_id", "household_id") if c in cols]
+            keys = [c for c in ("full_name", "person_id", "source_record_id", "household_id", *readable) if c in cols]
             conds = [f'lower(CAST("{c}" AS VARCHAR)) LIKE ?' for c in keys]
             args = ["%" + text + "%"] * len(keys)
             # a whole mobile number or email address finds the person too: an exact match only, so a part of a hidden value never does
@@ -105,6 +106,11 @@ def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str =
                 if c in cols:
                     conds.append(f'lower(CAST("{c}" AS VARCHAR)) = ?')
                     args.append(number or text)
+            plain = "".join(ch for ch in text.upper() if ch.isalnum())
+            for c in exact:
+                if c in cols and plain:
+                    conds.append(f'regexp_replace(upper(CAST("{c}" AS VARCHAR)), \'[^A-Z0-9]\', \'\', \'g\') = ?')
+                    args.append(plain)
             where = "WHERE " + " OR ".join(conds) if conds else ""
         total = con.execute(f"SELECT count(*) FROM ({sql}) {where}", args).fetchone()[0]
         # columns that are empty in the whole table (fields no source filled) only clutter a screen; the files keep them

@@ -3,14 +3,14 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-04 (session 4, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-12, session 5: own fields work end to end in the portal, Review included; next: learn from decisions) <<<
+## >>> RESUME HERE (latest state: 2026-11-17, session 5: own fields end to end, leftovers fixed (section 99); next: learn from decisions) <<<
 
 **2026-11-12 (sections 96-98):** the user wants a versatile engine with full control, like the top tools. Done: a project's own fields in
 the engine (`dedupe/custom`, settings `custom_fields`, `custom_blocking`, `fixed_weights`, `compare_within_source`, `record_name`; mapping
 `custom`) and in the portal (mapping screen, "Fields and search" page = `ui/js/fields.js`, own fields in matching rules, save-time checks,
 starter rules, Review and results show own fields, words follow the project via `wordsOf`). Next (confirm first): learning from steward
-decisions, a match-one-record API, scale; small leftovers in section 98. The preview container runs on 8001 with
-`-v "$PWD/configs:/app/configs:ro"` (old configs are baked into the image). Read sections 96-98 first.
+decisions, a match-one-record API, scale; leftovers of 96-98 fixed in section 99. The preview container runs on 8001 with
+`-v "$PWD/configs:/app/configs:ro"` (old configs are baked into the image). Read sections 96-99 first.
 
 **Where we are (2026-11-05).** The whole-portal revamp is complete (sections 76-83). **Every finding of the agent review is now closed**
 (summaries in `~/agent-review/*/report-summary.txt`): platform P1-01..15 (sections 75, 84-88), engine input E1-01..17 (75, 89, 93, 94),
@@ -2349,3 +2349,33 @@ Tests: 1 new (what a reviewer sees, masking by kind); suite 576 passed, 4 skippe
 **Not done / weaknesses:** the Decided list, activity log and admin approvals still say "Same person"; households are still built for
 non-person projects; the simple plural rule ("vendor" -> "vendors") will be wrong for irregular words; the list search does not look into
 own columns; the mapping screen still suggests Full name for a company-name column. All results are synthetic.
+
+## 99. The leftovers of sections 96-98 fixed (2026-11-17, session 5)
+
+**The user asked to fix every open item.** Done:
+- **Households only for people:** settings `build_households` (None = yes for person data, no when the project has own fields; the Fields
+  and search form offers Automatic / Yes / No). Skipped: no `households/` folder (the results list leaves the file out), summary
+  `households: {"skipped": ...}`, the run page hides the count. Evaluation and the CLI summary cope with it.
+- **Wording everywhere:** `kindLabel(kind, pid)` for decisions (Decided list, approvals, run page, history tabs); activity log "Decided: same
+  supplier"; "Records" instead of "People" in decision tables; the scoring notice speaks of "identifiers of your own" and "one of your own
+  fields agrees" in such projects; keyboard help neutral. Plural can be set (`record_name_plural`, e.g. person / people); `ProjectView.record_words`.
+- **Mapping:** a column whose values are organisation names is never suggested as Full name / father / related name (`suggest.py`).
+  A new file of a project with own fields gets them filled in: by value type (company names, GST numbers, emails, phones) or by a similar
+  column name ("GST No" ~ gstin, "Annual turnover" ~ turnover; filler words like name, no, id ignored; the row-id column never). A company
+  column left unmapped says "Could be a field of your own".
+- **Search:** the list finds records by any part of an own text field (company name) and by the whole value of an own code, phone or email
+  (never by a part: they are masked). Own text fields are no longer masked in the list (they are shown in Review already).
+- **Weights on an unsaved field:** `POST /projects/{id}/field-levels` gives the levels of a field as the form has it; the weight form asks it.
+- **Names without spaces:** text fields get `x_<f>_joined` (words without spaces); level 3 also agrees on it; new blocking rule
+  `x_<f>_joined`. "OrbitCobalt Exports" merged with "Orbit Cobalt Exports" (3 of 3 in the browser check). Changes the cleaned schema, so
+  the next incremental run of such a project is a full run (by design of the fingerprint).
+
+**Checked in a browser** (`~/agent-review/own/` b0, a3, b1, b2, c1; 130 synthetic vendor records): second file mapped with no clicks (all
+three own fields suggested), word "supplier" used everywhere, levels offered for an unsaved date field, no households, search "zenith" found
+10 suppliers, run in learned-from-data mode with 65 automatic merges, 0 console or HTTP problems.
+
+Tests: 4 new (joined names, households off/on, search in own fields, company column not a person's name + field levels); suite 580 passed, 4 skipped; ruff clean; customer benchmark unchanged (F1 0.931 with identifiers, 0.918 without).
+
+**Still not done (engine, from section 96):** with `compare_within_source` off, big identifier blocks lose chain links inside one source;
+person-specific cleaning (titles, relations in names) still runs on person fields only, which is right, but there is no per-kind check of
+it on own name fields beyond the tests. All results are synthetic.

@@ -136,7 +136,7 @@ async function rulesPanel(p, name, editing) {
       const [guide, conns] = await Promise.all([api("GET", P(pid) + "/golden-record-guide"), api("GET", P(pid) + "/connections")]);
       const present = new Set(conns.flatMap((c) => Object.keys(c.fields || {})));
       body = [note, goldenForm(startFrom.content, guide, proposed, null, { ...saving, present })];
-    } else body = [note, setupForm(startFrom.content, await api("GET", P(pid) + "/rules-catalogue"), proposed, cancel, saving)];
+    } else body = [note, setupForm(startFrom.content, await api("GET", P(pid) + "/rules-catalogue"), proposed, cancel, { ...saving, pid })];
   } else {
     const content = (await shown).content;
     const cat = name === "survivorship" ? null : await api("GET", P(pid) + "/rules-catalogue");

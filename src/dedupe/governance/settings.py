@@ -16,6 +16,9 @@ class MatchingSettings(BaseModel):
     blocking_rules: list[str] = Field(default_factory=lambda: [r.name for r in DEFAULT_RULES])
     blocking_cap: int = Field(50, ge=2, le=1000)         # a key shared by more records than this is treated as generic and skipped
     household_threshold: float = Field(5.0, gt=0)        # evidence needed (in bits) to link two people into a household
+    # group people into households (family, shared home); None = yes for person data, no for a project with fields of its own (vendors,
+    # products: a shared PIN and phone between two companies is not a family)
+    build_households: bool | None = None
     max_cluster_size: int = Field(15, ge=2, le=1000)     # a customer group larger than this is flagged for a person to check (never cut blindly)
     review_min_probability: float = Field(0.0, ge=0, lt=1)   # queue items whose best pair scores below this are dropped
     review_cap: int | None = Field(None, ge=1)           # keep only the top N queue items
@@ -27,6 +30,7 @@ class MatchingSettings(BaseModel):
     fixed_weights: dict[str, dict[str, float]] = Field(default_factory=dict)
     # what one record of this project is called on screen ("vendor", "product"); empty = customer for person data, record otherwise
     record_name: str = Field("", max_length=30, pattern=r"^[A-Za-z][A-Za-z ]*$|^$")
+    record_name_plural: str = Field("", max_length=30, pattern=r"^[A-Za-z][A-Za-z ]*$|^$")   # empty = made from record_name ("vendor" -> "vendors")
     compare_within_source: bool = True                   # False: only records of different sources are compared (linking two files)
 
     @field_validator("blocking_rules")

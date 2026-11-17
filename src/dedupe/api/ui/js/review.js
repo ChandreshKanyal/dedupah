@@ -204,7 +204,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       evidence: () => [el("p", { class: "hint" }, "From the best-matching pair of records."),
         el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the " + W().same.toLowerCase()), el("div", { class: "body" }, evidence(c.why_match))),
           el("div", { class: "panel" }, el("h3", {}, "For " + W().diff.toLowerCase()), el("div", { class: "body" }, evidence(c.why_not))))],
-      history: () => [c.existing_judgments.length ? table(["Decision", "By", "Status", "Reason"], c.existing_judgments.map((j) => el("tr", {}, el("td", {}, KIND_LABEL[j.kind] || label(j.kind)),
+      history: () => [c.existing_judgments.length ? table(["Decision", "By", "Status", "Reason"], c.existing_judgments.map((j) => el("tr", {}, el("td", {}, kindLabel(j.kind, projectOf(shownPath))),
         el("td", {}, j.actor), el("td", {}, statusTag(j.status === "active" ? "in_force" : j.status === "revoked" ? "undone" : j.status)), el("td", {}, j.reason))))
         : el("p", { class: "muted" }, "No earlier decisions on these records.")],
     };
@@ -244,7 +244,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
     filters,
     older ? el("div", { class: "notice warn", role: "note" }, "This is an older run. Decisions made here still count, but the newest run may already show these people differently.",
       el("div", { class: "row" }, btn("Review the newest run", () => go(() => viewInbox(pid, status)), "small"))) : null,
-    !older && cur.scoring_mode ? scoringNotice({ scoring: { mode: cur.scoring_mode } }) : null,
+    !older && cur.scoring_mode ? scoringNotice({ scoring: { mode: cur.scoring_mode } }, pid) : null,
     el("div", { class: "work" }, listPane, detail));
   await loadList(0, 0);
 }
@@ -337,7 +337,7 @@ async function viewCompare(pid, rid, l, r, reveal) {
     el("div", { class: "row" }, btn("Review the newest run", () => go(() => viewInbox(pid)), "small"))) : null;
   show(page("Compare " + W().people, position + (c.decided_by ? "Why it is here: " + (RULE_TITLE[c.decided_by] || label(c.decided_by)) : "Match score " + pct(c.probability)) + ".", actions,
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Review", "/review/" + pid), l + " and " + r)),
-  stale, scoringNotice(runInfo.summary),
+  stale, scoringNotice(runInfo.summary, pid),
   c.unmasked ? el("p", { class: "hint" }, "Identifiers are shown in full. This view is logged.") : el("p", { class: "hint" }, "Identifiers are masked. Masked values that look the same may still differ."),
   c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(fieldTitle).join(", ") + ". These are probably two different people.") : null,
   writer ? el("div", { class: "panel" }, el("h3", {}, "Your decision"), el("div", { class: "body" },
@@ -352,7 +352,7 @@ async function viewCompare(pid, rid, l, r, reveal) {
   el("div", { class: "cols" }, el("div", { class: "panel" }, el("h3", {}, "For the " + W().same.toLowerCase()), el("div", { class: "body" }, why(c.why_match))),
     el("div", { class: "panel" }, el("h3", {}, "For " + W().diff.toLowerCase()), el("div", { class: "body" }, why(c.why_not)))),
   c.existing_judgments.length ? el("h2", { class: "section" }, "Earlier decisions on these records") : null,
-  c.existing_judgments.length ? table(["Decision", "By", "Status", "Reason"], c.existing_judgments.map((j) => el("tr", {}, el("td", {}, KIND_LABEL[j.kind] || label(j.kind)), el("td", {}, j.actor),
+  c.existing_judgments.length ? table(["Decision", "By", "Status", "Reason"], c.existing_judgments.map((j) => el("tr", {}, el("td", {}, kindLabel(j.kind, projectOf(shownPath))), el("td", {}, j.actor),
     el("td", {}, statusTag(j.status === "active" ? "in_force" : j.status === "revoked" ? "undone" : j.status)), el("td", {}, j.reason)))) : null,
   el("h2", { class: "section" }, "Source records"),
   el("div", { class: "cols" }, [A, Bp].map((x, i) => el("div", {}, el("div", { class: "title-row" }, el("h3", { class: "section" }, W().Person + (i ? " B: " : " A: ") + x.person_id),
@@ -446,11 +446,11 @@ async function decisionsPanel(projects, opts, state) {
     return el("button", { type: "button", class: "link mono", onclick: () => go(go2) }, d.persons.join(" and "));
   };
   const lines = rows.map((d) => el("tr", {}, el("td", {}, when(d.created_at)), opts.project ? null : el("td", {}, d.project.name),
-    el("td", {}, (KIND_LABEL[d.kind] || label(d.kind)) + (d.field ? ": " + fieldTitle(d.field) : "")), el("td", {}, who(d)), el("td", {}, d.yours ? tag("You", "info") : d.actor),
+    el("td", {}, kindLabel(d.kind, d.project.id) + (d.field ? ": " + fieldTitle(d.field) : "")), el("td", {}, who(d)), el("td", {}, d.yours ? tag("You", "info") : d.actor),
     el("td", {}, d.reason || el("span", { class: "muted" }, "none")), el("td", {}, statusTag(d.status)),
     el("td", { class: "actions-cell" }, can("judgment.write") && d.action_id && ["in_force", "waiting_for_run", "pending_approval"].includes(d.status) ? btn("Undo", () => undo(d), "small", "undo") : null)));
   add(box, el("div", { class: "row" }, el("label", { class: "check" }, mine, "Only my decisions"), field("Status", status)),
-    lines.length ? table(["When", ...(opts.project ? [] : ["Project"]), "Decision", "People", "By", "Reason", "Status", ""], lines)
+    lines.length ? table(["When", ...(opts.project ? [] : ["Project"]), "Decision", "Records", "By", "Reason", "Status", ""], lines)
       : empty(state.mine || state.status ? "No decisions match." : "No decisions yet. They appear here as soon as someone decides a pair.",
         can("queue.read") ? btn("Open the review inbox", link("/review"), "primary", "inbox") : null));
   return box;

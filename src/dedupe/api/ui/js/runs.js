@@ -204,7 +204,7 @@ async function customersPanel(pid, rid, st) {
   const r = await api("GET", R(pid, rid) + "/datasets/golden_records/rows?limit=" + size + "&offset=" + st.offset + "&q=" + encodeURIComponent(st.q));
   const wrap = el("div");
   const again = (patch) => run(async () => wrap.replaceWith(await customersPanel(pid, rid, { ...st, ...patch })));
-  const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: wordsOf(pid).own ? "ID, whole mobile number or email" : "Name, person ID, whole mobile number or email", class: "wide-search" });
+  const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: wordsOf(pid).own ? "Name, ID, a whole code, mobile number or email" : "Name, person ID, whole mobile number or email", class: "wide-search" });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") again({ q: q.value.trim(), offset: 0 }); });
   // the sources' own columns (a project's own fields among them) come after the built-in ones: a company or a product has no name or birth date
   const extras = r.columns.filter((c) => c.startsWith("extra_")).slice(0, 4);
@@ -238,17 +238,19 @@ async function runLogPanel(pid, rid) {
     log.available ? el("pre", { class: "log", tabindex: "0" }, log.lines.join("\n")) : empty("No log was kept for this run."));
 }
 // How the match scores of a run were learned. ID-backed scores need no remark; the others say plainly how far to trust them.
-function scoringNotice(s) {
+function scoringNotice(s, pid) {
   const sc = s && s.scoring;
+  const own = pid && wordsOf(pid).own;
+  const ids = own ? "(identifiers of your own, such as a GSTIN)" : "(PAN, Aadhaar, document numbers)";
   if (!sc || sc.mode === "id_anchored") return null;
   if (sc.mode === "unsupervised_em") {
     return el("div", { class: "notice", role: "note" }, el("strong", {}, "Scores learned from the data itself. "),
-      "This data has too few identifiers (PAN, Aadhaar, document numbers) to learn from, so the scoring found its own pattern. " +
+      "This data has too few identifiers " + ids + " to learn from, so the scoring found its own pattern. " +
       "Scores are usually sensible but less certain than ID-backed ones: look over a sample of automatic merges before relying on them.");
   }
   return el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Scores are not meaningful for this run. "),
     "There are too few identifiers and too little data to learn how much each field matters, so every pair scores 50%: pairs with enough evidence " +
-    "(a name with a birth date, phone, email or address) go to a person, the others are kept apart" + (s.review_items != null ? " (" + plural(s.review_items, "pair waits", "pairs wait") + " here)" : "") +
+    (own ? "(one of your own fields agrees)" : "(a name with a birth date, phone, email or address)") + " go to a person, the others are kept apart" + (s.review_items != null ? " (" + plural(s.review_items, "pair waits", "pairs wait") + " here)" : "") +
     ". Add records or identifiers to get real scores.");
 }
 // What the cleaning noticed in awkward data (standardise/oddities.py), in words, with what it did about it.
@@ -272,18 +274,18 @@ function runOverview(r, pid) {
   const big = s.oversize_people ? el("div", { class: "notice warn", role: "note" }, plural(s.oversize_people, wordsOf(pid).one + " has", wordsOf(pid).many + " have") +
     " unusually many records (the largest " + num(s.largest_person) + "). A shared office phone, an agent's email or a default identifier can join " +
     wordsOf(pid).diff.toLowerCase() + ": open them under " + wordsOf(pid).Many + " and split any that are not one " + wordsOf(pid).person + ".") : null;
-  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat(wordsOf(pid).Many, num(s.people)),
+  const parts = [el("p", { class: "lead" }, sentence), scoringNotice(s, pid), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat(wordsOf(pid).Many, num(s.people)),
     stat("Merged automatically", num(s.auto_merged_pairs)), stat("Sent to a person", num(s.review_items), can("queue.read") ? link("/review/" + pid) : null))];
   if (j && j.judgments_applied_to_run) {
     parts.push(el("h2", { class: "section" }, "Decisions by people this run applied"),
-      kv([["Decisions applied", num(j.judgments_applied_to_run)], ...Object.entries(j.by_kind || {}).map(([k, n]) => ["  " + (KIND_LABEL[k] || label(k)), num(n)]),
+      kv([["Decisions applied", num(j.judgments_applied_to_run)], ...Object.entries(j.by_kind || {}).map(([k, n]) => ["  " + kindLabel(k, pid), num(n)]),
         ["Kept in the result", num(j.held)], ["Not kept", j.not_held ? el("span", { class: "bad" }, num(j.not_held) + " (a later decision or an identifier rule overruled them)") : "0"]]));
   }
   return el("div", {}, parts);
 }
 function runDetails(r) {
   const s = r.summary;
-  const parts = [kv([["Households", num(s.households)], ["Time taken", s.seconds == null ? "" : s.seconds.toFixed(1) + " seconds"]])];
+  const parts = [kv([s.households == null ? null : ["Households", num(s.households)], ["Time taken", s.seconds == null ? "" : s.seconds.toFixed(1) + " seconds"]])];
   const inc = s.incremental;
   if (inc) {
     const rc = inc.records || {};

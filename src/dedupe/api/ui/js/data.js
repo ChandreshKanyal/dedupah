@@ -261,6 +261,15 @@ async function viewConnection(pid, cid) {
 const driftText = (d) => ((d && ((d.added || []).length || (d.removed || []).length))
   ? [(d.added || []).length ? "Added: " + d.added.join(", ") : "", (d.removed || []).length ? "Removed: " + d.removed.join(", ") : ""].filter(Boolean).join(". ") : "");
 
+// A column whose name is like an own field's name or title: "GST No" and "gstin", "Annual turnover" and "turnover". Words such as "name" or
+// "no" say nothing on their own and are left out.
+const NAME_NOISE = new Set(["name", "no", "num", "number", "id", "code", "the", "of", "and", "value"]);
+const nameWords = (s) => String(s).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !NAME_NOISE.has(w));
+const namesAlike = (col, f) => {
+  const a = nameWords(col);
+  const b = [...nameWords(f.name), ...nameWords(f.title || "")];
+  return a.some((x) => b.some((y) => x.startsWith(y) || y.startsWith(x)));
+};
 // The add-a-connection wizard: 1 connect (or upload), 2 map the columns, 3 preview and save. Every step can be clicked once the source is open.
 // Our fields in words, and what each is used for, shown next to it while mapping.
 const FIELD_TITLE = { full_name: "Full name", father_name: "Father's or husband's name", dob: "Date of birth", age: "Age", gender: "Gender", marital_status: "Marital status",
@@ -391,8 +400,18 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       throw new Error("This project already has a data source called " + state.source.source_id + ". Choose another name, or open that one to change it.");
     }
     state.info = await api("POST", inspectUrl(), { connector: state.source.connector });
-    if (!Object.keys(state.source.fields).length) {
+    if (!Object.keys(state.source.fields).length && !Object.keys(state.source.custom || {}).length) {
       for (const s of state.info.suggestions) state.source.fields[s.field] = s.column;
+      // the project's own fields: a column whose values look like what a field holds fills it (company names -> the company field)
+      const looks = { organisation_name: ["company"], person_name: ["name"], email: ["email"], mobile: ["phone"], gstin: ["code"] };
+      const used = new Set([...Object.values(state.source.fields), state.info.record_id]);
+      state.source.custom = {};
+      const cols = state.info.columns || Object.keys(state.info.types || {});
+      for (const f of ownFields) {
+        const free = cols.filter((c) => !used.has(c));
+        const col = free.find((c) => (looks[((state.info.types || {})[c] || {}).type] || []).includes(f.kind)) || free.find((c) => namesAlike(c, f));
+        if (col) { state.source.custom[f.name] = col; used.add(col); }
+      }
       if (!state.source.record_id && state.info.record_id) state.source.record_id = state.info.record_id;
     }
     state.step = target || 2;
@@ -503,7 +522,8 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
         fill(note, wrong ? tag("The values do not look like " + fieldTitle(f).toLowerCase(), "warn")
           : role ? role[0] + (role[1] ? ": " + role[1] : "") : cur === "id" ? "Traces a golden record back to this row; not used to match"
             : cur.startsWith("o:") ? "Your own field: records are matched on it (how is set under Fields and search)"
-            : cur === "keep" ? "Carried into the golden record as it is" : t.field && !src.fields[t.field] ? "Could be " + fieldTitle(t.field).toLowerCase() : "");
+            : cur === "keep" ? "Carried into the golden record as it is" : t.field && !src.fields[t.field] ? "Could be " + fieldTitle(t.field).toLowerCase()
+              : t.type === "organisation_name" && !cur ? "Could be a field of your own: choose \u201cA new field of your own\u201d, kind Organisation name" : "");
       };
       sel.addEventListener("change", () => run(async () => {
         if (sel.value !== "new") { setUse(c, sel.value); return; }

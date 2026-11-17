@@ -358,6 +358,19 @@ def project_rules_catalogue(request: Request, project_id: str = PID, p: Principa
                        "how": HOW, "columns": BLOCK_COLUMNS}}
 
 
+@router.post(PROJ + "/field-levels")
+def field_levels(request: Request, field: dict[str, Any], project_id: str = PID, p: Principal = READ_CONFIG):
+    """The comparison levels of one field as it stands in a form not saved yet (a weight set by hand names one of them)."""
+    from dedupe.custom import CustomField
+    project_scope(request, project_id)
+    try:
+        f = CustomField.model_validate({**field, "name": "f"})
+    except ValueError:
+        raise HTTPException(422, "That field is not complete yet.") from None
+    c = f.comparison()
+    return {"levels": [lv.label for lv in c.levels] + [c.else_label]}
+
+
 @router.get(PROJ + "/golden-record-guide")
 def golden_record_guide(request: Request, project_id: str = PID, p: Principal = READ_CONFIG):
     """What the golden-record rules screen needs: the fields and strategies, the project's sources (their extra columns, whether a record

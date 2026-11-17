@@ -31,7 +31,7 @@ async function datasetCards(p, rid) {
   const golden = info.datasets.find((d) => d.name === "golden_records");
   const others = info.datasets.filter((d) => d !== golden);
   return [golden ? card(golden, wordsOf(p.id).Many + ", one clean record each", false) : null,
-    others.length ? el("details", { class: "advanced" }, el("summary", {}, "Other files: which record belongs to which " + wordsOf(p.id).one + ", households"), others.map((d) => card(d, d.title, true))) : null]
+    others.length ? el("details", { class: "advanced" }, el("summary", {}, "Other files: which record belongs to which " + wordsOf(p.id).one + (others.some((d) => d.name === "households") ? ", households" : "")), others.map((d) => card(d, d.title, true))) : null]
     .filter(Boolean);
 }
 // A page of a result table on screen. Identifiers, contact details and extra columns stay masked until someone allowed to see them asks (logged).
