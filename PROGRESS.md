@@ -1,16 +1,30 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-11-04 (session 4, EC2 server)
+> Last updated: 2026-11-17 (session 5, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-17, session 5: own fields end to end, leftovers fixed (section 99); next: learn from decisions) <<<
+## >>> RESUME HERE (latest state: 2026-11-17, session 5: own fields end to end, every choice traced through every screen; next: Data and Rules redesign) <<<
 
-**2026-11-12 (sections 96-98):** the user wants a versatile engine with full control, like the top tools. Done: a project's own fields in
-the engine (`dedupe/custom`, settings `custom_fields`, `custom_blocking`, `fixed_weights`, `compare_within_source`, `record_name`; mapping
-`custom`) and in the portal (mapping screen, "Fields and search" page = `ui/js/fields.js`, own fields in matching rules, save-time checks,
-starter rules, Review and results show own fields, words follow the project via `wordsOf`). Next (confirm first): learning from steward
-decisions, a match-one-record API, scale; leftovers of 96-98 fixed in section 99. The preview container runs on 8001 with
-`-v "$PWD/configs:/app/configs:ro"` (old configs are baked into the image). Read sections 96-99 first.
+**Next (2026-11-17): the Data and Rules redesign, plan in section 103.** The user saw the plan, asked to update the docs, compact, "and then
+we will go ahead": start with its step 1 (Data page and Add data), short report after each step, browser-check each, commit. The user judges
+the portal as production software: every choice must show up and work on every later screen, nothing silently ignored (memory
+`production-grade-end-to-end`, section 102).
+
+**What session 5 did (sections 96-102):** a project's own fields in the engine (`dedupe/custom`; settings `custom_fields`, `custom_blocking`,
+`fixed_weights`, `compare_within_source`, `record_name`, `record_name_plural`, `build_households`; mapping `custom`; `CustomField.column`
+reads a kept column) and in the portal (mapping, "Fields and search" = `ui/js/fields.js`, own fields and kept columns in matching rules,
+save-time checks, starter rules, Review / results / search / corrections with own fields, words per project via `wordsOf`/`kindLabel`).
+One step bar on every project page (`journeyBar` in `projects.js`; Rules = tabs Matching rules / Golden record / Fields and search). The run
+page lists what it could not use. Mapping joins two columns or uses one as a fallback. All on synthetic data only.
+
+**State of the code:** suite 580 passed, 4 skipped (about 10 minutes), ruff clean, customer benchmark unchanged (F1 0.931 / 0.918). GitHub:
+pushed up to `11e2fe1`; `7b7431c` (section 102) and this docs commit are not pushed (push only when the user asks). Images `dedupah-api` and
+`dedupe-test` rebuilt 2026-11-17 (before section 101-102; the preview mounts src and configs, so it runs the newest code).
+
+**Checks to reuse:** `~/agent-review/e2e/` (lib.py helpers; e1 kept column in a rule, e2 own-fields-only file, e3 corrections/search/
+remove guard, e4 split names; files leads.csv, parts.csv, split_names.csv), `~/agent-review/own/` (vendor projects: a1-a8, b0-b2, j1-j2),
+`~/agent-review/tour/tour.py` (28 screens). Order on a fresh sandbox: `reset_sandbox.sh sbx-ui`, then e1, e2, e3, e4. **`sbx-ui` caches the
+UI files: `docker restart sbx-ui` after every UI change** (also `dedupe-preview` for the user's portal on 8001).
 
 **Where we are (2026-11-05).** The whole-portal revamp is complete (sections 76-83). **Every finding of the agent review is now closed**
 (summaries in `~/agent-review/*/report-summary.txt`): platform P1-01..15 (sections 75, 84-88), engine input E1-01..17 (75, 89, 93, 94),
@@ -37,7 +51,7 @@ one analogy; work with care (measure, fix, measure again; check every change in 
 run_browser.sh sbx-ui <dir> <script>`; scripts in `~/agent-review/tour/` (m1.py sets up project rules-check, tour.py 28 screens) and
 `~/agent-review/p1/` (p3-p6: data, run, review, rules) and `~/agent-review/p7/` (phone.py 30 screens at phone width, words.py jargon scan,
 msg.py message timing); reset with `reset_sandbox.sh sbx-ui`, then m1.py and tour.py; restart `sbx-ui` after UI changes. Tests in Docker:
-`docker build -q --target test -t dedupe-test .`, then pytest with src/tests/configs mounted (full suite ~7 min, 485 tests). **Never edit
+`docker build -q --target test -t dedupe-test .`, then pytest with src/tests/configs mounted (full suite ~10 min, 580 tests). **Never edit
 files while the full suite runs** (it mounts src live; phases 5/6 had to be re-tested). duckdb pinned below 2. UI rules: no gradients,
 shadows, animation, `::before`, `border-left`; no characters above U+2000 except dashes and quotes; never pass null to replaceChildren
 (use fill/add/el).
@@ -2430,3 +2444,29 @@ expected, 0 console or HTTP problems; the 28-screen tour also clean. Tests updat
 
 **Still open:** the Data and Rules pages redesign proposed to the user (cards, presets, side panel) waits for their go-ahead. Not swept yet:
 second-approval flows end to end, schedules, database destinations.
+
+## 103. Plan: Data and Rules redesign (agreed direction 2026-11-17, not started)
+
+**Why:** the user found the Data and Rules pages hard to understand for a new user and not like modern tools. Walk-through findings: the
+Data page is a bare table ("16 fields mapped", folded sections, no record counts or data health, no "what next"); mapping is a wall of 20+
+dropdowns under a long paragraph, with no split between "done for you" and "needs your check"; rules are three tabs that must each be
+opened and saved (about 15 rule rows of dropdowns in engine wording; golden record 30 rows of two dropdowns); good defaults still block a
+run until each tab is saved.
+
+**Design (in the user's words: set menus instead of raw ingredients):**
+- **Data page:** a summary strip ("2 sources, 3,450 records, ready to match") and one card per source: records, status, "Matches on" chips
+  (name, DOB, mobile, PAN, own fields), health warnings ("Email only 56% filled"), Edit mapping. Add data: upload and the connector tiles
+  (searchable) on one screen, nothing folded.
+- **Mapping:** three groups (Mapped for you / Please check / Not used) with counts; a fixed side panel "What the engine can match on"
+  (checklist with fill rates) and the Save button; short help instead of the paragraph.
+- **Rules:** one page instead of three tabs. "How careful should merging be?" ready-made settings (Careful, recommended = rules only plus
+  identifiers; Balanced = rules plus score with a review band; Catch more = lower thresholds), then the rules as plain-word cards with an
+  on/off switch and Edit (a side panel holds the column/how dropdowns); Ask a person / Never merge as cards too; golden record as one
+  default ("keep the most complete / newest / most trusted value") plus "Exceptions (n)"; Fields and search under "Advanced". One "Save and
+  continue" saves matching and golden-record rules together (two config proposals). After a first run: the impact of a change (the
+  existing dry run: "12 more merges, 3 fewer to review").
+- Keep: one step bar, wordsOf words, approval flow, every choice visible downstream (section 102).
+
+**Order of work (each step: build, browser-check on a fresh sandbox with the e2e scripts, tests, commit, short report):** 1 Data page and
+Add data; 2 Mapping; 3 Rules page (presets, cards, side panel, one save); 4 Golden record (default plus exceptions); 5 full new-user
+walk-through. Not swept yet and worth doing alongside: second-approval flows end to end, schedules, database destinations.
