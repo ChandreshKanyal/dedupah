@@ -1,14 +1,16 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-11-17 (session 5, EC2 server)
+> Last updated: 2026-11-19 (session 6, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-17, session 5: own fields end to end, every choice traced through every screen; next: Data and Rules redesign) <<<
+## >>> RESUME HERE (latest state: 2026-11-19, session 6: Data and Rules redesign built, section 104) <<<
 
-**Next (2026-11-17): the Data and Rules redesign, plan in section 103.** The user saw the plan, asked to update the docs, compact, "and then
-we will go ahead": start with its step 1 (Data page and Add data), short report after each step, browser-check each, commit. The user judges
-the portal as production software: every choice must show up and work on every later screen, nothing silently ignored (memory
-`production-grade-end-to-end`, section 102).
+**Done (2026-11-19): the Data and Rules redesign (section 104):** Data page as a summary strip plus one card per source with fill rates
+and problems; mapping in three groups with a side panel; Rules as ONE page (ready-made settings, rule cards with an Edit side panel,
+golden record as a default plus exceptions, one Save for both, effect on the latest run); new-user walk-through clean. **Open question
+to the user:** new projects start on "Careful" (rules only, section 74), which found only about 4 in 10 duplicates on synthetic data;
+"Balanced" found about 9 in 10 with almost no wrong merges. Should new projects start on Balanced? The user judges the portal as
+production software: every choice must show up and work on every later screen (memory `production-grade-end-to-end`, section 102).
 
 **What session 5 did (sections 96-102):** a project's own fields in the engine (`dedupe/custom`; settings `custom_fields`, `custom_blocking`,
 `fixed_weights`, `compare_within_source`, `record_name`, `record_name_plural`, `build_households`; mapping `custom`; `CustomField.column`
@@ -17,8 +19,9 @@ save-time checks, starter rules, Review / results / search / corrections with ow
 One step bar on every project page (`journeyBar` in `projects.js`; Rules = tabs Matching rules / Golden record / Fields and search). The run
 page lists what it could not use. Mapping joins two columns or uses one as a fallback. All on synthetic data only.
 
-**State of the code:** suite 580 passed, 4 skipped (about 10 minutes), ruff clean, customer benchmark unchanged (F1 0.931 / 0.918). GitHub:
-pushed up to `11e2fe1`; `7b7431c` (section 102) and this docs commit are not pushed (push only when the user asks). Images `dedupah-api` and
+**State of the code:** suite 582 passed, 4 skipped (about 10 minutes; run it on a snapshot copy of src/tests/configs to keep editing
+meanwhile), ruff clean, customer benchmark unchanged (F1 0.931 / 0.918). GitHub: pushed up to `11e2fe1`; `7b7431c`, `36a90ab` and the
+section 104 commit are not pushed (push only when the user asks). Browser checks of the redesign: `~/agent-review/redesign/`. Images `dedupah-api` and
 `dedupe-test` rebuilt 2026-11-17 (before section 101-102; the preview mounts src and configs, so it runs the newest code).
 
 **Checks to reuse:** `~/agent-review/e2e/` (lib.py helpers; e1 kept column in a rule, e2 own-fields-only file, e3 corrections/search/
@@ -2445,7 +2448,7 @@ expected, 0 console or HTTP problems; the 28-screen tour also clean. Tests updat
 **Still open:** the Data and Rules pages redesign proposed to the user (cards, presets, side panel) waits for their go-ahead. Not swept yet:
 second-approval flows end to end, schedules, database destinations.
 
-## 103. Plan: Data and Rules redesign (agreed direction 2026-11-17, not started)
+## 103. Plan: Data and Rules redesign (agreed direction 2026-11-17; built 2026-11-19, section 104)
 
 **Why:** the user found the Data and Rules pages hard to understand for a new user and not like modern tools. Walk-through findings: the
 Data page is a bare table ("16 fields mapped", folded sections, no record counts or data health, no "what next"); mapping is a wall of 20+
@@ -2470,3 +2473,45 @@ run until each tab is saved.
 **Order of work (each step: build, browser-check on a fresh sandbox with the e2e scripts, tests, commit, short report):** 1 Data page and
 Add data; 2 Mapping; 3 Rules page (presets, cards, side panel, one save); 4 Golden record (default plus exceptions); 5 full new-user
 walk-through. Not swept yet and worth doing alongside: second-approval flows end to end, schedules, database destinations.
+
+
+## 104. Data and Rules redesign, built (2026-11-19, session 6)
+
+Plan of section 103, steps 1-5, all on synthetic data.
+- **Data page** (`data.js` `projectConnections`, `dataSummary`, `sourceCard`): a summary strip (sources, records, in use, one sentence
+  "Ready to match" / "1 file needs mapping" / "waits for approval" / "last check failed", and the Next button), then one card per source:
+  kind, records (last run, else the uploaded file's rows), state, "Matched on" chips with how full each field is, "Also gives", "Kept as
+  is", and problems in words with what to do (field empty in the rows read, under 50% filled, little to match on, columns gone since the
+  last check, own field the project does not define, not in use yet). Files still to map are cards too. Backend: `GET .../connections/
+  {id}/profile` (newest version on up to 1,000 rows, counts only, kept 10 minutes, uploads as long as the server runs; needs
+  sources.manage; read errors come back as ok=false), `records` / `records_from` on the connection list, `health.latest(kind=)`.
+  Add data: upload and every connector tile on one screen, searchable, nothing folded.
+- **Mapping** (`mapStep`, `matchPanel`): columns in three groups sorted once when the step opens (Please check, with the reason per
+  column: values disagree, empty in the rows read, chosen from the name only, looks like a free field, looks like a field taken by another
+  column, part of a name, company names; Mapped for you; Not used). A sticky side panel: what records can be matched on, each with its fill
+  rate (from the real sample size, `sample_size` on inspect), a verdict, Save data source and Preview rows first. Saving goes back to the
+  Data page, where the new card shows its health.
+- **Rules** (`rulespage.js` `rulesPage`): one page instead of three tabs. Matching: "How careful should merging be?" (ready-made
+  settings, thresholds under Adjust), Merge when / Ask a person when / Never merge when as plain-word cards with an on/off switch; Edit
+  opens a side panel (`sidePanel` in rules.js) with the columns. Golden record: "Usually: <choice>" plus Exceptions (n), add or remove an
+  exception. One Save proposes both rule sets (only the ones that changed or are not in use yet; put in use at once in a one-person
+  project); the message offers Start the first run. After a run, the page tries the rules as edited on the latest run's pairs
+  (`POST .../config/decision/try`, nothing saved) and says what would change. Fields and search is the Advanced page (Back to rules).
+  Old addresses `/setup/matching`, `/setup/golden` open the page (golden scrolls to its part).
+- **Ready-made settings measured** (`~/agent-review/scoring/presets.py 1200 7`, the project's starting rules):
+
+  | Setting | with identifiers P / R / F1 | without identifiers P / R / F1 |
+  |---|---|---|
+  | Careful (rules only, how a project starts today) | 1.000 / 0.386 / 0.557 | 0.999 / 0.370 / 0.540 |
+  | Balanced (score, 90% / 10%) | 0.999 / 0.873 / 0.931 | 0.996 / 0.851 / 0.918 |
+  | Catch more (score, 80% / 5%) | 0.996 / 0.879 / 0.934 | 0.996 / 0.882 / 0.935 |
+
+  So Balanced is labelled recommended (the plan said Careful; the numbers say otherwise: rules alone miss 6 in 10 duplicates). New projects
+  still START on Careful (section 74 decision, unchanged): **asked the user whether new projects should start on Balanced.**
+- **Checks:** browser scripts `~/agent-review/redesign/` (d1 data cards, d2 mapping groups, r1 rules page + run + effect, r2 golden
+  exceptions saved as chosen, w1 new-user walk-through: 12 screens from Projects to Results pressing only the main button, 0 problems);
+  e1-e4 updated for the new pages and all pass on a fresh sandbox, 0 problems. New tests: profile of a source, records on the list, trying
+  unsaved rules. Suite 582 passed, 4 skipped; ruff clean.
+- **Known gaps:** the effect line needs a finished run and says nothing about clusters (decisions only); on a small file whose leftover
+  pairs are all vetoed it reads "no pair would be decided differently" (correct, but looks inert). The run dialog still names rule versions
+  in a one-person project. Not swept yet: second-approval flows end to end, schedules, database destinations.

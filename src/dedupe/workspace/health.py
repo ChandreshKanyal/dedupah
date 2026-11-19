@@ -76,11 +76,14 @@ class ConnectionHealth:
         with self.engine.begin() as c:
             return c.execute(checks.delete().where(checks.c.project_id == project_id)).rowcount
 
-    def latest(self, project_id: str) -> dict[str, dict]:
-        """The newest check of each connection in a project (for the connection list)."""
+    def latest(self, project_id: str, kind: str | None = None) -> dict[str, dict]:
+        """The newest check of each connection in a project (for the connection list); `kind` "run" or "test" for the newest of that kind."""
         out: dict[str, dict] = {}
+        q = select(checks).where(checks.c.project_id == project_id)
+        if kind:
+            q = q.where(checks.c.kind == kind)
         with self.engine.connect() as c:
-            for r in c.execute(select(checks).where(checks.c.project_id == project_id).order_by(checks.c.id.desc())):
+            for r in c.execute(q.order_by(checks.c.id.desc())):
                 out.setdefault(r.connection_id, self._view(r))
         return out
 

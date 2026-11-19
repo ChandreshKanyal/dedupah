@@ -139,6 +139,8 @@ function moreMenu(items, name, text, ic) {
 
 // ---- page building blocks ------------------------------------------------------------------------------------------------
 function show(...nodes) {
+  const side = $("side-panel");                 // a side panel belongs to the screen it was opened on
+  if (side) side.closeIt();
   $("view").replaceChildren(...nodes.flat(3).filter((n) => n != null && n !== false));      // flat: an array would otherwise print as text
   const h1 = $("view").querySelector("h1");
   document.title = (h1 ? h1.textContent + " - " : "") + "Aurionpro Dedupe";

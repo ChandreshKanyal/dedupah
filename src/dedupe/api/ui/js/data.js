@@ -113,44 +113,134 @@ async function addDataPage(pid) {
   el("h2", { class: "section" }, "Upload files"), uploadZone(pid),
   el("h2", { class: "section" }, "Or connect a database, storage or an application"),
   el("p", { class: "hint" }, others.length + " kinds of source. Passwords are never typed here: they stay in environment variables on the server."),
-  el("details", { class: "advanced" }, el("summary", {}, "Choose a source"), el("div", { class: "row" }, icon("search"), q), legend, none, sections));
+  el("div", { class: "row source-search-row" }, icon("search"), q), legend, none, sections);
 }
-// The Data step: the project's data sources first (files still to map among them), Add data, and the details folded away.
-async function projectConnections(p, connections) {
+// The Data step: a summary of the project's data (sources, records, ready or not, what to do next), then one card per data source: what
+// it holds, what its records can be matched on and how full each of those fields is, and any problem with it. Files still to map come first.
+// `next`: the step after the data ({ text, open }), shown once the data is ready.
+const MATCH_ON = ["full_name", "dob", "age", "mobile", "mobile_alt", "email", "address", "pincode", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key",
+  "passport_no", "dl_no", "voter_id", "customer_number"];
+const share = (n, d) => (d ? Math.round((100 * n) / d) : 0);
+async function projectConnections(p, connections, next) {
   const pid = p.id;
   const manage = can("sources.manage");
   const uploads = manage ? await api("GET", P(pid) + "/uploads") : [];
   const unmapped = uploads.filter((u) => !u.used_by.length).reverse();          // oldest first, the order they are mapped in
+  const own = can("config.read") ? (await api("GET", P(pid) + "/rules-catalogue").catch(() => ({ own_fields: [] }))).own_fields : [];
   const removeUpload = async (u) => {
     if (!(await confirmDialog("Delete " + u.filename + "?", "The uploaded file is erased for good. No data source uses it.", "Delete file", true))) return;
     await api("DELETE", P(pid) + "/uploads/" + u.upload_id);
     await go(() => viewProject(pid, "setup", "data"));
     say(u.filename + " was deleted.", "good");
   };
-  const state = (c) => (c.live_version ? (c.latest_status === "active" ? tag("In use", "success") : el("span", {}, tag("In use", "success"), " ", statusTag(c.latest_status)))
-    : statusTag(c.latest_status === "active" ? "proposed" : c.latest_status));
-  const rows = [
-    ...unmapped.map((u) => el("tr", {}, el("td", {}, el("strong", {}, u.filename)), el("td", {}, typeCell("upload")), el("td", {}, tag("Needs mapping", "warn")),
-      el("td", {}, num(u.rows) + " rows, uploaded " + when(u.created_at)),
-      el("td", { class: "actions-cell" }, el("div", { class: "row tight" }, btn("Map it", () => go(() => mapUpload(pid, u.upload_id)), "small"),
-        moreMenu([["Delete file", () => removeUpload(u), true]], u.filename))))),
-    ...connections.map((c) => linkRow(c.id, () => viewConnection(pid, c.id), el("td", {}, typeCell(c.type)), el("td", {}, state(c)),
-      el("td", {}, plural(c.fields_mapped, "field", "fields") + " mapped" + (c.last_check && !c.last_check.ok ? ". " : ""), c.last_check && !c.last_check.ok ? tag("Last check failed", "danger") : null),
-      manage ? el("td", { class: "actions-cell" }, btn("Change", () => run(() => editConnection(pid, c.id)), "small", null, { "aria-label": "Change data source " + c.id })) : el("td", {}))),
-  ];
-  const add = manage ? btn("Add data", () => go(() => addDataPage(pid)), rows.length ? "" : "primary", "plus") : null;
+  const add = manage ? btn("Add data", () => go(() => addDataPage(pid)), connections.length || unmapped.length ? "" : "primary", "plus") : null;
   const more = manage ? moreMenu([cache.projects.length > 1 ? ["Copy a data source from another project", () => copyDialog(pid)] : null]) : null;
   const used = uploads.filter((u) => u.used_by.length);
-  return el("div", {},
+  if (!connections.length && !unmapped.length) {
+    return el("div", {}, el("div", { class: "title-row" }, el("h2", { class: "section" }, "Data sources"), el("div", { class: "row tight" }, more)),
+      empty(manage ? "No data yet. Upload files or connect a database; the data belongs to this project only." : "No data yet. Someone who manages data adds it.", add));
+  }
+  const fileCards = unmapped.map((u) => el("article", { class: "source-card todo", "aria-label": u.filename },
+    el("div", { class: "source-card-head" }, logo("upload", "big"), el("div", { class: "grow" }, el("strong", {}, u.filename),
+      el("div", { class: "muted" }, "Uploaded file. " + plural(u.rows, "row", "rows") + ", " + plural(u.columns.length, "column", "columns") + ", uploaded " + when(u.created_at) + ".")),
+    tag("Needs mapping", "warn")),
+    el("p", { class: "source-card-line" }, "Choose what each column holds; a run can read the file after that."),
+    el("div", { class: "row tight" }, btn("Map it", () => go(() => mapUpload(pid, u.upload_id)), "primary small", "columns"),
+      moreMenu([["Delete file", () => removeUpload(u), true]], u.filename))));
+  const cards = connections.map((c) => sourceCard(pid, c, own, manage));
+  return el("div", {}, dataSummary(pid, connections, unmapped, next),
     el("div", { class: "title-row" }, el("h2", { class: "section" }, "Data sources"), el("div", { class: "row tight" }, add, more)),
-    unmapped.length ? el("div", { class: "notice warn", role: "note" }, plural(unmapped.length, "uploaded file needs", "uploaded files need") +
-      " mapping before a run can read " + (unmapped.length === 1 ? "it" : "them") + ": press Map it.") : null,
-    rows.length ? table(["Data source", "Kind", "State", "", ""], rows)
-      : empty(manage ? "No data yet. Upload files or connect a database; the data belongs to this project only." : "No data yet. Someone who manages data adds it.", add),
-    connections.length > 1 ? el("details", { class: "advanced" }, el("summary", {}, "Compare sources: which field comes from which column"), coverage(connections)) : null,
+    el("div", { class: "source-cards" }, fileCards, cards),
+    connections.length > 1 ? el("details", { class: "advanced" }, el("summary", {}, "Compare sources: which field comes from which column"), coverage(connections, own)) : null,
     used.length ? el("details", { class: "advanced" }, el("summary", {}, "Uploaded files (" + used.length + ")"),
       table(["File", ["Rows"], "Read by", "Uploaded", "By"], used.map((u) => el("tr", {}, el("td", {}, u.filename), el("td", { class: "num" }, num(u.rows)),
         el("td", {}, u.used_by.join(", ")), el("td", {}, when(u.created_at)), el("td", {}, u.uploaded_by))))) : null);
+}
+// The strip at the top of the Data step: how many sources and records, and whether a run can start (or what is missing).
+function dataSummary(pid, connections, unmapped, next) {
+  const inUse = connections.filter((c) => c.live_version);
+  const waiting = connections.filter((c) => c.latest_status === "proposed" || c.latest_status === "approved");
+  const counted = connections.filter((c) => c.records != null);
+  const total = counted.reduce((a, c) => a + c.records, 0);
+  const failing = connections.filter((c) => c.last_check && !c.last_check.ok);
+  const them = (n) => (n === 1 ? "it" : "them");
+  let line, kind;
+  if (unmapped.length) [line, kind] = [plural(unmapped.length, "uploaded file needs", "uploaded files need") + " mapping before a run can read " + them(unmapped.length) + ".", "warn"];
+  else if (!inUse.length) [line, kind] = [waiting.length ? "Not ready yet: " + plural(waiting.length, "data source waits", "data sources wait") + " to be approved and put in use." : "Not ready yet: no data source is in use.", "warn"];
+  else if (failing.length) [line, kind] = ["The last check could not read " + failing.map((c) => c.id).join(", ") + ": open " + them(failing.length) + " to see why.", "bad"];
+  else [line, kind] = ["Ready to match: " + (inUse.length === connections.length ? (inUse.length === 1 ? "the data source is" : inUse.length === 2 ? "both data sources are" : "all " + inUse.length + " data sources are") + " in use"
+    : plural(inUse.length, "of " + connections.length + " data sources is", "of " + connections.length + " data sources are") + " in use") +
+    (waiting.length ? "; " + plural(waiting.length, "change waits", "changes wait") + " for approval" : "") + ".", "good"];
+  return el("section", { class: "data-summary " + kind, "aria-label": "Summary of the data" },
+    el("div", { class: "data-summary-stats" },
+      el("div", {}, el("span", { class: "value" }, num(connections.length + unmapped.length)), el("span", { class: "label" }, connections.length + unmapped.length === 1 ? "data source" : "data sources")),
+      el("div", {}, el("span", { class: "value" }, counted.length ? num(total) : "-"), el("span", { class: "label" }, "records" +
+        (counted.length && counted.length < connections.length ? " (" + (connections.length - counted.length) + " not counted yet)" : !counted.length ? " (counted by the first run)" : ""))),
+      el("div", {}, el("span", { class: "value" }, num(inUse.length)), el("span", { class: "label" }, "in use by runs"))),
+    el("div", { class: "data-summary-line" }, icon(kind === "good" ? "check" : "alert"), el("span", {}, line),
+      kind === "good" && next ? btn(next.text, () => run(next.open), "primary small", "next") : null));
+}
+// One data source as a card: kind, records, state; the fields its records are matched on (with how full each is, read from a sample of the
+// source when the page opens) and the other things it gives; problems in plain words, each with what to do.
+function sourceCard(pid, c, own, manage) {
+  const fields = c.fields || {};
+  const mine = c.own_fields || {};
+  const kept = (c.extra_columns || []).filter((a) => !(a in mine));
+  const known = (n) => own.find((f) => f.name === n);
+  const state = c.live_version ? (c.latest_status === "active" ? tag("In use", "success") : el("span", {}, tag("In use", "success"), " ", statusTag(c.latest_status)))
+    : statusTag(c.latest_status === "active" ? "proposed" : c.latest_status);
+  const chip = (key, title, from) => el("span", { class: "chip", "data-key": key, title: "From " + from }, el("span", {}, title), el("span", { class: "chip-fill" }));
+  const chips = [...MATCH_ON.filter((f) => fields[f]).map((f) => chip("field:" + f, fieldTitle(f), fields[f])),
+    ...Object.keys(mine).map((n) => chip("own:" + n, known(n) ? known(n).title : label(n), mine[n]))];
+  const others = CANON_ORDER.filter((f) => fields[f] && !MATCH_ON.includes(f)).concat(Object.keys(fields).filter((f) => !CANON_ORDER.includes(f)));
+  const health = el("ul", { class: "health" });
+  const problems = [];
+  const note = (kind, text) => el("li", { class: "is-" + kind }, icon(kind === "ok" ? "check" : kind === "info" ? "info" : "alert"), el("span", {}, text));
+  if (c.last_check && !c.last_check.ok) problems.push(note("bad", "The last check could not read it: " + (c.last_check.error || "unknown error") + ". Open it and press Test now once it is fixed."));
+  const gone = c.last_check && c.last_check.ok ? (c.last_check.drift || {}).removed || [] : [];
+  if (gone.length) problems.push(note("warn", "Columns gone from the source since the check before: " + gone.join(", ") + ". Check the mapping."));
+  for (const n of Object.keys(mine)) if (!known(n)) problems.push(note("warn", label(n) + " is not a field of this project: its values are only kept, not matched on. Add it under Rules, Fields and search."));
+  if (!c.live_version) problems.push(note("info", c.latest_status === "declined" ? "Its latest version was declined: open it to see why." : "Not in use yet: runs read it once it is approved and put in use."));
+  if (!chips.length) problems.push(note("bad", "Nothing to match on: map at least a name, an identifier, a phone, an email or a field of your own."));
+  fill(health, problems);
+  const facts = el("div", { class: "muted" }, typeTitle(c.type) + ". " + (c.records != null ? plural(c.records, "record", "records") + (c.records_from === "run" ? " (read by the last run)" : "")
+    : "Records are counted by the first run") + ". Changed " + when(c.updated_at) + (c.updated_by ? " by " + c.updated_by : "") + ".");
+  const checked = el("div", { class: "muted small" });
+  const card = el("article", { class: "source-card", "aria-label": c.id },
+    el("div", { class: "source-card-head" }, logo(c.type, "big"), el("div", { class: "grow" }, el("button", { type: "button", class: "link source-name", onclick: () => go(() => viewConnection(pid, c.id)) }, c.id), facts),
+      state),
+    el("div", { class: "source-card-row" }, el("span", { class: "source-card-label" }, "Matched on"), chips.length ? el("div", { class: "chips" }, chips) : el("span", { class: "muted" }, "Nothing yet")),
+    others.length ? el("div", { class: "source-card-row" }, el("span", { class: "source-card-label" }, "Also gives"), el("span", {}, others.map(fieldTitle).join(", "))) : null,
+    kept.length ? el("div", { class: "source-card-row" }, el("span", { class: "source-card-label" }, "Kept as is"), el("span", {}, kept.join(", "))) : null,
+    health, checked,
+    el("div", { class: "row tight" }, btn("Open", () => go(() => viewConnection(pid, c.id)), "small"),
+      manage ? btn("Edit mapping", () => run(() => editConnection(pid, c.id)), "small", "columns", { "aria-label": "Edit the mapping of " + c.id }) : null));
+  if (manage && chips.length) {          // how full each field is, from a sample: filled in when it arrives, the card is usable before
+    fill(checked, "Checking how full each field is...");
+    api("GET", P(pid) + "/connections/" + c.id + "/profile").then((pr) => {
+      if (!pr.ok) { fill(checked); add(health, note("bad", "It could not be read just now: " + pr.error + ".")); return; }
+      const n = pr.sample_size;
+      const by = Object.fromEntries(pr.columns.map((x) => [(x.group === "field" ? "field:" : x.group === "own" ? "own:" : "kept:") + x.key, x.filled]));
+      const found = [];
+      let strong = 0;
+      for (const ch of card.querySelectorAll(".chip")) {
+        const f = by[ch.dataset.key];
+        if (f == null) continue;
+        const pc = share(f, n);
+        ch.querySelector(".chip-fill").textContent = pc + "%";
+        const title = ch.firstChild.textContent;
+        if (!f) { ch.classList.add("is-empty"); found.push(note("bad", title + " has no value in the " + plural(n, "row", "rows") + " read: is the right column mapped?")); }
+        else if (pc < 50) { ch.classList.add("is-low"); found.push(note("warn", title + " is filled in only " + pc + "% of rows: records without it are matched on the other fields.")); }
+        if (pc >= 50) strong++;
+      }
+      for (const k of kept) if (by["kept:" + k] === 0) found.push(note("warn", "The kept column " + k + " has no value in the rows read."));
+      if (!strong && chips.length) found.push(note("warn", "Little to match on: no field is filled in at least half of the rows."));
+      if (!found.length && !problems.length) found.push(note("ok", "Looks good: every field it is matched on is filled in most rows."));
+      add(health, found);
+      fill(checked, n >= 1000 ? "Checked on the first " + num(n) + " rows." : "Checked on all " + plural(n, "row", "rows") + ".");
+    }).catch((e) => fill(checked, /too many/i.test(e.message) ? "Not checked: many sources were read in the last minute. Open the page again shortly." : "Not checked: " + e.message));
+  }
+  return card;
 }
 async function copyDialog(pid) {
   const others = cache.projects.filter((x) => x.id !== pid);
@@ -181,7 +271,8 @@ async function copyDialog(pid) {
 const CANON_ORDER = ["full_name", "father_name", "dob", "age", "gender", "marital_status", "mobile", "mobile_alt", "email", "address", "address_alt", "city", "state", "pincode",
   "customer_number", "pan", "aadhaar", "aadhaar_last4", "aadhaar_reference_key", "passport_no", "dl_no", "voter_id", "record_date", "occupation", "annual_income", "related_name",
   "party_role", "relation_to_proposer"];
-function coverage(connections) {
+function coverage(connections, ownFields) {
+  const ownTitle = (f) => ((ownFields || []).find((x) => x.name === f) || { title: label(f) }).title;
   const used = CANON_ORDER.filter((f) => connections.some((c) => (c.fields || {})[f]));
   const own = [...new Set(connections.flatMap((c) => Object.keys(c.own_fields || {})))];
   if (!used.length && !own.length) return null;
@@ -190,7 +281,7 @@ function coverage(connections) {
     el("p", { class: "hint" }, "Each column shows the column of that source that fills the field (latest version). Records of all sources are matched with each other on these fields."),
     table(["Field", ...connections.map((c) => c.id)], [
       ...used.map((f) => el("tr", {}, el("td", {}, fieldTitle(f)), connections.map((c) => el("td", {}, (c.fields || {})[f] ? el("span", { class: "mono" }, c.fields[f]) : el("span", { class: "muted" }, "-"))))),
-      ...own.map((f) => el("tr", {}, el("td", {}, label(f) + " (your own)"), connections.map((c) => el("td", {}, (c.own_fields || {})[f] ? el("span", { class: "mono" }, c.own_fields[f]) : el("span", { class: "muted" }, "-"))))),
+      ...own.map((f) => el("tr", {}, el("td", {}, ownTitle(f) + " (your own)"), connections.map((c) => el("td", {}, (c.own_fields || {})[f] ? el("span", { class: "mono" }, c.own_fields[f]) : el("span", { class: "muted" }, "-"))))),
       el("tr", {}, el("td", {}, "Record id"), connections.map((c) => el("td", {}, c.record_id ? el("span", { class: "mono" }, c.record_id) : el("span", { class: "muted" }, "row number")))),
       extra.length ? el("tr", {}, el("td", {}, "Extra columns kept"), connections.map((c) => el("td", {}, (c.extra_columns || []).join(", ") || el("span", { class: "muted" }, "-")))) : null,
     ]));
@@ -435,6 +526,49 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
     state.step = target || 2;
     render();
   };
+  // Save: the mapping as a new version (put in use at once in a one-person project); with several files, the next one not saved opens
+  const save = async () => {
+    const many = batch && batch.files.length > 1;
+    const proj = await api("GET", P(pid));               // the setting as it is now, not as the list was loaded (U1-10)
+    const solo = proj && !proj.second_approval;          // nobody else approves: the reason is recorded without asking
+    const again = preset || (batch && batch.files[batch.index].saved);
+    let why = solo ? (again ? "Changed the mapping of " : "Added from ") + (kind() === "upload" ? "uploaded file " : "source ") + state.source.source_id
+      : batch ? batch.memo.reason : null;
+    if (!why) {
+      why = await askReason(many ? "Save the uploaded files" : "Save " + state.source.source_id,
+        many ? "Why add these " + batch.files.length + " files? (asked once for all of them)" : "Why add or change it?", 10, "Save");
+      if (why === null) return;
+      if (batch) batch.memo.reason = why;
+    }
+    const me1 = batch ? batch.files[batch.index] : null;
+    let res = null;
+    if (!(me1 && me1.saved && JSON.stringify(state.source) === original)) {
+      try { res = await api("POST", root + "/connections", { connection: state.source, reason: why }); }
+      catch (e) { if (!(me1 && me1.saved && /identical/i.test(e.message))) throw e; }    // the same content in another key order
+    }
+    let saved = "No change to " + state.source.source_id + ".";
+    if (res) {
+      const now = !res.second_approval && can("config.activate");          // one-person project: saved means in use
+      if (now) await api("POST", root + "/connections/" + res.id + "/versions/" + res.version + "/activate", { reason: why });
+      if (me1) me1.saved = true;
+      saved = "Saved " + res.id + " as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
+        : ". Someone who can put data sources in use does that next.");
+    }
+    if (many) {
+      const n = batch.files.length;
+      const next = [...Array(n).keys()].map((k) => (batch.index + 1 + k) % n).find((i) => !batch.files[i].saved);
+      if (next !== undefined) {
+        await openFile(next);
+        say(saved + " Next: file " + (next + 1) + " of " + n + ".", "good");
+        return;
+      }
+      await go(() => viewProject(pid, "setup", "data"));
+      say(saved + " All " + n + " files are saved.", "good");
+      return;
+    }
+    await go(() => viewProject(pid, "setup", "data"));          // back to the data, where the new source's card says how full its fields are
+    say(saved, "good");
+  };
   // show the sample as it is (needs pii.unmask; every view is logged); masked otherwise
   const revealButton = (then) => (can("pii.unmask") && !state.reason ? btn("Show actual values", async () => {
     const why = await revealIdentifiers("Show the actual values");
@@ -528,13 +662,44 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       }
       refresh.forEach((r) => r());
     };
+    // the columns in three groups, sorted once when the step opens (a row never jumps away while it is being changed): chosen from clear
+    // evidence; worth a look, with the reason (the values disagree, the column is empty in the rows read, it was chosen from its name only,
+    // it looks like a field not chosen yet or one that already comes from another column, part of a name); not used
+    const nameOnly = new Set((state.info.suggestions || []).filter((x) => x.why === "name").map((x) => x.column));
+    const NAME_PART = /(^|[^a-z])(first|last|middle|sur|given|family|fore)[ _-]?name|surname|^(fname|lname|mname)$/i;
+    const why = (c) => {
+      const t = types[c] || {};
+      const cur = useOf(c);
+      const f = fieldOf(c);
+      if (cur) {
+        if (f && (t.contradicts || []).includes(f)) return ["check", "The values do not look like " + fieldTitle(f).toLowerCase() + "."];
+        if (t.filled === 0) return ["check", "No value in the rows read: keep it only if later rows have values."];
+        if (cur === "docs" && !docsOf(c).length) return ["check", "Choose the column that says which document each number is."];
+        if (f && nameOnly.has(c) && !preset) return ["check", "Chosen from the column's name; the values were not recognised."];
+        return ["done", ""];
+      }
+      if (t.filled === 0) return ["unused", ""];
+      const from = (x) => (partsOf(src.fields[x]) || []).join(" + ");
+      if (NAME_PART.test(c) && src.fields.full_name) return ["check", "Part of a name? Choose Full name to join it with " + from("full_name") + "."];
+      if (t.field && FIELD_TITLE[t.field]) {
+        return ["check", src.fields[t.field] ? "Looks like " + fieldTitle(t.field).toLowerCase() + ", which comes from " + from(t.field) +
+          (t.field === "mobile" ? " now: choose Second phone, or Mobile to use it when that one is empty." : " now: choose it to join them or use this one as a fallback.")
+          : "Looks like " + fieldTitle(t.field).toLowerCase() + "."];
+      }
+      if (t.type === "organisation_name") return ["check", "Company names: choose \u201cA new field of your own\u201d to match on them."];
+      return ["unused", ""];
+    };
+    const verdict = Object.fromEntries(cols.map((c) => [c, why(c)]));
     const refresh = [];
     const rows = cols.map((c) => {
       const t = types[c] || {};
       const sel = el("select", { "aria-label": "Use " + c + " as" });
       const note = el("div", { class: "muted small" });
+      const first = useOf(c);                                         // the reason to check a column goes once its choice is changed
+      const reason = verdict[c][1] ? el("div", { class: "map-reason small" }, verdict[c][1]) : null;
       const draw = () => {
         const cur = useOf(c);
+        if (reason) reason.hidden = cur !== first;
         const taken = (f) => (partsOf(src.fields[f]) && !partsOf(src.fields[f]).includes(c) ? " (now from " + partsOf(src.fields[f]).join(" + ") + ")"
           : combined.includes(f) ? " (now several columns combined)" : "");
         fill(sel, el("option", { value: "", selected: cur === "" }, "Don't use"),
@@ -587,33 +752,67 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
       }, true));
       refresh.push(draw);
       draw();
-      return el("tr", {}, el("td", {}, el("strong", {}, c)),
+      const filled = t.filled != null ? Math.round(t.filled * 100) : null;
+      return { c, row: el("tr", {}, el("td", {}, el("strong", { class: "mono" }, c),
+        el("div", { class: "muted small" }, (t.type ? t.description : "Not recognised") + (filled != null ? ". " + filled + "% of rows filled" : "")),
+        reason),
         el("td", {}, el("span", { class: "examples" }, examples(c).map((v) => el("span", { class: "ex" }, String(v))))),
-        el("td", {}, t.type ? t.description : el("span", { class: "muted" }, "Not recognised"), t.filled != null ? el("div", { class: "muted small" }, Math.round(t.filled * 100) + "% of rows filled") : null),
-        el("td", {}, sel, note));
+        el("td", {}, sel, note)) };
     });
-    const KEY = ["full_name", "dob", "mobile", "email", "address", "pincode", "pan", "aadhaar", "customer_number"];
-    const missing = el("p", { class: "hint" });
-    const warnName = el("div", { class: "notice warn", role: "note" }, "No column is used as Full name: without names, records of this source are hard to match.");
-    const drawMissing = () => {
-      const gone = KEY.filter((f) => !src.fields[f]);
-      missing.textContent = gone.length ? "Not in this file: " + gone.map(fieldTitle).join(", ") + ". Every field is optional; the more a source has, the more duplicates are found." : "";
-      warnName.hidden = !!src.fields.full_name || Object.keys(src.custom).length > 0;      // a project matching on its own fields needs no person's name
+    const groups = { done: [], check: [], unused: [] };
+    for (const r of rows) groups[verdict[r.c][0]].push(r.row);
+    const GROUPS = [["check", "Please check", "These may need your choice: the values disagree with the choice, the column is empty in the rows read, " +
+      "or it looks like a field that is not chosen yet."], ["done", preset ? "Mapped" : "Mapped for you", "Chosen from the column names and the values. Change any that are wrong."],
+    ["unused", "Not used", "Not read by runs. Keep a column as an extra if you want it in the golden record; a matching rule can then still use it."]];
+    const section = ([k, title, help]) => (groups[k].length ? el("section", { class: "map-group", "data-group": k, "aria-label": title },
+      el("h3", { class: "section" }, title, el("span", { class: "count-badge" }, String(groups[k].length))), el("p", { class: "hint" }, help),
+      table(["Your column", "Examples", "Use as"], groups[k], "map-table")) : null);
+    return el("div", { class: "map-layout" },
+      el("div", { class: "map-main" },
+        el("p", { class: "hint" }, "Say what each column of your file holds. Suggestions are filled in; the ones worth a look are first. A column that fits none of the fields " +
+          "(a company name, a GSTIN, a product code) can still be matched on: choose \u201cA new field of your own\u201d."),
+        GROUPS.map(section),
+        combined.length ? el("p", { class: "hint" }, "Kept as set before (several columns combined): " + combined.map(fieldTitle).join(", ") + ".") : null,
+        el("details", { class: "advanced" }, el("summary", {}, "Sample rows (" + sample.length + ", " + (state.info.unmasked ? "actual values" : "values shortened") + ")"),
+          el("div", { class: "row" }, revealButton(async () => { state.info = { ...state.info, ...(await api("POST", inspectUrl(), { connector: state.source.connector })) }; render(); })),
+          wide(cols, sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c])))))),
+        el("div", { class: "row" }, btn("Back", () => goStep(1), "", "prev"))),
+      matchPanel(src, types, state.info.sample_size || sample.length, refresh));
+  }
+  // The side panel of the mapping step: what records of this source can be matched on (each with how full its column is in the rows read),
+  // what else it gives, and the buttons. Redrawn whenever a choice changes.
+  function matchPanel(src, types, n, refresh) {
+    const box = el("div", { class: "map-checklist" });
+    const partsOf = (e) => (typeof e === "string" ? [e] : e && (e.concat || e.coalesce) ? (e.concat || e.coalesce) : e && e.column ? [e.column] : []);
+    const fullness = (e) => Math.max(0, ...partsOf(e).map((c) => ((types[c] || {}).filled != null ? Math.round(types[c].filled * 100) : 0)));
+    const ITEMS = [["Name", "full_name"], ["Birth date or age", "dob", "age"], ["Phone", "mobile", "mobile_alt"], ["Email", "email"], ["Address or PIN code", "address", "pincode"],
+      ["PAN", "pan"], ["Aadhaar", "aadhaar", "aadhaar_last4", "aadhaar_reference_key"], ["Passport, licence or voter ID", "passport_no", "dl_no", "voter_id"],
+      ["Customer number", "customer_number"]];
+    const draw = () => {
+      const have = ITEMS.map(([title, ...fs]) => {
+        const got = fs.filter((f) => src.fields[f]);
+        return { on: got.length > 0, title, pc: got.length ? Math.max(...got.map((f) => fullness(src.fields[f]))) : null };
+      });
+      const own = Object.entries(src.custom || {}).map(([f, col]) => ({ on: true, title: ownName(f) + " (your own)", pc: fullness(col) }));
+      const items = [...have, ...own];
+      const on = items.filter((x) => x.on);
+      const line = (x) => el("li", { class: x.on ? (x.pc === 0 ? "is-zero" : x.pc < 50 ? "is-low" : "is-on") : "is-off" }, icon(x.on ? "check" : "x"), el("span", { class: "grow" }, x.title),
+        x.on ? el("span", { class: "pc" }, x.pc + "%") : el("span", { class: "muted" }, "not in this file"));
+      const verdict = !on.length ? ["bad", "Nothing to match on yet: choose at least a name, an identifier, a phone, an email or a field of your own."]
+        : !src.fields.full_name && !Object.keys(src.custom || {}).length ? ["warn", "No name: records of this source are matched only on the fields ticked here."]
+          : on.some((x) => x.pc === 0) ? ["warn", "A ticked field has no value in the rows read: check its column."]
+            : ["good", "Enough to match on. The more fields, the more duplicates are found."];
+      const kept = (src.attributes || []).filter((a) => !Object.values(src.custom || {}).includes(a));
+      fill(box, el("h3", { class: "section" }, "What records can be matched on"),
+        el("ul", { class: "checklist" }, items.filter((x) => x.on).map(line), items.filter((x) => !x.on).map(line)),
+        el("p", { class: "verdict " + verdict[0] }, verdict[1]),
+        el("p", { class: "muted small" }, "Each row's own id: " + (src.record_id || "the row number") + ". " + (kept.length ? "Kept as is: " + kept.join(", ") + ". " : "") +
+          "Percentages are from the first " + plural(n, "row", "rows") + "."));
     };
-    refresh.push(drawMissing);
-    drawMissing();
-    return el("div", {},
-      el("p", { class: "hint" }, "Choose what each column of your file holds. Suggestions from the values are already filled in: check them and change any that are wrong. " +
-        "Whether an identifier such as PAN decides on its own is set in the project's matching rules. " +
-        "A column that fits none of the fields (a company name, a GSTIN, a product code) can still be matched on: choose \u201cA new field of your own\u201d."),
-      warnName,
-      table(["Your column", "Examples", "Values look like", "Use as"], rows, "map-table"),
-      missing,
-      combined.length ? el("p", { class: "hint" }, "Kept as set before (several columns combined): " + combined.map(fieldTitle).join(", ") + ".") : null,
-      el("details", { class: "advanced" }, el("summary", {}, "Sample rows (" + sample.length + ", " + (state.info.unmasked ? "actual values" : "values shortened") + ")"),
-        el("div", { class: "row" }, revealButton(async () => { state.info = { ...state.info, ...(await api("POST", inspectUrl(), { connector: state.source.connector })) }; render(); })),
-        wide(cols, sample.map((r) => el("tr", {}, cols.map((c) => el("td", {}, r[c] == null ? "" : r[c])))))),
-      el("div", { class: "row" }, btn("Back", () => goStep(1), "", "prev"), btn("Next: preview", () => goStep(3), "primary", "next")));
+    refresh.push(draw);
+    draw();
+    return el("aside", { class: "map-aside", "aria-label": "What records can be matched on" }, box,
+      el("div", { class: "row" }, btn("Save data source", save, "primary", "check"), btn("Preview rows first", () => goStep(3), "", "next")));
   }
   function previewStep() {
     const doPreview = () => run(async () => {
@@ -631,48 +830,6 @@ async function connectionWizard(pid, type, preset, startStep, batch) {
           revealButton(async () => doPreview())) : null,
         r.values.length ? wide(r.columns.map(titleOf), r.values.map((row) => el("tr", {}, row.map((v) => el("td", {}, v == null ? "" : String(v)))))) : null);
     });
-    const save = async () => {
-      const many = batch && batch.files.length > 1;
-      const proj = await api("GET", P(pid));               // the setting as it is now, not as the list was loaded (U1-10)
-      const solo = proj && !proj.second_approval;          // nobody else approves: the reason is recorded without asking
-      const again = preset || (batch && batch.files[batch.index].saved);
-      let why = solo ? (again ? "Changed the mapping of " : "Added from ") + (kind() === "upload" ? "uploaded file " : "source ") + state.source.source_id
-        : batch ? batch.memo.reason : null;
-      if (!why) {
-        why = await askReason(many ? "Save the uploaded files" : "Save " + state.source.source_id,
-          many ? "Why add these " + batch.files.length + " files? (asked once for all of them)" : "Why add or change it?", 10, "Save");
-        if (why === null) return;
-        if (batch) batch.memo.reason = why;
-      }
-      const me1 = batch ? batch.files[batch.index] : null;
-      let res = null;
-      if (!(me1 && me1.saved && JSON.stringify(state.source) === original)) {
-        try { res = await api("POST", root + "/connections", { connection: state.source, reason: why }); }
-        catch (e) { if (!(me1 && me1.saved && /identical/i.test(e.message))) throw e; }    // the same content in another key order
-      }
-      let saved = "No change to " + state.source.source_id + ".";
-      if (res) {
-        const now = !res.second_approval && can("config.activate");          // one-person project: saved means in use
-        if (now) await api("POST", root + "/connections/" + res.id + "/versions/" + res.version + "/activate", { reason: why });
-        if (me1) me1.saved = true;
-        saved = "Saved " + res.id + " as version " + res.version + (now ? " and in use: runs read it from now on." : res.second_approval ? ". Another person approves it and puts it in use; then runs can read it."
-          : ". Someone who can put data sources in use does that next.");
-      }
-      if (many) {
-        const n = batch.files.length;
-        const next = [...Array(n).keys()].map((k) => (batch.index + 1 + k) % n).find((i) => !batch.files[i].saved);
-        if (next !== undefined) {
-          await openFile(next);
-          say(saved + " Next: file " + (next + 1) + " of " + n + ".", "good");
-          return;
-        }
-        await go(() => viewProject(pid, "setup", "data"));
-        say(saved + " All " + n + " files are saved.", "good");
-        return;
-      }
-      await go(() => viewConnection(pid, state.source.source_id));
-      say(saved, "good");
-    };
     setTimeout(doPreview, 0);
     return el("div", {},
     el("div", { class: "row" }, btn("Back", () => goStep(2), "", "prev"), btn("Preview again", doPreview, "", "refresh"), btn("Save data source", save, "primary", "check")));

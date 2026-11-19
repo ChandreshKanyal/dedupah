@@ -153,7 +153,7 @@ async function viewProject(pid, tab, sub) {
   let body;
   let title = PROJECT_PAGES[tab];
   const actions = [];
-  if (tab === "setup") { body = await setupPart(p, sub, connections, guided, runs); title = sub === "data" ? "Data" : "Rules: " + SETUP_PARTS[sub]; }
+  if (tab === "setup") { body = await setupPart(p, sub, connections, guided, runs); title = sub === "data" ? "Data" : sub === "technical" ? "Rules: Fields and search" : "Rules"; }
   else if (tab === "runs") {
     body = el("div", {}, journeyBar(pid, runs, 2), runsTable(runs, false, pid), await schedulesPanel(p, connections));
     if (can("runs.start")) actions.push(btn("Start run", () => quickRun(pid), "primary", "play"));
@@ -218,7 +218,7 @@ async function projectJourney(p, runs, connections) {
     [st ? btn(st.data.length ? "Open" : "Add data", () => go(() => viewProject(pid, "setup", "data")), "", st.data.length ? null : "database") : null]),
     row(2, "Rules", st ? [dec ? sameWhenShort(dec) : tag("Matching rules not chosen", "warn"), gold ? el("div", { class: "muted" }, "Golden record: " + goldenWords(gold)) : tag("Golden-record rules not chosen", "warn"),
       st.cfg.decision.waiting.length + st.cfg.survivorship.waiting.length ? el("div", { class: "muted" }, "Changes wait for approval.") : null] : [],
-    [st ? btn("Matching rules", () => go(() => viewProject(pid, "setup", "matching"))) : null, st ? btn("Golden record", () => go(() => viewProject(pid, "setup", "golden"))) : null,
+    [st ? btn("Open the rules", () => go(() => viewProject(pid, "setup", "matching"))) : null,
       st ? btn("Fields and search", () => go(() => viewProject(pid, "setup", "technical"))) : null]),
     row(3, "Run", [latest ? (latest.status === "succeeded" ? runTitle(latest, runs) + ": " + num(latest.summary.records) + " records became " + num(latest.summary.people) + " " + wordsOf(pid).many + "."
       : el("div", {}, runTitle(latest, runs) + ": ", runState(latest))) : "No run yet.",
@@ -235,22 +235,17 @@ async function projectJourney(p, runs, connections) {
 }
 // One part of the setup on its own page. Until the first run it carries the steps and a Next button, so a new project is set up in order.
 async function setupPart(p, sub, connections, guided, runs) {
-  const order = ["data", "matching", "golden"];
-  const i = order.indexOf(sub);
   const st = can("config.read") ? await setupState(p.id, connections) : null;
   const missing = st ? (!st.cfg.decision.live ? "matching" : !st.cfg.survivorship.live ? "golden" : null) : null;
-  // Rules is one step with three pages: the two that must be chosen say so until they are
-  const rulesTabs = sub === "data" ? null : el("div", { class: "subtabs page-sub", role: "tablist", "aria-label": "Rules" }, ["matching", "golden", "technical"].map((k) => {
-    const todo = st && ((k === "matching" && !st.cfg.decision.live) || (k === "golden" && !st.cfg.survivorship.live));
-    return el("button", { type: "button", role: "tab", "aria-selected": k === sub ? "true" : "false", onclick: () => go(() => viewProject(p.id, "setup", k)) },
-      SETUP_PARTS[k] + (k === "technical" ? " (optional)" : todo ? " (not chosen yet)" : ""));
-  }));
-  const body = sub === "data" ? await projectConnections(p, connections) : await rulesPanel(p, SETUP_CONFIG[sub]);
-  const nextOf = { data: "matching", matching: "golden", golden: null };
-  const nav = guided && i >= 0 ? el("div", { class: "row guide-nav" },
-    btn("Back", () => go(() => viewProject(p.id, "setup", i ? order[i - 1] : undefined)), "", "prev"),
-    btn(nextOf[sub] ? "Next: " + SETUP_PARTS[nextOf[sub]] : "Next: check and run", () => go(() => viewProject(p.id, "setup", nextOf[sub] || undefined)), "primary", "next")) : null;
-  return el("div", {}, journeyBar(p.id, runs, STEP_OF_PAGE[sub], missing), rulesTabs, body, nav);
+  const next = missing ? { text: "Next: Rules", open: () => go(() => viewProject(p.id, "setup", "matching")) }
+    : st && st.ready && can("runs.read") ? { text: "Next: run", open: () => go(() => viewProject(p.id, "runs")) } : null;
+  // Rules is one page (matching and golden-record rules, saved together); Fields and search is its Advanced page
+  const back = sub === "technical" ? el("div", { class: "row" }, btn("Back to rules", () => go(() => viewProject(p.id, "setup", "matching")), "", "prev")) : null;
+  const body = sub === "data" ? await projectConnections(p, connections, next) : sub === "technical" ? await rulesPanel(p, "settings") : await rulesPage(p, sub);
+  // with no data yet, the Data step offers the way on to the rules (with data, its summary says what comes next)
+  const nav = guided && sub === "data" && !connections.length ? el("div", { class: "row guide-nav" },
+    btn("Back", () => go(() => viewProject(p.id)), "", "prev"), btn("Next: Rules", () => go(() => viewProject(p.id, "setup", "matching")), "", "next")) : null;      // Add data is the main button
+  return el("div", {}, journeyBar(p.id, runs, STEP_OF_PAGE[sub], missing), back, body, nav);
 }
 async function activityPanel(pid) {
   const ACTIONS = { propose: "Saved a data source", activate: "Put a version in use", approve: "Approved a version", decline: "Declined a version", copy: "Copied a data source",

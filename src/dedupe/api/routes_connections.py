@@ -10,6 +10,7 @@ variable starting with DEDUPE_SRC_, files inside DEDUPE_DATA_ROOTS or uploaded t
 real customer data: it is rate limited, logged (never a value), and values leave the server only shortened.
 """
 import json
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -150,7 +151,8 @@ def _summary(configs, name: str) -> dict:
             "record_id": content.get("record_id"), "extra_columns": list(content.get("attributes") or []),
             "own_fields": {f: _words(c) for f, c in (content.get("custom") or {}).items()},
             "live_version": live.version if live else None, "latest_version": vs[-1].version, "latest_status": vs[-1].status,
-            "updated_at": vs[-1].proposed_at, "updated_by": vs[-1].proposed_by}
+            "updated_at": vs[-1].proposed_at, "updated_by": vs[-1].proposed_by,
+            "upload_id": content["connector"].get("upload_id") if content["connector"].get("type") == "upload" else None}
 
 
 # ---- what the screens need to build their forms (the same for every project) -------------------------------------------------
@@ -175,8 +177,19 @@ FIELD_GROUPS = [
 @router.get(BASE)
 def list_connections(request: Request, project_id: str = PID, p: Principal = READ):
     ps = project_scope(request, project_id)
-    last = _services(request).health.latest(project_id)
-    return [{**_summary(ps.configs, name), "last_check": last.get(name.split("/", 1)[1])} for name in ps.configs.names("connection/")]
+    sv = _services(request)
+    last = sv.health.latest(project_id)
+    ran = sv.health.latest(project_id, kind="run")
+    rows_of = {u["upload_id"]: u["rows"] for u in sv.uploads.list(project_id, limit=100_000)}
+    out = []
+    for name in ps.configs.names("connection/"):
+        s = _summary(ps.configs, name)
+        # how many records it holds: what the last run read, else the uploaded file's rows (a database is counted only by a run)
+        r = (ran.get(s["id"]) or {}).get("rows")
+        upload_rows = rows_of.get(s.pop("upload_id", None) or "")
+        s["records"], s["records_from"] = (r, "run") if r is not None and ran[s["id"]]["ok"] else (upload_rows, "file") if upload_rows is not None else (None, None)
+        out.append({**s, "last_check": last.get(s["id"])})
+    return out
 
 
 @router.get(BASE + "/{connection_id}")
@@ -251,6 +264,7 @@ def inspect(request: Request, body: InspectIn, project_id: str = PID, unmask: bo
     # columns of options (gender, a category such as a document type, city, state) identify nobody: shown as they are, so a person can map them (U2-17)
     open_cols = {c for c, t in (info["types"] or {}).items() if (t or {}).get("type") in OPEN_TYPES}
     return {"columns": info["columns"], "suggestions": info["suggestions"], "unmasked": reveal, "types": info["types"], "record_id": info["record_id"],
+            "sample_size": info["sample"].num_rows,
             "sample": [{k: (_plain(v) if k in open_cols else cell(v)) for k, v in row.items()} for row in info["sample"].slice(0, SAMPLE_ROWS).to_pylist()]}
 
 
@@ -272,18 +286,7 @@ def preview(request: Request, body: SourceConfig, project_id: str = PID, unmask:
     except SourceProblem as e:
         raise HTTPException(422, str(e)) from None
     n = table.num_rows
-    # every column the mapping produces, in the order a person chose them: the row's own id, our fields, the project's own fields and the
-    # columns kept as they are. Own fields and kept columns travel in the attributes JSON (under the field's or the column's name)
-    carried = [json.loads(v) if v else {} for v in table.column("attributes").to_pylist()]
-    own = list(body.custom)
-    kept = [a for a in body.attributes if a not in body.custom]
-    columns = ([{"key": "source_record_id", "group": "id"}] + [{"key": f, "group": "field"} for f in CANONICAL_FIELDS if f in body.fields]
-               + [{"key": f, "group": "own"} for f in own] + [{"key": a, "group": "kept"} for a in kept])
-    canon = {c: table.column(c).to_pylist() for c in table.column_names if c != "attributes"}
-    def value(col, i):
-        return canon[col["key"]][i] if col["group"] in ("id", "field") else carried[i].get(col["key"])
-    for col in columns:
-        col["filled"] = sum(1 for i in range(n) if value(col, i) not in (None, ""))
+    columns, value = _mapped_columns(body, table)
     filled = {c["key"] if c["group"] == "field" else f"{c['key']} (your own field)" if c["group"] == "own" else f"{c['key']} (kept as is)": c["filled"]
               for c in columns if c["group"] != "id"}
     _log(request, p, "source_preview", body.source_id[:40])
@@ -294,6 +297,65 @@ def preview(request: Request, body: SourceConfig, project_id: str = PID, unmask:
     values = [[(v if c["key"] in OPEN_FIELDS or c["group"] == "id" or v is None else cell(v)) for c in columns for v in [value(c, i)]] for i in range(shown)]
     rows = [{k: (v if k in OPEN_FIELDS else cell(v)) for k, v in row.items() if k != "attributes"} for row in table.slice(0, SAMPLE_ROWS).to_pylist()]
     return {"sample_size": n, "filled": filled, "columns": columns, "values": values, "rows": rows, "unmasked": reveal}
+
+
+def _mapped_columns(body: SourceConfig, table) -> tuple[list[dict], object]:
+    """Every column the mapping produces, in the order a person chose them: the row's own id, our fields, the project's own fields and the
+    columns kept as they are, each with how many sample rows fill it. Own fields and kept columns travel in the attributes JSON (under the
+    field's or the column's name). Returns the columns and a function giving column `col`'s value in row `i`."""
+    n = table.num_rows
+    carried = [json.loads(v) if v else {} for v in table.column("attributes").to_pylist()]
+    own = list(body.custom)
+    kept = [a for a in body.attributes if a not in body.custom]
+    columns = ([{"key": "source_record_id", "group": "id"}] + [{"key": f, "group": "field"} for f in CANONICAL_FIELDS if f in body.fields]
+               + [{"key": f, "group": "own"} for f in own] + [{"key": a, "group": "kept"} for a in kept])
+    canon = {c: table.column(c).to_pylist() for c in table.column_names if c != "attributes"}
+
+    def value(col, i):
+        return canon[col["key"]][i] if col["group"] in ("id", "field") else carried[i].get(col["key"])
+    for col in columns:
+        col["filled"] = sum(1 for i in range(n) if value(col, i) not in (None, ""))
+    return columns, value
+
+
+# How full each mapped field is, for the Data page: counts on a sample of the source as saved, never a value. Kept a while so opening the
+# page again does not read every source again (an uploaded file never changes: kept as long as the server runs).
+PROFILE_ROWS = 1000
+PROFILE_TTL_SECONDS = 600
+_profiles: dict[tuple, tuple[float, dict]] = {}
+
+
+@router.get(BASE + "/{connection_id}/profile")
+def profile_connection(request: Request, project_id: str = PID, connection_id: str = CID, p: Principal = MANAGE):
+    """The newest version of a data source applied to a sample of up to PROFILE_ROWS rows: how many rows fill each field it maps (our fields,
+    the project's own fields, the columns kept as they are). A source that cannot be read gives ok=False and the reason (not kept)."""
+    ps = project_scope(request, project_id)
+    name = f"connection/{connection_id}"
+    vs = ps.configs.versions(name)
+    if not vs:
+        raise HTTPException(404, "Not found.")
+    version = vs[-1].version
+    content = ps.configs.get(name, version)
+    connector = content.get("connector") or {}
+    key = (project_id, connection_id, version, json.dumps(connector, sort_keys=True))
+    hit = _profiles.get(key)
+    if hit and (connector.get("type") == "upload" or time.monotonic() - hit[0] < PROFILE_TTL_SECONDS):
+        return hit[1]
+    _throttle(request, p, "source_inspect", INSPECT_LIMIT_PER_MIN)
+    try:
+        src = SourceConfig.model_validate(content)
+        _own_upload(request, project_id, src.connector)
+        envgrants.check(project_id, src.connector)
+        table = check_source(src, PROFILE_ROWS)
+    except (SourceProblem, HTTPException, ValueError) as e:
+        text = e.detail if isinstance(e, HTTPException) else str(e)
+        return {"ok": False, "version": version, "error": str(text)[:300]}
+    columns, _ = _mapped_columns(src, table)
+    result = {"ok": True, "version": version, "sample_size": table.num_rows, "columns": [c for c in columns if c["group"] != "id"]}
+    if len(_profiles) >= 500:
+        _profiles.pop(next(iter(_profiles)))
+    _profiles[key] = (time.monotonic(), result)
+    return result
 
 
 # ---- propose, approve, make live ---------------------------------------------------------------------------------------------

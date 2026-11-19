@@ -318,6 +318,30 @@ def propose(request: Request, name: ConfigName, body: ProposeIn, project_id: str
     return {"name": name, "version": version, "status": "proposed"}
 
 
+class TryIn(Strict):
+    content: dict
+
+
+@router.post(PROJ + "/config/decision/try")
+def try_decision(request: Request, body: TryIn, project_id: str = PID, p: Principal = PROPOSE):
+    """What matching rules that are not saved yet (the Rules page as it is being edited) would change on the pairs of the project's latest
+    finished run. Nothing is saved or changed; counts only."""
+    ps, sv = project_scope(request, project_id), _services(request)
+    run = sv.jobs.latest_succeeded(project_id)
+    if run is None:
+        raise HTTPException(404, "No finished run was found to compare against.")
+    try:
+        with use(project_spec(ps.configs)):
+            candidate = MODELS["decision"].model_validate(body.content)
+    except ValueError:
+        raise _invalid_config("decision", body.content, ps.configs) from None
+    try:
+        result = dry_run(sv.workspace.run_dir(project_id, run.id), candidate, samples=0)
+    except FileNotFoundError:
+        raise HTTPException(404, "No finished run was found to compare against.") from None
+    return {k: result[k] for k in ("pairs", "zones_before", "zones_after", "moved", "rules_not_applied") if k in result} | {"run_id": run.id}
+
+
 @router.post(PROJ + "/config/{name}/versions/{version}/dry-run")
 def dry_run_version(request: Request, name: ConfigName, project_id: str = PID, version: int = Path(ge=1, le=1_000_000),
                     run_id: str | None = Query(None, pattern=RUN_ID), p: Principal = PROPOSE):

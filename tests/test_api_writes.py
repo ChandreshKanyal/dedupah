@@ -127,3 +127,20 @@ def test_the_project_rule_workflow_proposes_approves_activates_dry_runs_and_roll
     assert back.status_code == 200 and sv.workspace.stores(PROJECT)[1].active("decision").version == v2 + 1
     r = c.post(P + "/config/decision/propose", json={"content": {"auto_merge_at": "SECRET-VALUE-123"}, "reason": "trying a bad value"}, headers=admin)
     assert r.status_code == 422 and "SECRET-VALUE-123" not in r.text
+
+
+def test_matching_rules_not_saved_yet_are_tried_on_the_latest_run_without_saving_anything(api):
+    c, s, sv, run = api
+    cfg = json.loads(open("configs/decision_default.json", encoding="utf-8").read())
+    admin = hdr(s, "rule_admin", "u-ria")
+    standard = c.post(P + "/config/decision/try", json={"content": cfg}, headers=admin)
+    assert standard.status_code == 200, standard.text
+    body = standard.json()
+    assert body["run_id"] == run.rsplit("/", 1)[1] and body["pairs"] > 0 and "examples" not in body
+    rules_only = c.post(P + "/config/decision/try", json={"content": {**cfg, "use_score": False}}, headers=admin).json()
+    assert rules_only["zones_after"]["auto_merge"] < body["zones_after"]["auto_merge"]                     # the score merged pairs no rule catches
+    assert sum(rules_only["zones_after"].values()) == rules_only["pairs"]
+    assert sv.workspace.stores(PROJECT)[1].versions("decision") == []                                     # nothing was saved
+    bad = c.post(P + "/config/decision/try", json={"content": {**cfg, "auto_merge_at": "SECRET-VALUE-123"}}, headers=admin)
+    assert bad.status_code == 422 and "SECRET-VALUE-123" not in bad.text
+    assert c.post(P + "/config/decision/try", json={"content": cfg}, headers=hdr(s, "viewer")).status_code == 403

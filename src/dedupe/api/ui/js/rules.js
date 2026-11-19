@@ -1,8 +1,9 @@
 "use strict";
 // Rules of a project: matching rules and golden-record rules. Part of the portal script: the files in js/ share one scope and load in the order of routes_ui.SCRIPTS.
 // ---- rules of a project --------------------------------------------------------------------------------------------------
-// One page per kind of rule. It reads top to bottom: what is live now (in plain words), changes waiting to be made live, and the version
-// history folded away. The editor opens only when someone presses "Change the rules".
+// rulesPanel: the Fields and search page (the matching and golden-record rules are one page, rulespage.js). It reads top to bottom: what is
+// in use now (in plain words), changes waiting to be put in use, and the version history folded away; the editor opens on "Change the settings".
+// Below it, the pieces the Rules page uses: version buttons, the matching rules as cards, the golden-record form.
 const CONFIGS = [["decision", "Matching rules"], ["survivorship", "Golden record"], ["settings", "Fields and search"]];
 const CONFIG_INTRO = {
   decision: "How the engine decides whether two records are the same.",
@@ -28,50 +29,7 @@ async function rulesPanel(p, name, editing) {
   const wrap = el("div", { class: "rules-page" });
   const again = async (edit) => wrap.replaceWith(await rulesPanel(p, name, edit));
   const result = el("div", { class: "rules-result" });
-  const closeResult = () => btn("Close", () => result.replaceChildren(), "small ghost", "x");
-  const act = async (v, what, title, minLength, prompt, danger) => {
-    const why = await askReason(title, prompt, minLength, title.split(" ")[0], danger);
-    if (why === null) return;
-    const out = await api("POST", base + "/versions/" + v.version + "/" + what, { reason: why });
-    await again();
-    say(title + ": done" + (out && out.applies ? ". Applies " + out.applies + "." : what === "activate" ? ". The project's next run uses it." : "."), "good");
-  };
-  const view = async (v) => {
-    const [content, changes] = await Promise.all([api("GET", base + "/versions/" + v.version),
-      live && live.version !== v.version ? api("GET", base + "/diff?old=" + live.version + "&new=" + v.version) : null]);
-    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Version " + v.version + (changes ? ": what changes compared with the live version " + live.version : "")), closeResult()),
-      changes ? (changes.length ? el("ul", { class: "changes" }, changes.map((c) => el("li", {}, c))) : el("p", { class: "muted" }, "No difference.")) : null,
-      el("details", { class: "advanced" }, el("summary", {}, "The whole version as JSON"), el("pre", { class: "log", tabindex: "0" }, JSON.stringify(content.content, null, 2))));
-    result.scrollIntoView({ block: "nearest" });
-  };
-  const dry = async (v) => {
-    const r = await api("POST", base + "/versions/" + v.version + "/dry-run", {});
-    const zones = ["auto_merge", "review", "reject"];
-    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Try-out on the " + num(r.pairs) + " scored pairs of the latest run"), closeResult()),
-      el("p", { class: "hint" }, "Nothing is changed: this shows how the pairs of the latest run would have been decided with this version."),
-      table(["Decision", ["Now"], ["With this version"], ["Change"]], zones.map((z) => el("tr", {}, el("td", {}, { auto_merge: "Merged automatically", review: "Sent to a person", reject: "Kept apart" }[z]), el("td", { class: "num" }, num(r.zones_before[z])),
-        el("td", { class: "num" }, num(r.zones_after[z])), el("td", { class: "num" }, (r.zones_after[z] - r.zones_before[z] > 0 ? "+" : "") + num(r.zones_after[z] - r.zones_before[z]))))),
-      el("p", { class: "hint" }, Object.keys(r.moved).length ? "Moved: " + Object.entries(r.moved).map(([k, n]) => k + " " + num(n)).join(", ") : "No pair changes decision."),
-      (r.rules_not_applied || []).length ? el("p", { class: "warn-line" }, "Not tried: " + r.rules_not_applied.map(label).join(", ") + ". The latest run did not compare the " +
-        "field these rules use (it was added after that run). Run again to see their effect.") : null);
-    result.scrollIntoView({ block: "nearest" });
-  };
-  const back = async (v) => {
-    const why = await askReason("Go back to version " + v.version, "Why go back?", 10, "Go back", true);
-    if (why === null) return;
-    await api("POST", base + "/rollback", { to_version: v.version, reason: why });
-    await again();
-    say("Done. The project's next run uses version " + v.version + " again.", "good");
-  };
-  const mine = (v) => v.proposed_by === me.sub;
-  const decide = (v) => [
-    btn(live ? "What changes" : "View", () => view(v), "small", "list"),
-    name === "decision" && can("config.propose") ? btn("Try it on the latest run", () => dry(v), "small", "play") : null,
-    second && can("config.approve") && v.status === "proposed" && !mine(v) ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small", "check") : null,
-    can("config.activate") && (!second || v.approved_by.length) ? btn("Put in use", () => act(v, "activate", "Put version " + v.version + " in use", 0, "Note"), "small primary", "zap") : null,
-    can("config.approve") ? btn("Decline", () => act(v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger", "x") : null,
-    second && v.status === "proposed" && mine(v) ? tag("Yours: someone else approves it", "warn") : null,
-  ];
+  const { view, back, decide } = versionTools(p, name, live, result, again);
 
   // ---- what is in use, and what waits. Matching and golden-record rules are never assumed: until a version is in use, runs cannot start.
   const canEdit = can("config.propose");
@@ -129,16 +87,7 @@ async function rulesPanel(p, name, editing) {
     const note = form ? null : latest ? el("div", { class: "notice", role: "note" }, "You are editing a copy of version " + latest.version +
       (latest.status === "active" ? " (in use)" : waiting(latest) ? " (waiting, not in use yet)" : "") + "." + after)
       : el("div", { class: "notice", role: "note" }, "You are starting from the standard " + (optional ? "values" : "rules") + "." + after);
-    if (name === "decision") {
-      const [cat, conns] = await Promise.all([api("GET", P(pid) + "/rules-catalogue"), api("GET", P(pid) + "/connections")]);
-      const present = new Set([...conns.flatMap((c) => Object.keys(c.fields || {})), ...useOwnFields(cat)]);
-      body = [note, cat.own_fields.length && !cat.settings_in_use ? el("div", { class: "notice", role: "note" }, "Some of your own fields wait to be put in use (Fields and search). " +
-        "A rule on a field that is not in use yet is skipped by a run.") : null, matchingEditor(startFrom.content, cat, proposed, null, { ...saving, present, pid })];
-    } else if (name === "survivorship") {
-      const [guide, conns] = await Promise.all([api("GET", P(pid) + "/golden-record-guide"), api("GET", P(pid) + "/connections")]);
-      const present = new Set(conns.flatMap((c) => Object.keys(c.fields || {})));
-      body = [note, goldenForm(startFrom.content, guide, proposed, null, { ...saving, present })];
-    } else {
+    {
       // the matching rules as they will be: removing a field they use asks first
       const decVs = (await api("GET", P(pid) + "/config/decision")).filter((v) => ["proposed", "approved", "active"].includes(v.status));
       const decision = decVs.length ? (await api("GET", P(pid) + "/config/decision/versions/" + decVs[decVs.length - 1].version)).content : null;
@@ -146,10 +95,7 @@ async function rulesPanel(p, name, editing) {
     }
   } else {
     const content = (await shown).content;
-    const cat = name === "survivorship" ? null : await api("GET", P(pid) + "/rules-catalogue");
-    if (name === "decision") { useOwnFields(cat); body = matchingSummary(content, cat); }
-    else if (name === "survivorship") body = goldenSummary(content, await api("GET", P(pid) + "/golden-record-guide"));
-    else body = setupSummary(content, cat);
+    body = setupSummary(content, await api("GET", P(pid) + "/rules-catalogue"));
   }
 
   // ---- history, folded away
@@ -172,6 +118,59 @@ async function rulesPanel(p, name, editing) {
   return wrap;
 }
 
+// The buttons of one rule set's versions: what changes, try it on the latest run (matching rules), approve, put in use, decline, go back.
+// `result`: where a version's changes or try-out are shown; `again()`: draws the page again after an action.
+function versionTools(p, name, live, result, again) {
+  const pid = p.id;
+  const base = P(pid) + "/config/" + name;
+  const second = p.second_approval;
+  const closeResult = () => btn("Close", () => result.replaceChildren(), "small ghost", "x");
+  const act = async (v, what, title, minLength, prompt, danger) => {
+    const why = await askReason(title, prompt, minLength, title.split(" ")[0], danger);
+    if (why === null) return;
+    const out = await api("POST", base + "/versions/" + v.version + "/" + what, { reason: why });
+    await again();
+    say(title + ": done" + (out && out.applies ? ". Applies " + out.applies + "." : what === "activate" ? ". The project's next run uses it." : "."), "good");
+  };
+  const view = async (v) => {
+    const [content, changes] = await Promise.all([api("GET", base + "/versions/" + v.version),
+      live && live.version !== v.version ? api("GET", base + "/diff?old=" + live.version + "&new=" + v.version) : null]);
+    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Version " + v.version + (changes ? ": what changes compared with the live version " + live.version : "")), closeResult()),
+      changes ? (changes.length ? el("ul", { class: "changes" }, changes.map((c) => el("li", {}, c))) : el("p", { class: "muted" }, "No difference.")) : null,
+      el("details", { class: "advanced" }, el("summary", {}, "The whole version as JSON"), el("pre", { class: "log", tabindex: "0" }, JSON.stringify(content.content, null, 2))));
+    result.scrollIntoView({ block: "nearest" });
+  };
+  const dry = async (v) => {
+    const r = await api("POST", base + "/versions/" + v.version + "/dry-run", {});
+    const zones = ["auto_merge", "review", "reject"];
+    fill(result, el("div", { class: "title-row" }, el("h3", { class: "section" }, "Try-out on the " + num(r.pairs) + " scored pairs of the latest run"), closeResult()),
+      el("p", { class: "hint" }, "Nothing is changed: this shows how the pairs of the latest run would have been decided with this version."),
+      table(["Decision", ["Now"], ["With this version"], ["Change"]], zones.map((z) => el("tr", {}, el("td", {}, { auto_merge: "Merged automatically", review: "Sent to a person", reject: "Kept apart" }[z]), el("td", { class: "num" }, num(r.zones_before[z])),
+        el("td", { class: "num" }, num(r.zones_after[z])), el("td", { class: "num" }, (r.zones_after[z] - r.zones_before[z] > 0 ? "+" : "") + num(r.zones_after[z] - r.zones_before[z]))))),
+      el("p", { class: "hint" }, Object.keys(r.moved).length ? "Moved: " + Object.entries(r.moved).map(([k, n]) => k + " " + num(n)).join(", ") : "No pair changes decision."),
+      (r.rules_not_applied || []).length ? el("p", { class: "warn-line" }, "Not tried: " + r.rules_not_applied.map(label).join(", ") + ". The latest run did not compare the " +
+        "field these rules use (it was added after that run). Run again to see their effect.") : null);
+    result.scrollIntoView({ block: "nearest" });
+  };
+  const back = async (v) => {
+    const why = await askReason("Go back to version " + v.version, "Why go back?", 10, "Go back", true);
+    if (why === null) return;
+    await api("POST", base + "/rollback", { to_version: v.version, reason: why });
+    await again();
+    say("Done. The project's next run uses version " + v.version + " again.", "good");
+  };
+  const mine = (v) => v.proposed_by === me.sub;
+  const decide = (v) => [
+    btn(live ? "What changes" : "View", () => view(v), "small", "list"),
+    name === "decision" && can("config.propose") ? btn("Try it on the latest run", () => dry(v), "small", "play") : null,
+    second && can("config.approve") && v.status === "proposed" && !mine(v) ? btn("Approve", () => act(v, "approve", "Approve version " + v.version, 0, "Note"), "small", "check") : null,
+    can("config.activate") && (!second || v.approved_by.length) ? btn("Put in use", () => act(v, "activate", "Put version " + v.version + " in use", 0, "Note"), "small primary", "zap") : null,
+    can("config.approve") ? btn("Decline", () => act(v, "decline", "Decline version " + v.version, 3, "Why is it declined?", true), "small danger", "x") : null,
+    second && v.status === "proposed" && mine(v) ? tag("Yours: someone else approves it", "warn") : null,
+  ];
+
+  return { view, back, decide };
+}
 // The bottom of every editor: why, then save or cancel.
 // `opts.solo`: one-person project, saving puts the version in use and no reason is asked; `opts.live`: a version is in use already.
 function saveBar(why, err, save, cancel, opts) {
@@ -357,15 +356,49 @@ function matchingSummary(content, cat) {
   return el("div", { class: "matching-view" }, ["auto_merge", "force_review", "never_merge"].map((t, i) => step(i + 1, MATCH_STEPS[t][0], MATCH_STEPS[t][1], part(t))),
     step(4, "Everything else", null, el("p", {}, leftoverWords(content))));
 }
-// The editor: 1 the same when (columns that must agree), 2 ask a person when, 3 never the same when, 4 what happens to everything else.
-function matchingEditor(content, cat, propose, cancel, opts) {
+// Ready-made settings for the pairs no rule catches. Careful is how a project starts (its rules alone decide); Balanced and Catch more let
+// the match score decide the rest. Measured on synthetic data (1,200 households, PROGRESS section 104): Careful found about 4 in 10
+// duplicates, Balanced and Catch more about 9 in 10, all three with almost no wrong merges; hence Balanced is the one recommended.
+const PRESETS = [
+  ["careful", "Careful", "Only your rules merge; a pair no rule catches stays apart. On test data: about 4 in 10 duplicates found, almost never a wrong merge.", { use_score: false }],
+  ["balanced", "Balanced (recommended)", "Your rules, then the match score: sure pairs merge, doubtful ones go to a person. On test data: about 9 in 10 found, about 1 wrong merge in 1,000.",
+    { use_score: true, auto_merge_at: 0.9, review_at: 0.1 }],
+  ["more", "Catch more", "Like Balanced with lower thresholds: merges more on its own and asks less. On test data: slightly more found, about 4 wrong merges in 1,000.",
+    { use_score: true, auto_merge_at: 0.8, review_at: 0.05 }],
+];
+const presetOf = (c) => {
+  const hit = PRESETS.find(([, , , v]) => (v.use_score === false ? c.use_score === false
+    : c.use_score !== false && Math.abs((c.auto_merge_at || 0.9) - v.auto_merge_at) < 1e-6 && Math.abs((c.review_at || 0.1) - v.review_at) < 1e-6));
+  return hit ? hit[0] : "custom";
+};
+// A side panel at the right of the screen (not modal): a title, a body, and buttons. Escape or Done closes it; focus goes back to `from`.
+function sidePanel(title, body, buttons, from, onClose) {
+  const old = $("side-panel");
+  if (old) old.closeIt();
+  const panel = el("aside", { id: "side-panel", class: "side-panel", role: "dialog", "aria-label": title });
+  const close = () => { panel.remove(); document.removeEventListener("keydown", esc); if (onClose) onClose(); if (from && from.isConnected) from.focus(); };
+  const esc = (e) => { if (e.key === "Escape") close(); };
+  panel.closeIt = close;
+  add(panel, el("div", { class: "title-row" }, el("h2", { class: "section" }, title), btn("", close, "small ghost icon", "x", { "aria-label": "Close" })), body,
+    el("div", { class: "row" }, buttons(close)));
+  document.addEventListener("keydown", esc);
+  document.body.append(panel);
+  const f = panel.querySelector("select, input, textarea, button.primary");
+  if (f) f.focus();
+  return close;
+}
+// The matching rules as cards in plain words: 1 how careful (the ready-made settings for what no rule catches), 2 merge when, 3 ask a person
+// when, 4 never merge when. Each rule has an on/off switch; a rule made of columns opens a side panel to change them. Returns { node, collect }:
+// collect() gives the content to save or throws an Error saying what to fix. `opts.present`: the data fields the project's data has;
+// `opts.pid`; `opts.onChange()`: called after any change (the page tries the rules on the latest run).
+function matchingEditor(content, cat, opts) {
   opts = opts || {};
+  const changed = () => { if (opts.onChange) opts.onChange(); };
   const state = JSON.parse(JSON.stringify(content));
   state.rules = state.rules || [];
   const was = new Map(state.rules.map((r) => [r, JSON.stringify(r.when)]));
   const parts = new Map();
   for (const r of state.rules) if (r.type === "auto_merge" || r.type === "force_review") { const ps = matchParts(r.when); if (ps) parts.set(r, ps); }
-  // the columns this project's data has (all of them while it has no data yet)
   const known = opts.present && opts.present.size;
   const inData = (k) => !known || MATCH_COLUMNS[k][1].some((f) => opts.present.has(f));
   let pool = Object.keys(MATCH_COLUMNS).filter(inData);
@@ -386,26 +419,26 @@ function matchingEditor(content, cat, propose, cancel, opts) {
       "runs skip rules on it." : " Its options are under Fields and search."), "good");
     return "x_" + f.name;
   };
-  const lists = { auto_merge: el("div", { class: "rule-group" }), force_review: el("div", { class: "rule-group" }), never_merge: el("div", { class: "rule-group" }) };
+  const lists = { auto_merge: el("div", { class: "rule-cards" }), force_review: el("div", { class: "rule-cards" }), never_merge: el("div", { class: "rule-cards" }) };
   const onOff = (r, box, text) => {
-    const cb = el("input", { type: "checkbox", checked: r.enabled !== false, "aria-label": text + ": on" });
-    cb.addEventListener("change", () => { r.enabled = cb.checked; box.classList.toggle("off", !cb.checked); });
-    return cb;
+    const cb = el("input", { type: "checkbox", role: "switch", checked: r.enabled !== false, "aria-label": text + ": on" });
+    const word = el("span", { class: "switch-word" }, r.enabled !== false ? "On" : "Off");
+    cb.addEventListener("change", () => { r.enabled = cb.checked; box.classList.toggle("off", !cb.checked); word.textContent = cb.checked ? "On" : "Off"; changed(); });
+    return el("label", { class: "switch" }, cb, word);
   };
-  const removeBtn = (r, text) => btn("Remove", () => { state.rules = state.rules.filter((x) => x !== r); parts.delete(r); draw(); }, "small ghost", "trash", { "aria-label": "Remove " + text });
-  // a rule made of columns: one line per column, "and" between them
-  const card = (r, n, type) => {
+  const remove = (r) => { state.rules = state.rules.filter((x) => x !== r); parts.delete(r); draw(); changed(); };
+  // a rule made of columns in a few words: "Name is similar, date of birth is the same, phone shares any number" (the full words are in Edit)
+  const shortWords = (ps) => cap(ps.map((x, i) => colWord(x.col, !i) + " " + MATCH_COLUMNS[x.col][2][x.how][0].replace(/ \(.*\)$/, "")).join(", "));
+  const titleOf = (r) => (parts.has(r) && !(RULE_TITLE[r.id] && JSON.stringify(r.when) === was.get(r)) ? shortWords(parts.get(r)) : ruleTitle(r));
+  const findsNothing = "On its own this finds nothing: records are only compared when they share an identifier, a phone or an email, or two of name, date of birth and address.";
+  // the side panel of a rule made of columns: one line per column ("and" between them), add a column, remove the rule
+  const editRule = (r, from) => {
     const ps = parts.get(r);
-    const name = (type === "auto_merge" ? "Rule " : "Ask rule ") + n;
-    const box = el("div", { class: "match-card" + (r.enabled === false ? " off" : "") });
     const rows = el("div", { class: "match-conds" });
     const warn = el("p", { class: "warn-line" });
-    const check = () => {
-      warn.textContent = findable(ps) ? "" : "On its own this finds nothing: records are only compared when they share an identifier, a phone or an email, " +
-        "or two of name, date of birth and address. Add one of these.";
-      warn.hidden = !warn.textContent;
-    };
-    const changed = () => { r.when = matchWhen(ps); r.reason = matchWords(ps); check(); };
+    const check = () => { warn.textContent = findable(ps) ? "" : findsNothing; warn.hidden = !warn.textContent; };
+    const set = () => { r.when = matchWhen(ps); r.reason = matchWords(ps); check(); changed(); };
+    const name = r.type === "auto_merge" ? "Merge rule" : "Ask rule";
     const drawRows = () => fill(rows, ps.map((p, i) => {
       const col = el("select", { "aria-label": name + ": column " + (i + 1) }, [...new Set([...pool, p.col])].map((k) => el("option", { value: k, selected: k === p.col }, colName(k))),
         keptGroup());
@@ -413,34 +446,39 @@ function matchingEditor(content, cat, propose, cancel, opts) {
         MATCH_COLUMNS[p.col][2].map(([t], j) => el("option", { value: String(j), selected: j === p.how }, t)));
       col.addEventListener("change", () => run(async () => {
         const key = col.value.startsWith("kept:") ? await useKept(col.value.slice(5)) : col.value;
-        if (key) { p.col = key; p.how = 0; changed(); }
+        if (key) { p.col = key; p.how = 0; set(); }
         drawRows();
       }, true));
-      how.addEventListener("change", () => { p.how = Number(how.value); changed(); });
-      return el("div", { class: "match-cond" }, el("span", { class: "and muted" }, i ? "and" : ""), col, how,
-        ps.length > 1 ? btn("", () => { ps.splice(i, 1); changed(); drawRows(); }, "small ghost", "x", { "aria-label": "Remove " + MATCH_COLUMNS[p.col][0] + " from " + name }) : null);
+      how.addEventListener("change", () => { p.how = Number(how.value); set(); });
+      return el("div", { class: "match-cond" }, el("span", { class: "and muted" }, i ? "and" : "When"), el("div", { class: "cond-pick" }, col, how),
+        ps.length > 1 ? btn("", () => { ps.splice(i, 1); set(); drawRows(); }, "small ghost icon", "x", { "aria-label": "Remove " + MATCH_COLUMNS[p.col][0] + " from this rule" }) : null);
     }));
-    const more = btn("Column", () => { ps.push({ col: pool.find((k) => !ps.some((p) => p.col === k)) || pool[0], how: 0 }); changed(); drawRows(); }, "small", "plus",
-      { "aria-label": "Add a column to " + name });
     check();
     drawRows();
-    add(box, el("label", { class: "match-name" }, onOff(r, box, name), el("strong", {}, name)), rows, more, removeBtn(r, name), warn);
+    sidePanel(r.type === "auto_merge" ? "Merge when" : "Ask a person when", el("div", {},
+      el("p", { class: "hint" }, "Every column listed must agree, in the way chosen next to it."), rows,
+      el("div", { class: "row" }, btn("Add a column", () => { ps.push({ col: pool.find((k) => !ps.some((x) => x.col === k)) || pool[0], how: 0 }); set(); drawRows(); }, "small", "plus")),
+      warn), (close) => [btn("Done", close, "primary", "check"), btn("Remove this rule", () => { close(); remove(r); }, "danger", "trash")], from, draw);
+  };
+  const card = (r) => {
+    const box = el("div", { class: "rule-card" + (r.enabled === false ? " off" : "") });
+    const gone = missingComparisons(r.when, cat);
+    const edit = parts.has(r) ? btn("Edit", () => editRule(r, edit), "small", "edit", { "aria-label": "Edit " + titleOf(r) }) : null;
+    add(box, onOff(r, box, titleOf(r)), el("div", { class: "grow" }, el("strong", {}, titleOf(r)),
+      parts.has(r) && !findable(parts.get(r)) && r.enabled !== false ? el("p", { class: "warn-line" }, findsNothing) : null,
+      gone.length && r.enabled !== false ? el("p", { class: "warn-line" }, "Not applied by runs: it uses " + gone.map((c) => label(c.replace(/^x_/, ""))).join(", ") +
+        ", which the project does not compare. Add it as a field of your own (Fields and search) or remove the rule.") : null,
+      parts.has(r) ? null : el("details", {}, el("summary", {}, "Details"), RULE_TITLE[r.id] && r.reason ? el("p", {}, r.reason) : null,
+        el("p", { class: "muted" }, "Applies when " + describeRule(r.when, cat) + "."))),
+    edit || btn("", () => remove(r), "small ghost icon", "trash", { "aria-label": "Remove " + titleOf(r) }));
     return box;
   };
-  // a rule the form cannot show as columns (a built-in safety rule with exceptions, or an expert's rule): on or off, its details, remove
-  const fixed = (r) => {
-    const row = ruleRow(r, cat, null, removeBtn(r, ruleTitle(r)));
-    row.prepend(onOff(r, row, ruleTitle(r)));
-    return row;
-  };
-  const EMPTY = { auto_merge: "No rule yet: nothing is merged.", force_review: "No rule: nothing is sent to a person by a rule.", never_merge: "No rule." };
+  const EMPTY = { auto_merge: "No rule: only the match score merges records.", force_review: "No rule: only the match score sends pairs to a person.", never_merge: "No rule." };
   const draw = () => {
     for (const type of Object.keys(lists)) {
-      let n = 0;
-      const rs = state.rules.filter((r) => r.type === type);
-      fill(lists[type], rs.length ? rs.map((r) => (parts.has(r) ? card(r, ++n, type) : fixed(r))) : el("p", { class: "muted" }, EMPTY[type]));
+      const rs = state.rules.filter((r) => r.type === type || (type === "never_merge" && r.type === "not_enough_evidence"));
+      fill(lists[type], rs.length ? rs.map(card) : el("p", { class: "muted" }, EMPTY[type]));
     }
-    fill(evidence, state.rules.filter((r) => r.type === "not_enough_evidence").map(fixed));
   };
   const addRule = (type) => {
     const ps = pool.includes("name") && pool.includes("dob") ? [{ col: "name", how: 2 }, { col: "dob", how: 1 }] : [{ col: pool[0], how: 0 }];
@@ -449,12 +487,13 @@ function matchingEditor(content, cat, propose, cancel, opts) {
     state.rules.push(r);
     parts.set(r, ps);
     draw();
-    const cards = lists[type].querySelectorAll(".match-card");
-    if (cards.length) cards[cards.length - 1].querySelector("select").focus();
+    changed();
+    const b = [...lists[type].querySelectorAll(".rule-card button")].pop();
+    editRule(r, b);
   };
-  // step 3: add "never the same when <column> differ"
+  // "never merge when <column> differs"
   const neverCols = () => Object.keys(NEVER_COLUMNS).filter(inData);
-  const neverSel = el("select", { "aria-label": "Column" });
+  const neverSel = el("select", { "aria-label": "Never merge when this differs" });
   const drawNever = () => fill(neverSel, neverCols().map((k) => el("option", { value: k }, MATCH_COLUMNS[k][0])), keptGroup());
   drawNever();
   const addNever = async () => {
@@ -464,25 +503,46 @@ function matchingEditor(content, cat, propose, cancel, opts) {
     state.rules.push({ id: ruleId("never_", k, state.rules), type: "never_merge", reason: "Two different " + NEVER_COLUMNS[k][1] + ": never the same " + (k.startsWith("x_") ? "record" : "person"),
       when: { comparison: k, is: NEVER_COLUMNS[k][0] } });
     draw();
+    changed();
   };
-  // step 4: everything else
-  const keep = el("input", { type: "radio", name: "leftover", value: "keep", checked: state.use_score === false });
-  const byScore = el("input", { type: "radio", name: "leftover", value: "score", checked: state.use_score !== false });
-  // to a tenth of a percent: a saved 0.875 shows 87.5 and is saved back unchanged (U2-19: it became 88)
-  const pct = (x, d) => String(Math.round((x || d) * 1000) / 10);
-  const reviewAt = el("input", { type: "number", min: "1", max: "99", step: "0.1", value: pct(state.review_at, 0.1), class: "pct" });
-  const autoAt = el("input", { type: "number", min: "1", max: "100", step: "0.1", value: pct(state.auto_merge_at, 0.9), class: "pct" });
+  // how careful: the ready-made settings as choice cards; the thresholds themselves under "Adjust"
+  const pctOf = (x, d) => String(Math.round((x || d) * 1000) / 10);         // to a tenth of a percent: 0.875 shows 87.5 and is saved back unchanged
+  const reviewAt = el("input", { type: "number", min: "1", max: "99", step: "0.1", value: pctOf(state.review_at, 0.1), class: "pct" });
+  const autoAt = el("input", { type: "number", min: "1", max: "100", step: "0.1", value: pctOf(state.auto_merge_at, 0.9), class: "pct" });
   const scale = scoreScale(Number(reviewAt.value) / 100, Number(autoAt.value) / 100);
-  const redraw = () => { const r = Number(reviewAt.value) / 100; const a = Number(autoAt.value) / 100; if (r > 0 && r < a && a <= 1) scale.set(r, a); };
-  reviewAt.addEventListener("input", redraw);
-  autoAt.addEventListener("input", redraw);
-  const evidence = el("div", { class: "rule-group" });
-  const scoreBox = el("div", { class: "score-box" }, el("div", { class: "fields" }, field("Merge automatically from (%)", autoAt), field("Ask a person from (%)", reviewAt)),
-    scale.node, evidence);
-  const showScore = () => { scoreBox.hidden = !byScore.checked; };
-  keep.addEventListener("change", showScore);
-  byScore.addEventListener("change", showScore);
-  showScore();
+  let useScore = state.use_score !== false;
+  const share = (input) => Math.round(Number(input.value) * 10) / 1000;      // 87.3 -> 0.873 exactly, so an unchanged form stays unchanged
+  const current = () => ({ ...state, use_score: useScore, auto_merge_at: share(autoAt), review_at: share(reviewAt) });
+  const radios = {};
+  const custom = el("label", { class: "choice-card" }, radios.custom = el("input", { type: "radio", name: "preset", value: "custom" }),
+    el("span", {}, el("strong", {}, "Your own thresholds"), el("span", { class: "muted" }, "Set under Adjust the thresholds.")));
+  const adjust = el("details", { class: "advanced" }, el("summary", {}, "Adjust the thresholds"),
+    el("div", { class: "fields" }, field("Merge automatically from (%)", autoAt), field("Ask a person from (%)", reviewAt)), scale.node);
+  const syncPreset = () => {
+    const k = presetOf(current());
+    for (const [key, r] of Object.entries(radios)) r.checked = key === k;
+    custom.hidden = k !== "custom";
+    adjust.hidden = !useScore;
+  };
+  const presetCards = el("div", { class: "choice-cards presets" }, PRESETS.map(([k, title, text, v]) => {
+    radios[k] = el("input", { type: "radio", name: "preset", value: k });
+    radios[k].addEventListener("change", () => {
+      useScore = v.use_score !== false;
+      if (useScore) { autoAt.value = pctOf(v.auto_merge_at); reviewAt.value = pctOf(v.review_at); scale.set(v.review_at, v.auto_merge_at); }
+      syncPreset();
+      changed();
+    });
+    return el("label", { class: "choice-card" }, radios[k], el("span", {}, el("strong", {}, title), el("span", { class: "muted" }, text)));
+  }), custom);
+  const onThreshold = () => {
+    const r = Number(reviewAt.value) / 100; const a = Number(autoAt.value) / 100;
+    if (r > 0 && r < a && a <= 1) scale.set(r, a);
+    syncPreset();
+    changed();
+  };
+  reviewAt.addEventListener("input", onThreshold);
+  autoAt.addEventListener("input", onThreshold);
+  syncPreset();
   draw();
   // for experts: a rule with other conditions, and the whole content as JSON
   const expertRule = async () => {
@@ -490,50 +550,41 @@ function matchingEditor(content, cat, propose, cancel, opts) {
     if (!rule) return;
     state.rules.push(rule);
     draw();
+    changed();
     say("Rule added. Save the rules to keep it.", "good");
   };
   const editor = el("textarea", { spellcheck: "false", rows: "14", class: "code" });
-  const json = el("details", { class: "advanced" }, el("summary", {}, "For experts: other conditions, or the rules as JSON"),
+  const json = el("details", { class: "advanced" }, el("summary", {}, "For experts: other conditions, or the matching rules as JSON"),
     el("div", { class: "row" }, btn("Add a rule with other conditions", expertRule, "small", "plus")),
-    el("p", { class: "hint" }, "Saving while this is open uses the JSON below as it is, not the choices above."), field("Rules (JSON)", editor));
-  const share = (input) => Math.round(Number(input.value) * 10) / 1000;      // 87.3 -> 0.873 exactly, so an unchanged form stays unchanged
-  const current = () => ({ ...state, use_score: byScore.checked, auto_merge_at: share(autoAt), review_at: share(reviewAt) });
+    el("p", { class: "hint" }, "Saving while this is open uses the JSON below as it is, not the choices above."), field("Matching rules (JSON)", editor));
   json.addEventListener("toggle", () => { if (json.open) editor.value = JSON.stringify(current(), null, 2); });
-  const why = el("input", { type: "text", maxlength: "300" });
-  const err = errBox();
-  const save = async () => {
-    fail(err, "");
-    let out;
+  const collect = () => {
     if (json.open) {
-      try { out = JSON.parse(editor.value); } catch (_) { fail(err, "That is not valid JSON.", editor); return; }
-    } else {
-      out = current();
-      if (byScore.checked && !(out.review_at > 0 && out.review_at < out.auto_merge_at && out.auto_merge_at <= 1)) {
-        fail(err, "'Ask a person' must start above 0% and below 'Merge automatically', which is at most 100%.", reviewAt);
-        return;
-      }
-      if (!byScore.checked) Object.assign(out, { auto_merge_at: content.auto_merge_at || 0.9, review_at: content.review_at || 0.1 });
-      for (const [r, ps] of parts) {
-        if (!state.rules.includes(r) || r.enabled === false || findable(ps)) continue;
-        fail(err, "The rule '" + r.reason + "' finds nothing on its own. Add an identifier, a phone or an email to it, or two of name, date of birth and address.");
-        return;
-      }
-      // a built-in rule whose columns were changed gets its own id, so its old name is not shown for it any more
-      for (const [r] of parts) if (RULE_TITLE[r.id] && JSON.stringify(r.when) !== was.get(r)) r.id = ruleId(r.type === "auto_merge" ? "match_" : "ask_", r.reason, state.rules);
-      out.rules = state.rules;
+      try { return JSON.parse(editor.value); } catch (_) { throw new Error("The matching rules JSON is not valid JSON."); }
     }
-    try { await propose(out, why.value); } catch (e) { fail(err, e.message); }
+    const out = current();
+    if (useScore && !(out.review_at > 0 && out.review_at < out.auto_merge_at && out.auto_merge_at <= 1)) {
+      throw new Error("'Ask a person' must start above 0% and below 'Merge automatically', which is at most 100%.");
+    }
+    if (!useScore) Object.assign(out, { auto_merge_at: content.auto_merge_at || 0.9, review_at: content.review_at || 0.1 });
+    for (const [r, ps] of parts) {
+      if (!state.rules.includes(r) || r.enabled === false || findable(ps)) continue;
+      throw new Error("The rule “" + cap(r.reason) + "” finds nothing on its own. Add an identifier, a phone or an email to it, or two of name, date of birth and address.");
+    }
+    // a built-in rule whose columns were changed gets its own id, so its old name is not shown for it any more
+    for (const [r] of parts) if (RULE_TITLE[r.id] && JSON.stringify(r.when) !== was.get(r)) r.id = ruleId(r.type === "auto_merge" ? "match_" : "ask_", r.reason, state.rules);
+    out.rules = state.rules;
+    return out;
   };
-  return el("div", { class: "matching-view editing" },
-    step(1, MATCH_STEPS.auto_merge[0], MATCH_STEPS.auto_merge[1], lists.auto_merge, el("div", { class: "row" }, btn("Add a rule", () => addRule("auto_merge"), "", "plus"))),
-    step(2, MATCH_STEPS.force_review[0], MATCH_STEPS.force_review[1], lists.force_review, el("div", { class: "row" }, btn("Add an ask rule", () => addRule("force_review"), "", "plus"))),
-    step(3, MATCH_STEPS.never_merge[0], MATCH_STEPS.never_merge[1], lists.never_merge,
-      neverCols().length || keptCols.length ? el("div", { class: "row" }, el("span", {}, "Never the same when"), neverSel, el("span", {}, "differs"), btn("Add", addNever, "small", "plus")) : null),
-    step(4, "Everything else", "Pairs that share something but that no rule above catches.",
-      el("label", { class: "check" }, keep, el("span", {}, "Keep them apart", el("span", { class: "muted" }, "Only your rules decide. Easy to predict, but a duplicate your rules do not describe is missed."))),
-      el("label", { class: "check" }, byScore, el("span", {}, "Let the match score decide", el("span", { class: "muted" }, "Every pair gets a score from all the columns the two records share. Finds more, but is harder to predict."))),
-      scoreBox),
-    json, saveBar(why, err, save, cancel, opts));
+  const node = el("div", { class: "matching-view editing" },
+    step(1, "How careful should merging be?", "For pairs no rule below catches: the match score compares every column two records share.", presetCards, adjust),
+    step(2, "Merge when", "Any one rule is enough. Never-merge rules still win.", lists.auto_merge, el("div", { class: "row" }, btn("Add a merge rule", () => addRule("auto_merge"), "", "plus"))),
+    step(3, "Ask a person when", "Wins over merging: a pair caught here is never merged automatically.", lists.force_review,
+      el("div", { class: "row" }, btn("Add an ask rule", () => addRule("force_review"), "", "plus"))),
+    step(4, "Never merge when", "Wins over everything: the two records always stay apart.", lists.never_merge,
+      neverCols().length || keptCols.length ? el("div", { class: "row" }, el("span", {}, "Never merge when"), neverSel, el("span", {}, "differs"), btn("Add", addNever, "small", "plus")) : null),
+    json);
+  return { node, collect };
 }
 // "Add your own rule" in a dialog: what happens, when (one or more conditions), a name people will read.
 function ruleBuilder(cat, existing) {
@@ -666,9 +717,13 @@ function goldenForm(content, guide, propose, cancel, opts) {
   const has = (f) => !known || opts.present.has(f) || (f === "aadhaar_token" && (opts.present.has("aadhaar") || opts.present.has("aadhaar_reference_key")));
   const units = [...Object.entries(groups).filter(([, m]) => m.some(has)).map(([g, m]) => [g, g === "address_block" ? "Address, city, state and PIN code (kept together)" : label(g) + " (" + m.map(fieldTitle).join(", ") + ", kept together)"]),
     ...guide.fields.filter((f) => !grouped.has(f) && has(f)).map((f) => [f, fieldTitle(f)])];
+  // one choice for every column (the default), and the columns that are chosen differently (the exceptions), each with its own rule and
+  // optionally a preferred source
   const ruleSel = {};
   const preferSel = {};
-  const fieldRows = units.map(([u, text]) => {
+  const defSel = el("select", { "aria-label": "Usually keep the value from" }, GOLDEN_STRATEGIES.map(([k, t]) => el("option", { value: k, selected: k === def }, t)));
+  const exceptions = new Set(units.map(([u]) => u).filter((u) => ((content.fields || {})[u] && content.fields[u] !== def) || ((content.field_trust || {})[u] || []).length));
+  for (const [u, text] of units) {
     const current = (content.fields || {})[u] || def;
     ruleSel[u] = el("select", { "aria-label": "Keep for " + text }, GOLDEN_STRATEGIES.map(([k, t]) => el("option", { value: k, selected: k === current }, t)));
     const pref = ((content.field_trust || {})[u] || [])[0] || "";
@@ -676,10 +731,26 @@ function goldenForm(content, guide, propose, cancel, opts) {
       sourceIds.map((s) => el("option", { value: s, selected: s === pref }, s)));
     // a preferred source only wins under "Most trusted source" (otherwise it breaks ties): choosing one switches the rule to it
     preferSel[u].addEventListener("change", () => { if (preferSel[u].value) ruleSel[u].value = "most_trusted_source"; });
-    return el("tr", {}, el("td", {}, text), el("td", {}, ruleSel[u]), el("td", {}, preferSel[u]));
-  });
-  const allSel = el("select", { "aria-label": "Keep for every column" }, GOLDEN_STRATEGIES.map(([k, t]) => el("option", { value: k }, t)));
-  const setAll = () => { for (const sel of Object.values(ruleSel)) sel.value = allSel.value; };
+  }
+  const exceptionBox = el("div");
+  const addSel = el("select", { "aria-label": "Column to choose differently" });
+  const drawExceptions = () => {
+    const rows = units.filter(([u]) => exceptions.has(u)).map(([u, text]) => el("tr", {}, el("td", {}, text), el("td", {}, ruleSel[u]), el("td", {}, preferSel[u]),
+      el("td", { class: "actions-cell" }, btn("", () => { exceptions.delete(u); preferSel[u].value = ""; drawExceptions(); }, "small ghost icon", "x",
+        { "aria-label": "Use the usual choice for " + text }))));
+    const rest = units.filter(([u]) => !exceptions.has(u));
+    fill(addSel, rest.map(([u, text]) => el("option", { value: u }, text)));
+    fill(exceptionBox, el("h3", { class: "section" }, "Exceptions", el("span", { class: "count-badge" }, String(rows.length))),
+      rows.length ? table(["Column", "Keep the value from", "Preferred source", ""], rows) : el("p", { class: "muted" }, "None: every column uses the usual choice."),
+      rest.length ? el("div", { class: "row" }, el("span", {}, "Choose differently for"), addSel, btn("Add", () => {
+        const u = addSel.value;
+        exceptions.add(u);
+        ruleSel[u].value = defSel.value === "most_recent" ? "most_frequent" : "most_recent";
+        drawExceptions();
+        ruleSel[u].focus();
+      }, "small", "plus")) : null);
+  };
+  drawExceptions();
   const carry = el("input", { type: "checkbox", checked: content.carry_extra_columns !== false });
   const extraSel = {};
   const extraRows = (guide.extra_columns || []).map((x) => {
@@ -691,27 +762,29 @@ function goldenForm(content, guide, propose, cancel, opts) {
   const shared = el("input", { type: "number", min: "1", max: "1000", value: String(content.shared_value_limit || 3) });
   const why = el("input", { type: "text", maxlength: "300" });
   const err = errBox();
-  const save = async () => {
-    fail(err, "");
+  const collect = () => {
     const fields = { ...(content.fields || {}) };
     const fieldTrust = { ...(content.field_trust || {}) };
+    const usual = defSel.value;
     for (const [u] of units) {
-      if (ruleSel[u].value === def) delete fields[u]; else fields[u] = ruleSel[u].value;
-      if (preferSel[u].value) fieldTrust[u] = [preferSel[u].value]; else delete fieldTrust[u];
+      if (!exceptions.has(u) || ruleSel[u].value === usual) delete fields[u]; else fields[u] = ruleSel[u].value;
+      if (exceptions.has(u) && preferSel[u].value) fieldTrust[u] = [preferSel[u].value]; else delete fieldTrust[u];
     }
     const dates = {};
     for (const [s, sel] of Object.entries(dateSel)) if (sel.value) dates[s] = sel.value;
     const extraFields = {};
     const extraDef = content.extra_default_strategy || "most_recent";
     for (const [n, sel] of Object.entries(extraSel)) if (sel && sel.value !== extraDef) extraFields[n] = sel.value;
-    const out = { ...content, source_trust: auto.checked ? [] : order, source_dates: dates, fields, field_trust: fieldTrust, shared_value_limit: Number(shared.value),
+    return { ...content, default_strategy: usual, source_trust: auto.checked ? [] : order, source_dates: dates, fields, field_trust: fieldTrust, shared_value_limit: Number(shared.value),
       carry_extra_columns: carry.checked, extra_fields: extraFields };
-    try { await propose(out, why.value); } catch (e) { fail(err, e.message); }
   };
-  return el("div", { class: "matching-view golden-form editing" },
-    step(1, "For each column, keep the value from", "When one person's records disagree on a column, this decides which value goes into the golden record.",
-      undated, units.length ? table(["Column", "Keep the value from", "Preferred source"], fieldRows) : el("p", { class: "muted" }, "This project has no data in use yet."),
-      el("div", { class: "row" }, el("span", {}, "Set every column to"), allSel, btn("Apply", setAll, "small")),
+  const save = async () => {
+    fail(err, "");
+    try { await propose(collect(), why.value); } catch (e) { fail(err, e.message); }
+  };
+  const node = el("div", { class: "matching-view golden-form editing" },
+    step(1, "Keep the value from", "When the records of one " + ((opts && opts.one) || "person") + " disagree on a column, this decides which value the golden record keeps.",
+      undated, el("div", { class: "row" }, el("span", {}, "Usually:"), defSel), units.length ? exceptionBox : el("p", { class: "muted" }, "This project has no data in use yet."),
       el("details", {}, el("summary", {}, "What the choices mean"), el("dl", { class: "help" }, GOLDEN_STRATEGIES.map(([k, tt]) => [el("dt", {}, tt), el("dd", {}, guide.strategies[k] || "")]).flat()))),
     step(2, "Which source to trust most", "Used by 'Most trusted source', and to break ties.",
       el("label", { class: "check" }, auto, el("span", {}, "Decide automatically: the source whose records are most complete comes first. Untick to set the order yourself.")),
@@ -724,5 +797,6 @@ function goldenForm(content, guide, propose, cancel, opts) {
       extraRows.length ? table(["Column", "Golden-record column", "Sources", "Rule"], extraRows) : el("p", { class: "hint" }, "No data source keeps extra columns."),
       el("h3", { class: "section" }, "Shared phones and emails"),
       field("A phone or email shared by more than this many people (an office line, an agent) is used only when nothing else exists", shared)),
-    saveBar(why, err, save, cancel, opts));
+    opts && opts.embedded ? null : saveBar(why, err, save, cancel, opts));
+  return opts && opts.embedded ? { node, collect } : node;          // embedded: the Rules page saves it with the matching rules
 }

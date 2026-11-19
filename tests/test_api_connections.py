@@ -124,8 +124,32 @@ def test_an_excel_upload_becomes_an_encrypted_table_and_a_connection(api):
         assert prev.status_code == 200 and prev.json()["filled"] == {"full_name": 2, "dob": 2, "pan": 2}
         assert make_live(c, s, conn) == 1
         assert c.get(P + "/uploads", headers=hdr(s, "platform_admin")).json()[0]["filename"] == "policies.xlsx"
+        listed = c.get(P + "/connections", headers=hdr(s, "viewer")).json()[0]          # the Data page counts the file's rows
+        assert listed["records"] == 2 and listed["records_from"] == "file" and "upload_id" not in listed
     finally:
         crypto.configure()
+
+
+def test_the_data_page_learns_how_full_each_field_of_a_source_is_without_seeing_a_value(api, tmp_path):
+    c, s, sv, path, _ = api
+    admin = hdr(s, "platform_admin")
+    half = tmp_path / "half.csv"
+    half.write_text("cust_id,full_name,email,segment\n" + "".join(f"C{i},Asha Verma {i},{'a' + str(i) + '@x.in' if i % 2 else ''},\n" for i in range(10)), encoding="utf-8")
+    conn = {"source_id": "half", "connector": {"type": "csv", "path": str(half)}, "record_id": "cust_id", "fields": {"full_name": "full_name", "email": "email"},
+            "attributes": ["segment"]}
+    make_live(c, s, conn)
+    r = c.get(P + "/connections/half/profile", headers=admin)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] and body["sample_size"] == 10 and "Asha" not in r.text and "@x.in" not in r.text
+    assert {x["key"]: x["filled"] for x in body["columns"]} == {"full_name": 10, "email": 5, "segment": 0}
+    assert {x["key"]: x["group"] for x in body["columns"]} == {"full_name": "field", "email": "field", "segment": "kept"}
+    listed = c.get(P + "/connections", headers=admin).json()[0]
+    assert listed["records"] is None and listed["records_from"] is None                  # a source that is not a file is counted by a run
+    half.unlink()                                                                          # the same answer is kept for a while
+    assert c.get(P + "/connections/half/profile", headers=admin).json() == body
+    assert c.get(P + "/connections/nope/profile", headers=admin).status_code == 404
+    assert c.get(P + "/connections/half/profile", headers=hdr(s, "viewer")).status_code == 403
 
 
 def _bomb() -> bytes:

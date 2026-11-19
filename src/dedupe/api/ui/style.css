@@ -547,3 +547,92 @@ ol.journey li.next .n { border: 2px solid var(--text); }
 [role=search] > .row > select { width: auto; max-width: 260px; }
 .work.no-pairs { grid-template-columns: minmax(0, 1fr); }
 .work.no-pairs .list-pane { border-right: 1px solid var(--border-strong); }
+
+/* ---- the Data step: summary strip and one card per data source ------------------------------------------------------ */
+.data-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--border); background: var(--bg-panel); }
+.data-summary.warn { border-color: var(--warn-border); }
+.data-summary.bad { border-color: var(--danger-border); }
+.data-summary-stats { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+.data-summary-stats .value { display: block; font-size: 20px; line-height: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.data-summary-stats .label { display: block; color: var(--muted); }
+.data-summary-line { display: flex; flex: 1 1 320px; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.data-summary.good .data-summary-line > svg { color: var(--success); }
+.data-summary.warn .data-summary-line > svg { color: var(--warn); }
+.data-summary.bad .data-summary-line > svg { color: var(--danger); }
+.data-summary-line button { margin-left: auto; }
+.source-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(460px, 100%), 1fr)); gap: 12px; margin: 0 0 16px; }
+.source-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); background: var(--bg-panel); }
+.source-card.todo { border-color: var(--warn-border); }
+.source-card-head { display: flex; align-items: flex-start; gap: 12px; }
+.source-card-head .grow { flex: 1; min-width: 0; }
+button.link.source-name { font-size: 14px; line-height: 20px; font-weight: 600; text-decoration: none; }
+button.link.source-name:hover { text-decoration: underline; }
+.source-card-row { display: flex; gap: 10px; align-items: baseline; }
+.source-card-label { flex: none; width: 84px; color: var(--muted); }
+.source-card-line { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 6px; }
+.chip { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 1px 8px; white-space: nowrap; border: 1px solid var(--border); background: var(--bg-subtle); line-height: 18px; }
+.chip .chip-fill { color: var(--muted); font-variant-numeric: tabular-nums; }
+.chip .chip-fill:empty { display: none; }
+.chip.is-low { border-color: var(--warn-border); background: var(--warn-bg); }
+.chip.is-low .chip-fill { color: var(--warn); }
+.chip.is-empty { border-color: var(--danger-border); background: var(--danger-bg); }
+.chip.is-empty .chip-fill { color: var(--danger); }
+ul.health { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+ul.health:empty { display: none; }
+ul.health li { display: flex; gap: 6px; align-items: flex-start; }
+ul.health li > svg { margin-top: 1px; }
+ul.health li.is-ok > svg { color: var(--success); }
+ul.health li.is-warn > svg { color: var(--warn); }
+ul.health li.is-bad > svg { color: var(--danger); }
+ul.health li.is-bad { color: var(--danger); }
+ul.health li.is-info > svg { color: var(--muted); }
+.source-search-row { margin-bottom: 8px; }
+
+/* ---- the mapping step: columns in three groups, a side panel with what records can be matched on ---------------------- */
+.map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .map-layout { grid-template-columns: minmax(0, 1fr); } }
+.map-aside { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); background: var(--bg-panel); }
+.map-aside .row { margin: 0; flex-wrap: wrap; }
+.map-checklist h3.section { margin-top: 0; }
+ul.checklist { margin: 0 0 8px; padding: 0; list-style: none; }
+ul.checklist li { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--bg-head); }
+ul.checklist li .grow { flex: 1; }
+ul.checklist li .pc { font-variant-numeric: tabular-nums; }
+ul.checklist li.is-on > svg { color: var(--success); }
+ul.checklist li.is-low > svg, ul.checklist li.is-low .pc { color: var(--warn); }
+ul.checklist li.is-zero > svg, ul.checklist li.is-zero .pc { color: var(--danger); }
+ul.checklist li.is-off { color: var(--muted); }
+p.verdict { margin: 0 0 6px; }
+p.verdict.bad { color: var(--danger); }
+p.verdict.warn { color: var(--warn); }
+.map-group { margin-bottom: 8px; }
+.map-group[data-group="check"] h3.section { color: var(--warn); }
+.map-group .hint { margin-top: 0; }
+h3.section .count-badge { margin-left: 8px; }
+.map-reason { margin-top: 4px; color: var(--warn); }
+
+/* ---- the Rules page: rule cards with a switch, an Edit side panel, the effect on the latest run ------------------------- */
+.rule-cards { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
+.rule-card { display: flex; align-items: flex-start; gap: 12px; padding: 8px 12px; border: 1px solid var(--border); background: var(--bg-panel); }
+.rule-card .grow { flex: 1; min-width: 0; }
+.rule-card .grow p { margin: 4px 0 0; }
+.rule-card details summary { color: var(--muted); cursor: pointer; }
+.rule-card.off strong { color: var(--muted); }
+label.switch { display: inline-flex; flex: none; align-items: center; gap: 6px; min-width: 52px; margin-top: 1px; cursor: pointer; }
+label.switch input { width: 14px; height: 14px; margin: 0; accent-color: var(--primary); }
+.switch-word { color: var(--muted); }
+.choice-cards.presets { max-width: none; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); }
+.choice-card span.muted { display: block; margin-top: 2px; }
+.side-panel { position: fixed; z-index: 40; top: 40px; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 12px; width: min(460px, 100%); padding: 14px 16px;
+  overflow-y: auto; border: 1px solid var(--border-strong); background: var(--bg-panel); }
+.side-panel h2.section { margin: 0; }
+.side-panel .match-conds { gap: 10px; width: 100%; }
+.side-panel .match-cond { display: grid; grid-template-columns: 40px minmax(0, 1fr) 26px; align-items: start; gap: 6px; width: 100%; }
+.side-panel .match-cond .and { width: auto; padding-top: 4px; }
+.cond-pick { display: flex; flex-direction: column; gap: 4px; }
+.cond-pick select { width: 100%; }
+.rules-effect { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--info-border); background: var(--info-bg); }
+.rules-effect:empty { display: none; }
+.rules-effect p { margin: 4px 0 0; }
+.rules-advanced { margin: 20px 0 8px; }
