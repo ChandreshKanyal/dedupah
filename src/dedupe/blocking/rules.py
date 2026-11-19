@@ -71,6 +71,21 @@ OPTIONAL_RULES = [
 ALL_RULES = {r.name: r for r in [*DEFAULT_RULES, *OPTIONAL_RULES]}
 
 
+def cross_rules(pairs) -> list[Rule]:
+    """For a matching rule that says one record's column A equals the other's column B: every value of either column is a key, so a record
+    whose A equals another's B is compared (records with equal A values too; the rules decide). Names and columns come checked from the
+    rule conditions (dedupe.decision.conditions.cross_pairs)."""
+    out, seen = [], set()
+    for a, b in pairs:
+        key = tuple(sorted((a, b)))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(Rule(f"cross_{key[0]}_{key[1]}", f"SELECT rid, key FROM (SELECT rid, unnest([CAST({a} AS VARCHAR), CAST({b} AS VARCHAR)]) AS key "
+                        "FROM records) WHERE key IS NOT NULL AND key <> ''", f"one record's {a} is the other's {b}"))
+    return out
+
+
 def rules_by_name(names: list[str] | None) -> list[Rule]:
     """The named blocking rules (None = the defaults). Unknown names are an error, not silently skipped."""
     if names is None:

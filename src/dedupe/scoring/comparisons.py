@@ -219,8 +219,17 @@ def tf_key_case_sql(c: Comparison) -> str:
     return f"CASE WHEN {c.null_sql} THEN NULL {whens} ELSE NULL END" if whens else "NULL"
 
 
+# columns a pair also carries for business rules only (never compared or scored): which data source a record came from, its state, its date
+RULE_ONLY_COLUMNS = ("source_id", "state", "record_date")
+
+
+def rule_columns() -> tuple:
+    """Every column a rule may read on both records of a pair (the spec's record columns and RULE_ONLY_COLUMNS)."""
+    return tuple(dict.fromkeys((*spec().record_columns, *RULE_ONLY_COLUMNS)))
+
+
 def pairs_view_sql(src_pairs: str, records: str = "records") -> str:
     """SQL producing the wide pairs table (l_*/r_* columns) from a table with l_rid, r_rid."""
-    cols = ", ".join(f"a.{c} AS l_{c}, b.{c} AS r_{c}" for c in spec().record_columns)
+    cols = ", ".join(f"a.{c} AS l_{c}, b.{c} AS r_{c}" for c in rule_columns())
     return (f"SELECT p.*, {cols} FROM {src_pairs} p "
             f"JOIN {records} a ON a.rid = p.l_rid JOIN {records} b ON b.rid = p.r_rid")

@@ -4,14 +4,16 @@ Decision rules and thresholds only act on scores that already exist, so the answ
 through the candidate config and compared with the decisions the last run actually made. (Clustering and the review queue follow from
 the decisions but are not re-run here; a settings change that alters blocking or scoring needs a full run.)
 """
+import json
 import tempfile
 from pathlib import Path
 
 from dedupe import crypto
 from dedupe.custom import spec_of_run
 from dedupe.decision.apply import decide
+from dedupe.decision.conditions import NotInUse, compile_condition, cross_pairs
 from dedupe.decision.config import DecisionConfig
-from dedupe.scoring.comparisons import use
+from dedupe.scoring.comparisons import pairs_view_sql, spec, use
 
 ZONES = ("auto_merge", "review", "reject")
 
@@ -58,6 +60,57 @@ def _dry_run(work: Path, candidate: DecisionConfig, samples: int) -> dict:
             # rules on a field this run did not compare cannot be tried on it (a field added since): the try-out says so
             "rules_not_applied": (stats or {}).get("rules_not_applied", []),
             "note": "decision zones only; the review queue and clusters follow from them but were not re-run"}
+
+
+def test_rule(work: Path, when: dict, samples: int = 5) -> dict:
+    """Which pairs of the LAST run one rule's condition catches, and how that run decided them: the rule builder's live answer. Exact for
+    the pairs the run compared; a two-column "same" condition also finds pairs at the next run that this run never compared (said in
+    `finds_more`). Raises ConditionError for a condition that is not valid; a field the run did not have gives not_applied=True."""
+    with use(spec_of_run(work)):
+        return _test_rule(work, when, samples)
+
+
+def _test_rule(work: Path, when: dict, samples: int) -> dict:
+    std, index, decided = work / "standardised.parquet", work / "candidates.index.parquet", work / "decisions.parquet"
+    for f in (std, index, decided):
+        if not f.exists():
+            raise FileNotFoundError(f"{f} not found")
+    try:
+        sql = compile_condition(when)
+    except NotInUse:
+        return {"pairs": 0, "caught": 0, "now": dict.fromkeys(ZONES, 0), "examples": [], "not_applied": True, "finds_more": False}
+    con = crypto.connect()
+    try:
+        con.execute(f"""CREATE TABLE records AS SELECT i.rid, s.* FROM {crypto.rp(std)} s
+                        JOIN {crypto.rp(index)} i USING (source_id, source_record_id)""")
+        # the run's pairs with their comparison levels and decision (levels are kept in the scored pairs)
+        con.execute(f"CREATE TABLE scored AS SELECT * FROM {crypto.rp(work / 'scored_pairs.parquet')}")
+        con.execute(f"CREATE TABLE wide AS {pairs_view_sql('scored')}")
+        con.execute(f"""CREATE TABLE hit AS SELECT w.l_rid, w.r_rid, w.probability, d.decision FROM wide w
+                        JOIN {crypto.rp(decided)} d USING (l_rid, r_rid) WHERE coalesce({sql}, false)""")
+        pairs = con.execute("SELECT count(*) FROM wide").fetchone()[0]
+        now = dict(con.execute("SELECT decision, count(*) FROM hit GROUP BY 1").fetchall())
+        have = {r[0] for r in con.execute("DESCRIBE records").fetchall()}
+        label = next((f.col for f in spec().custom if f.kind in ("company", "text", "name") and f.col in have), None)
+        def name(t: str) -> str:
+            return f"coalesce({t}.name_clean, {t}.{label})" if label else f"{t}.name_clean"
+        rows = con.execute(f"""SELECT l.source_id, l.source_record_id, {name('l')}, r.source_id, r.source_record_id, {name('r')},
+                                      h.probability, h.decision
+                               FROM hit h JOIN records l ON l.rid = h.l_rid JOIN records r ON r.rid = h.r_rid
+                               ORDER BY h.probability DESC LIMIT {int(samples)}""").fetchall()
+    finally:
+        con.close()
+    # pairs found by one column against another: only new when the run did not already look for them that way (a rule in use with them)
+    try:
+        used = json.loads((work / "config_used" / "decision.json").read_text(encoding="utf-8"))
+        searched = {tuple(sorted(c)) for r in used.get("rules") or [] if r.get("enabled", True) and r.get("type") in ("auto_merge", "force_review")
+                    for c in cross_pairs(r.get("when"))}
+    except (OSError, ValueError):
+        searched = set()
+    return {"pairs": pairs, "caught": sum(now.values()), "now": {z: now.get(z, 0) for z in ZONES}, "not_applied": False,
+            "finds_more": any(tuple(sorted(c)) not in searched for c in cross_pairs(when)),
+            "examples": [{"left": {"source": x[0], "record": x[1], "name": x[2]}, "right": {"source": x[3], "record": x[4], "name": x[5]},
+                          "probability": round(x[6], 4), "now": x[7]} for x in rows]}
 
 
 def render(r: dict) -> str:

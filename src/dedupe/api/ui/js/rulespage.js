@@ -91,7 +91,7 @@ async function rulesPage(p, focus) {
     }, 500);
   };
   let dirty = false;                                   // leaving with changes not saved asks first
-  const matching = matchingEditor(decStart.content, cat, { present, pid, onChange: () => { dirty = true; tryIt(); } });
+  const matching = matchingEditor(decStart.content, cat, { present, pid, sources: conns.map((c) => c.id), onChange: () => { dirty = true; tryIt(); } });
   const golden = goldenForm(goldStart.content, guide, null, null, { present: new Set(conns.flatMap((c) => Object.keys(c.fields || {}))), embedded: true, one: wordsOf(pid).one });
   const why = el("input", { type: "text", maxlength: "300" });
   const err = errBox();

@@ -144,3 +144,25 @@ def test_matching_rules_not_saved_yet_are_tried_on_the_latest_run_without_saving
     bad = c.post(P + "/config/decision/try", json={"content": {**cfg, "auto_merge_at": "SECRET-VALUE-123"}}, headers=admin)
     assert bad.status_code == 422 and "SECRET-VALUE-123" not in bad.text
     assert c.post(P + "/config/decision/try", json={"content": cfg}, headers=hdr(s, "viewer")).status_code == 403
+
+
+def test_one_rule_is_tested_on_the_latest_run_while_it_is_being_made(api):
+    c, s, sv, run = api
+    admin = hdr(s, "rule_admin", "u-ria")
+    r = c.post(P + "/config/decision/test-rule", json={"when": {"comparison": "name", "is": "identical cleaned name"}}, headers=admin)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["run_id"] == run.rsplit("/", 1)[1] and 0 < body["caught"] <= body["pairs"] and sum(body["now"].values()) == body["caught"]
+    assert 0 < len(body["examples"]) <= 5 and {"left", "right", "probability", "now"} <= set(body["examples"][0])
+    assert body["not_applied"] is False and body["finds_more"] is False
+    cross = c.post(P + "/config/decision/test-rule", json={"when": {"cross": ["mobile", "mobile_alt"], "op": "same"}}, headers=admin).json()
+    assert cross["finds_more"] is True
+    later = c.post(P + "/config/decision/test-rule", json={"when": {"comparison": "x_not_yet", "is": "identical"}}, headers=admin).json()
+    assert later["not_applied"] is True and later["caught"] == 0
+    bad = c.post(P + "/config/decision/test-rule", json={"when": {"field": "city", "op": "both_in", "values": ["SECRET-VALUE-123" * 10]}}, headers=admin)
+    assert bad.status_code == 422 and "SECRET-VALUE-123" not in bad.text
+    assert c.post(P + "/config/decision/test-rule", json={"when": {}}, headers=admin).status_code == 422
+    assert c.post(P + "/config/decision/test-rule", json={"when": {"comparison": "pan", "is": "same PAN"}}, headers=hdr(s, "viewer")).status_code == 403
+    sv.jobs.latest_succeeded = lambda project_id: None                  # a project before its first run: an answer, not an error
+    before = c.post(P + "/config/decision/test-rule", json={"when": {"comparison": "pan", "is": "same PAN"}}, headers=admin)
+    assert before.status_code == 200 and before.json()["no_run"] is True and before.json()["caught"] == 0

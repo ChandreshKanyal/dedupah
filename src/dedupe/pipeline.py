@@ -23,12 +23,13 @@ import pyarrow as pa
 from dedupe import crypto
 
 from . import incremental as inc
+from .blocking import cross_rules, rules_by_name
 from .blocking import generate as block
-from .blocking import rules_by_name
 from .clustering import ClusterConfig, cluster
 from .clustering.judged import audit, constraints_from_store, drop_vetoes_overridden_by_stewards, id_aliases
 from .clustering.run import load_inputs, predictions, write_outputs
 from .decision import decide
+from .decision.conditions import cross_pairs
 from .governance import MatchingSettings, resolve
 from .governance.store import canonical as canonical_config
 from .governance.store import content_hash
@@ -39,7 +40,7 @@ from .ingest import ingest
 from .review import build_queue
 from .scoring import score, train
 from .scoring.__main__ import load_tables
-from .scoring.comparisons import spec, use
+from .scoring.comparisons import rule_columns, spec, use
 from .scoring.levels import materialize, prepare_tf_tables
 from .scoring.model import Model
 from .standardise.run import run as standardise
@@ -209,7 +210,11 @@ def _run(cfg: PipelineConfig, res_cfg, effective: dict) -> dict:
         with meter.stage("redact_aadhaar"):
             redact_aadhaar(p["canonical"])
     with meter.stage("blocking"):
-        gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con, rules=[*rules_by_name(effective["blocking_rules"]), *spec().blocking])
+        # a matching rule saying one record's column A is the other's column B: such pairs are compared too (only columns this run has)
+        known = set(rule_columns())
+        crossed = cross_rules([c for r in dcfg.rules if r.enabled and r.type in ("auto_merge", "force_review") for c in cross_pairs(r.when)
+                               if set(c) <= known])
+        gen = block(p["std"], p["cand"], cap=cfg.blocking_cap, con=con, rules=[*rules_by_name(effective["blocking_rules"]), *spec().blocking, *crossed])
         summary["blocking"] = {"records": gen["records"], "candidate_pairs": gen["candidate_pairs"], "all_pairs": gen["all_pairs"]}
         _drop(con, "rule_pairs", "k", "blocks")
     with meter.stage("scoring"):

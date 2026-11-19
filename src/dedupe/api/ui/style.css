@@ -624,7 +624,7 @@ label.switch input { width: 14px; height: 14px; margin: 0; accent-color: var(--p
 .switch-word { color: var(--muted); }
 .choice-cards.presets { max-width: none; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); }
 .choice-card span.muted { display: block; margin-top: 2px; }
-.side-panel { position: fixed; z-index: 40; top: 40px; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 12px; width: min(460px, 100%); padding: 14px 16px;
+.side-panel { position: fixed; z-index: 25; top: 40px; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 12px; width: min(460px, 100%); padding: 14px 16px;
   overflow-y: auto; border: 1px solid var(--border-strong); background: var(--bg-panel); }
 .side-panel h2.section { margin: 0; }
 .side-panel .match-conds { gap: 10px; width: 100%; }
@@ -636,3 +636,25 @@ label.switch input { width: 14px; height: 14px; margin: 0; accent-color: var(--p
 .rules-effect:empty { display: none; }
 .rules-effect p { margin: 4px 0 0; }
 .rules-advanced { margin: 20px 0 8px; }
+
+/* ---- the rule builder: groups of condition lines in the side panel --------------------------------------------------------- */
+.side-panel.wide { width: min(640px, 100%); }
+.rule-builder { display: flex; flex-direction: column; gap: 10px; }
+.rule-builder > .field input, .rule-builder > .field select { width: 100%; }
+.cond-group { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border-strong); background: var(--bg-subtle); }
+.cond-group.nested { border-color: var(--border); background: var(--bg-panel); }
+.cond-group-head { display: flex; align-items: center; gap: 8px; }
+.cond-group-head select { font-weight: 600; }
+.cond-group-head button { margin-left: auto; }
+.cond-items { display: flex; flex-direction: column; gap: 6px; }
+.cond-row { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); background: var(--bg-panel); }
+.cond-what { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.cond-what select { max-width: 100%; }
+.cond-what textarea { width: 100%; }
+.level-picks { display: flex; flex-direction: column; width: 100%; }
+.level-picks label.check { margin: 0; }
+.rule-test { padding: 10px 12px; border: 1px solid var(--info-border); background: var(--info-bg); }
+.rule-test:empty { display: none; }
+.rule-test p { margin: 4px 0 0; }
+ul.rule-examples { margin: 6px 0 0; padding-left: 18px; }
+.quick-never { flex-wrap: wrap; }

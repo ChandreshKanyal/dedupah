@@ -244,13 +244,16 @@ function scoreScale(review, auto) {
 }
 const step = (n, title, text, ...body) => el("section", { class: "rule-step" }, el("div", { class: "step-head" }, el("span", { class: "step-no", "aria-hidden": "true" }, String(n)),
   el("div", {}, el("h3", {}, title), text ? el("p", { class: "muted" }, text) : null)), body);
-// The comparisons a rule's condition names that this project does not compare: such a rule is skipped by every run.
+// The comparisons and own fields a rule's condition names that this project does not have: such a rule is skipped by every run.
 function missingComparisons(node, cat) {
   const names = new Set((cat.comparisons || []).map((c) => c.name));
   const out = new Set();
+  const own = (c) => typeof c === "string" && c.startsWith("x_") && !names.has(c);
   const walk = (n) => {
     if (!n || typeof n !== "object") return;
     if (n.comparison && !names.has(n.comparison)) out.add(n.comparison);
+    if (own(n.field)) out.add(n.field);
+    for (const c of Array.isArray(n.cross) ? n.cross : []) if (own(c)) out.add(c);
     for (const k of ["all", "any"]) (n[k] || []).forEach(walk);
     walk(n.not);
   };
@@ -292,7 +295,6 @@ const MATCH_COLUMNS = {
 };
 // Records are only compared when they share one of these, or two of name, date of birth and address (see the blocking rules)
 const STRONG_COLUMNS = new Set(["pan", "aadhaar", "gov_id", "customer_number", "phone", "email"]);
-const findable = (ps) => ps.some((p) => STRONG_COLUMNS.has(p.col)) || new Set(ps.map((p) => p.col).filter((c) => ["name", "dob", "address"].includes(c))).size >= 2;
 // "Never the same when ... differ": columns where two different values mean two different people
 const NEVER_COLUMNS = { pan: ["different PANs", "PANs"], aadhaar: ["different Aadhaar", "Aadhaar numbers"], gov_id: ["different document numbers", "passport, licence or voter IDs"],
   customer_number: ["different customer numbers", "customer numbers"], gender: ["different gender", "genders"] };
@@ -396,13 +398,11 @@ function matchingEditor(content, cat, opts) {
   const changed = () => { if (opts.onChange) opts.onChange(); };
   const state = JSON.parse(JSON.stringify(content));
   state.rules = state.rules || [];
-  const was = new Map(state.rules.map((r) => [r, JSON.stringify(r.when)]));
-  const parts = new Map();
-  for (const r of state.rules) if (r.type === "auto_merge" || r.type === "force_review") { const ps = matchParts(r.when); if (ps) parts.set(r, ps); }
+  const was = new Map(state.rules.map((r) => [r, JSON.stringify(r.when) + "|" + r.type]));
+  const unchanged = (r) => was.get(r) === JSON.stringify(r.when) + "|" + r.type;
+  const named = new Set();                                  // rules a person gave a name in the builder: their title is that name
   const known = opts.present && opts.present.size;
   const inData = (k) => !known || MATCH_COLUMNS[k][1].some((f) => opts.present.has(f));
-  let pool = Object.keys(MATCH_COLUMNS).filter(inData);
-  const colName = (k) => MATCH_COLUMNS[k][0] + (inData(k) ? "" : " (not in your data)");
   // columns the sources keep as they are: a rule may use one; it then becomes a field of the project's own (the engine has to compare it)
   let keptCols = (cat.kept_columns || []).map((c) => c.name);
   const keptGroup = () => (keptCols.length && opts.pid && can("config.propose") ? el("optgroup", { label: "Columns kept as they are (become a field when chosen)" },
@@ -412,12 +412,13 @@ function matchingEditor(content, cat, opts) {
     if (!f) return null;
     const fresh = await api("GET", P(opts.pid) + "/rules-catalogue");
     useOwnFields(fresh);
+    cat.own_fields = fresh.own_fields;
+    cat.comparisons = fresh.comparisons;
     keptCols = (fresh.kept_columns || []).map((c) => c.name);
     if (opts.present) opts.present.add("own:" + f.name);
-    pool = Object.keys(MATCH_COLUMNS).filter(inData);
     say("The column " + column + " is now a field of your own (" + f.title + "): rules can use it." + (f.pending ? " The field waits for approval: until it is in use, " +
       "runs skip rules on it." : " Its options are under Fields and search."), "good");
-    return "x_" + f.name;
+    return { key: "x_" + f.name, kind: f.kind };
   };
   const lists = { auto_merge: el("div", { class: "rule-cards" }), force_review: el("div", { class: "rule-cards" }), never_merge: el("div", { class: "rule-cards" }) };
   const onOff = (r, box, text) => {
@@ -426,51 +427,27 @@ function matchingEditor(content, cat, opts) {
     cb.addEventListener("change", () => { r.enabled = cb.checked; box.classList.toggle("off", !cb.checked); word.textContent = cb.checked ? "On" : "Off"; changed(); });
     return el("label", { class: "switch" }, cb, word);
   };
-  const remove = (r) => { state.rules = state.rules.filter((x) => x !== r); parts.delete(r); draw(); changed(); };
-  // a rule made of columns in a few words: "Name is similar, date of birth is the same, phone shares any number" (the full words are in Edit)
+  const remove = (r) => { state.rules = state.rules.filter((x) => x !== r); draw(); changed(); };
+  // a rule's title: a built-in rule's own name while it is unchanged, the name a person gave it, else its condition in a few words
+  // ("Name is similar, date of birth is the same, phone shares any number")
   const shortWords = (ps) => cap(ps.map((x, i) => colWord(x.col, !i) + " " + MATCH_COLUMNS[x.col][2][x.how][0].replace(/ \(.*\)$/, "")).join(", "));
-  const titleOf = (r) => (parts.has(r) && !(RULE_TITLE[r.id] && JSON.stringify(r.when) === was.get(r)) ? shortWords(parts.get(r)) : ruleTitle(r));
-  const findsNothing = "On its own this finds nothing: records are only compared when they share an identifier, a phone or an email, or two of name, date of birth and address.";
-  // the side panel of a rule made of columns: one line per column ("and" between them), add a column, remove the rule
-  const editRule = (r, from) => {
-    const ps = parts.get(r);
-    const rows = el("div", { class: "match-conds" });
-    const warn = el("p", { class: "warn-line" });
-    const check = () => { warn.textContent = findable(ps) ? "" : findsNothing; warn.hidden = !warn.textContent; };
-    const set = () => { r.when = matchWhen(ps); r.reason = matchWords(ps); check(); changed(); };
-    const name = r.type === "auto_merge" ? "Merge rule" : "Ask rule";
-    const drawRows = () => fill(rows, ps.map((p, i) => {
-      const col = el("select", { "aria-label": name + ": column " + (i + 1) }, [...new Set([...pool, p.col])].map((k) => el("option", { value: k, selected: k === p.col }, colName(k))),
-        keptGroup());
-      const how = el("select", { "aria-label": name + ": how " + MATCH_COLUMNS[p.col][0] + " must agree" },
-        MATCH_COLUMNS[p.col][2].map(([t], j) => el("option", { value: String(j), selected: j === p.how }, t)));
-      col.addEventListener("change", () => run(async () => {
-        const key = col.value.startsWith("kept:") ? await useKept(col.value.slice(5)) : col.value;
-        if (key) { p.col = key; p.how = 0; set(); }
-        drawRows();
-      }, true));
-      how.addEventListener("change", () => { p.how = Number(how.value); set(); });
-      return el("div", { class: "match-cond" }, el("span", { class: "and muted" }, i ? "and" : "When"), el("div", { class: "cond-pick" }, col, how),
-        ps.length > 1 ? btn("", () => { ps.splice(i, 1); set(); drawRows(); }, "small ghost icon", "x", { "aria-label": "Remove " + MATCH_COLUMNS[p.col][0] + " from this rule" }) : null);
-    }));
-    check();
-    drawRows();
-    sidePanel(r.type === "auto_merge" ? "Merge when" : "Ask a person when", el("div", {},
-      el("p", { class: "hint" }, "Every column listed must agree, in the way chosen next to it."), rows,
-      el("div", { class: "row" }, btn("Add a column", () => { ps.push({ col: pool.find((k) => !ps.some((x) => x.col === k)) || pool[0], how: 0 }); set(); drawRows(); }, "small", "plus")),
-      warn), (close) => [btn("Done", close, "primary", "check"), btn("Remove this rule", () => { close(); remove(r); }, "danger", "trash")], from, draw);
-  };
+  const autoTitle = (r) => { const ps = matchParts(r.when); return ps ? shortWords(ps) : cap(conditionWords(r.when, cat)); };
+  const titleOf = (r) => (RULE_TITLE[r.id] && unchanged(r) ? RULE_TITLE[r.id] : named.has(r) || (r.reason && unchanged(r) && !matchParts(r.when)) ? r.reason : autoTitle(r));
+  const findsNothing = "On its own this finds no new pairs: records are compared only when they share an identifier, a phone or an email, two of name, " +
+    "date of birth and address, or one column is the same as another. It still applies to the pairs other rules find.";
+  const builderCtx = { cat, present: opts.present, pid: opts.pid, sources: opts.sources || [], named, titleOf, autoTitle, keptCols: () => keptCols, useKept };
+  const edit = (r, from) => openRuleBuilder(r, builderCtx, from, draw, changed, remove);
   const card = (r) => {
     const box = el("div", { class: "rule-card" + (r.enabled === false ? " off" : "") });
     const gone = missingComparisons(r.when, cat);
-    const edit = parts.has(r) ? btn("Edit", () => editRule(r, edit), "small", "edit", { "aria-label": "Edit " + titleOf(r) }) : null;
+    const editBtn = btn("Edit", () => edit(r, editBtn), "small", "edit", { "aria-label": "Edit " + titleOf(r) });
     add(box, onOff(r, box, titleOf(r)), el("div", { class: "grow" }, el("strong", {}, titleOf(r)),
-      parts.has(r) && !findable(parts.get(r)) && r.enabled !== false ? el("p", { class: "warn-line" }, findsNothing) : null,
+      (r.type === "auto_merge" || r.type === "force_review") && r.enabled !== false && !conditionFinds(r.when, cat) ? el("p", { class: "warn-line" }, findsNothing) : null,
       gone.length && r.enabled !== false ? el("p", { class: "warn-line" }, "Not applied by runs: it uses " + gone.map((c) => label(c.replace(/^x_/, ""))).join(", ") +
         ", which the project does not compare. Add it as a field of your own (Fields and search) or remove the rule.") : null,
-      parts.has(r) ? null : el("details", {}, el("summary", {}, "Details"), RULE_TITLE[r.id] && r.reason ? el("p", {}, r.reason) : null,
-        el("p", { class: "muted" }, "Applies when " + describeRule(r.when, cat) + "."))),
-    edit || btn("", () => remove(r), "small ghost icon", "trash", { "aria-label": "Remove " + titleOf(r) }));
+      matchParts(r.when) && !RULE_TITLE[r.id] ? null : el("details", {}, el("summary", {}, "Details"), RULE_TITLE[r.id] && r.reason && unchanged(r) ? el("p", {}, r.reason) : null,
+        el("p", { class: "muted" }, "Applies when " + conditionWords(r.when, cat) + "."))),
+    editBtn);
     return box;
   };
   const EMPTY = { auto_merge: "No rule: only the match score merges records.", force_review: "No rule: only the match score sends pairs to a person.", never_merge: "No rule." };
@@ -480,28 +457,39 @@ function matchingEditor(content, cat, opts) {
       fill(lists[type], rs.length ? rs.map(card) : el("p", { class: "muted" }, EMPTY[type]));
     }
   };
+  // a new rule opens in the builder: merge and ask rules start from "name is similar and date of birth is the same", a never-merge rule
+  // from the first column whose difference keeps records apart
   const addRule = (type) => {
-    const ps = pool.includes("name") && pool.includes("dob") ? [{ col: "name", how: 2 }, { col: "dob", how: 1 }] : [{ col: pool[0], how: 0 }];
-    const words = matchWords(ps);
-    const r = { id: ruleId(type === "auto_merge" ? "match_" : "ask_", words, state.rules), type, reason: words, when: matchWhen(ps) };
+    const pool = Object.keys(MATCH_COLUMNS).filter(inData);
+    let when;
+    if (type === "never_merge") {
+      const k = Object.keys(NEVER_COLUMNS).find(inData) || pool[0];
+      when = NEVER_COLUMNS[k] ? { comparison: k, is: NEVER_COLUMNS[k][0] } : { comparison: k, missing: true };
+    } else {
+      when = matchWhen(pool.includes("name") && pool.includes("dob") ? [{ col: "name", how: 2 }, { col: "dob", how: 1 }] : [{ col: pool[0], how: 0 }]);
+    }
+    const r = { id: ruleId(type === "auto_merge" ? "match_" : type === "force_review" ? "ask_" : "never_", conditionWords(when, cat), state.rules), type, reason: "", when };
+    r.reason = autoTitle(r);
+    was.set(r, "");                                          // new: never shown as a built-in rule
     state.rules.push(r);
-    parts.set(r, ps);
     draw();
     changed();
     const b = [...lists[type].querySelectorAll(".rule-card button")].pop();
-    editRule(r, b);
+    edit(r, b);
   };
-  // "never merge when <column> differs"
+  // "never merge when <column> differs": one click
   const neverCols = () => Object.keys(NEVER_COLUMNS).filter(inData);
   const neverSel = el("select", { "aria-label": "Never merge when this differs" });
   const drawNever = () => fill(neverSel, neverCols().map((k) => el("option", { value: k }, MATCH_COLUMNS[k][0])), keptGroup());
   drawNever();
   const addNever = async () => {
-    const k = neverSel.value.startsWith("kept:") ? await useKept(neverSel.value.slice(5)) : neverSel.value;
+    const k = neverSel.value.startsWith("kept:") ? ((await useKept(neverSel.value.slice(5))) || {}).key : neverSel.value;
     drawNever();
     if (!k) return;
-    state.rules.push({ id: ruleId("never_", k, state.rules), type: "never_merge", reason: "Two different " + NEVER_COLUMNS[k][1] + ": never the same " + (k.startsWith("x_") ? "record" : "person"),
-      when: { comparison: k, is: NEVER_COLUMNS[k][0] } });
+    const r = { id: ruleId("never_", k, state.rules), type: "never_merge", reason: "Two different " + NEVER_COLUMNS[k][1] + ": never the same " + (k.startsWith("x_") ? "record" : "person"),
+      when: { comparison: k, is: NEVER_COLUMNS[k][0] } };
+    was.set(r, "");
+    state.rules.push(r);
     draw();
     changed();
   };
@@ -544,18 +532,9 @@ function matchingEditor(content, cat, opts) {
   autoAt.addEventListener("input", onThreshold);
   syncPreset();
   draw();
-  // for experts: a rule with other conditions, and the whole content as JSON
-  const expertRule = async () => {
-    const rule = await ruleBuilder(cat, state.rules);
-    if (!rule) return;
-    state.rules.push(rule);
-    draw();
-    changed();
-    say("Rule added. Save the rules to keep it.", "good");
-  };
+  // for experts: the whole content as JSON
   const editor = el("textarea", { spellcheck: "false", rows: "14", class: "code" });
-  const json = el("details", { class: "advanced" }, el("summary", {}, "For experts: other conditions, or the matching rules as JSON"),
-    el("div", { class: "row" }, btn("Add a rule with other conditions", expertRule, "small", "plus")),
+  const json = el("details", { class: "advanced" }, el("summary", {}, "For experts: the matching rules as JSON"),
     el("p", { class: "hint" }, "Saving while this is open uses the JSON below as it is, not the choices above."), field("Matching rules (JSON)", editor));
   json.addEventListener("toggle", () => { if (json.open) editor.value = JSON.stringify(current(), null, 2); });
   const collect = () => {
@@ -567,12 +546,20 @@ function matchingEditor(content, cat, opts) {
       throw new Error("'Ask a person' must start above 0% and below 'Merge automatically', which is at most 100%.");
     }
     if (!useScore) Object.assign(out, { auto_merge_at: content.auto_merge_at || 0.9, review_at: content.review_at || 0.1 });
-    for (const [r, ps] of parts) {
-      if (!state.rules.includes(r) || r.enabled === false || findable(ps)) continue;
-      throw new Error("The rule “" + cap(r.reason) + "” finds nothing on its own. Add an identifier, a phone or an email to it, or two of name, date of birth and address.");
+    for (const r of state.rules) {
+      const t = condTree(r.when);
+      const p = conditionProblem(t.leaf ? { g: "all", items: [t] } : t, cat);
+      if (p) throw new Error("The rule “" + titleOf(r) + "” is not complete: " + p);
     }
-    // a built-in rule whose columns were changed gets its own id, so its old name is not shown for it any more
-    for (const [r] of parts) if (RULE_TITLE[r.id] && JSON.stringify(r.when) !== was.get(r)) r.id = ruleId(r.type === "auto_merge" ? "match_" : "ask_", r.reason, state.rules);
+    // a new rule, and a built-in rule that was changed, get an id from their title (a built-in rule's old name is not shown for it any more)
+    for (const r of state.rules) {
+      if (was.get(r) === "") r.id = ruleId({ auto_merge: "match_", force_review: "ask_", never_merge: "never_", not_enough_evidence: "evidence_" }[r.type],
+        titleOf(r), state.rules.filter((x) => x !== r));
+      else if (RULE_TITLE[r.id] && !unchanged(r)) {
+        r.reason = titleOf(r);
+        r.id = ruleId({ auto_merge: "match_", force_review: "ask_", never_merge: "never_", not_enough_evidence: "evidence_" }[r.type], r.reason, state.rules);
+      }
+    }
     out.rules = state.rules;
     return out;
   };
@@ -582,68 +569,12 @@ function matchingEditor(content, cat, opts) {
     step(3, "Ask a person when", "Wins over merging: a pair caught here is never merged automatically.", lists.force_review,
       el("div", { class: "row" }, btn("Add an ask rule", () => addRule("force_review"), "", "plus"))),
     step(4, "Never merge when", "Wins over everything: the two records always stay apart.", lists.never_merge,
-      neverCols().length || keptCols.length ? el("div", { class: "row" }, el("span", {}, "Never merge when"), neverSel, el("span", {}, "differs"), btn("Add", addNever, "small", "plus")) : null),
+      el("div", { class: "row" }, btn("Add a never-merge rule", () => addRule("never_merge"), "", "plus"),
+        neverCols().length || keptCols.length ? el("span", { class: "row tight quick-never" }, el("span", { class: "muted" }, "or in one click: never merge when"), neverSel,
+          el("span", { class: "muted" }, "differs"), btn("Add", addNever, "small", "plus")) : null)),
     json);
   return { node, collect };
 }
-// "Add your own rule" in a dialog: what happens, when (one or more conditions), a name people will read.
-function ruleBuilder(cat, existing) {
-  const what = el("select", {}, ["never_merge", "force_review", "auto_merge"].map((k) => el("option", { value: k }, cat.rule_types[k])));
-  const join = el("select", { "aria-label": "How the conditions combine" }, el("option", { value: "all" }, "all of these are true"), el("option", { value: "any" }, "any of these is true"));
-  const conds = el("div", { class: "conds" });
-  const condRow = () => {
-    const subject = el("select", { "aria-label": "Field" }, cat.comparisons.map((c) => el("option", { value: "c:" + c.name }, c.title)),
-      el("option", { value: "score" }, "Match score"), el("option", { value: "years" }, "Birth years"));
-    const op = el("select", { "aria-label": "Condition" });
-    const val = el("span");
-    const row = el("div", { class: "cond row" }, subject, op, val, btn("Remove", () => row.remove(), "small ghost", "x", { "aria-label": "Remove this condition" }));
-    const fillVal = () => {
-      const s = subject.value;
-      if (s.startsWith("c:")) {
-        const c = cat.comparisons.find((x) => x.name === s.slice(2));
-        val.replaceChildren(op.value === "missing" ? "" : el("select", { "aria-label": "Value" }, c.levels.map((l) => el("option", { value: l }, l))));
-      } else val.replaceChildren(el("input", { type: "number", min: "0", max: s === "score" ? "100" : "120", value: s === "score" ? "90" : "10", "aria-label": "Value" }));
-    };
-    const fillOps = () => {
-      const s = subject.value;
-      const ops = s.startsWith("c:") ? [["is", "is"], ["is_not", "is not"], ["missing", "is missing on one or both sides"]]
-        : s === "score" ? [[">=", "is at least (%)"], ["<", "is below (%)"]] : [["abs_diff_gt", "differ by more than (years)"]];
-      op.replaceChildren(...ops.map(([v, t]) => el("option", { value: v }, t)));
-      fillVal();
-    };
-    subject.addEventListener("change", fillOps);
-    op.addEventListener("change", fillVal);
-    fillOps();
-    row.build = () => {
-      const s = subject.value;
-      const v = val.firstChild ? val.firstChild.value : null;
-      if (s.startsWith("c:")) {
-        if (op.value === "missing") return { comparison: s.slice(2), missing: true };
-        return op.value === "is" ? { comparison: s.slice(2), is: v } : { comparison: s.slice(2), is_not: v };
-      }
-      if (s === "score") return { score: "probability", op: op.value, value: Math.min(100, Math.max(0, Number(v))) / 100 };
-      return { field: "dob_year", op: "abs_diff_gt", value: Number(v) };
-    };
-    return row;
-  };
-  conds.append(condRow());
-  const ruleName = el("input", { type: "text", maxlength: "120", placeholder: "for example: Different employee numbers" });
-  const err = errBox();
-  const body = el("div", { class: "rule-builder" }, field("What should happen", what),
-    el("div", { class: "row when" }, el("strong", {}, "When"), join), conds,
-    el("div", { class: "row" }, btn("Add a condition", () => conds.append(condRow()), "small", "plus")),
-    field("Name (shown to reviewers)", ruleName), err);
-  return dialog("Add your own rule", body, "Add rule", () => {
-    const parts = [...conds.children].map((r) => r.build());
-    if (!parts.length) { fail(err, "Add at least one condition."); return undefined; }
-    if (ruleName.value.trim().length < 3) { fail(err, "Give the rule a name people will understand.", ruleName); return undefined; }
-    const slug = ruleName.value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "rule";
-    let id = "custom_" + slug;
-    for (let i = 2; existing.some((r) => r.id === id); i++) id = "custom_" + slug + "_" + i;
-    return { id, type: what.value, reason: ruleName.value.trim(), when: parts.length === 1 ? parts[0] : { [join.value]: parts } };
-  });
-}
-
 // ---- golden record in plain words ------------------------------------------------------------------------------------------
 const GOLDEN_STRATEGIES = [["most_recent", "Newest record"], ["most_trusted_source", "Most trusted source"], ["most_frequent", "Most records agree"],
   ["most_complete", "Most complete"], ["best_quality", "Best quality"]];

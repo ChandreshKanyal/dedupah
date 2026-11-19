@@ -3,7 +3,12 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-19 (session 6, EC2 server)
 
-## >>> RESUME HERE (latest state: 2026-11-19, session 6: Data and Rules redesign built, section 104) <<<
+## >>> RESUME HERE (latest state: 2026-11-19, session 6: Data and Rules redesign (section 104) and the no-code rule builder (section 105)) <<<
+
+**Done (2026-11-19): the rule builder (section 105):** every matching rule opens in a side-panel builder (groups All / Any / None / Not
+all, lines for how two records compare, a column's values, one column against another column of the other record, which data source,
+the match score), tested live on the latest run; the engine gained value checks, source checks and two-column checks (which also find
+such pairs at the next run).
 
 **Done (2026-11-19): the Data and Rules redesign (section 104):** Data page as a summary strip plus one card per source with fill rates
 and problems; mapping in three groups with a side panel; Rules as ONE page (ready-made settings, rule cards with an Edit side panel,
@@ -19,9 +24,9 @@ save-time checks, starter rules, Review / results / search / corrections with ow
 One step bar on every project page (`journeyBar` in `projects.js`; Rules = tabs Matching rules / Golden record / Fields and search). The run
 page lists what it could not use. Mapping joins two columns or uses one as a fallback. All on synthetic data only.
 
-**State of the code:** suite 582 passed, 4 skipped (about 10 minutes; run it on a snapshot copy of src/tests/configs to keep editing
+**State of the code:** suite 592 passed, 4 skipped (about 10 minutes; run it on a snapshot copy of src/tests/configs to keep editing
 meanwhile), ruff clean, customer benchmark unchanged (F1 0.931 / 0.918). GitHub: pushed up to `11e2fe1`; `7b7431c`, `36a90ab` and the
-section 104 commit are not pushed (push only when the user asks). Browser checks of the redesign: `~/agent-review/redesign/`. Images `dedupah-api` and
+section 104 and 105 commits are not pushed (push only when the user asks). Browser checks of the redesign: `~/agent-review/redesign/`. Images `dedupah-api` and
 `dedupe-test` rebuilt 2026-11-17 (before section 101-102; the preview mounts src and configs, so it runs the newest code).
 
 **Checks to reuse:** `~/agent-review/e2e/` (lib.py helpers; e1 kept column in a rule, e2 own-fields-only file, e3 corrections/search/
@@ -2515,3 +2520,38 @@ Plan of section 103, steps 1-5, all on synthetic data.
 - **Known gaps:** the effect line needs a finished run and says nothing about clusters (decisions only); on a small file whose leftover
   pairs are all vetoed it reads "no pair would be decided differently" (correct, but looks inert). The run dialog still names rule versions
   in a one-person project. Not swept yet: second-approval flows end to end, schedules, database destinations.
+
+
+## 105. The rule builder: any matching logic without code (2026-11-19, session 6)
+
+**The user's ask:** business logic beyond the usual identifiers: "if col1 matches with col5 of data2 and then check this", any kind of logic,
+no coding ("drag and drop conditional"). Agreed: a click-based builder (Add condition / Add group, AND / OR), not drag and drop.
+- **Engine** (`decision/conditions.py`, all compiled to SQL, nothing typed reaches a query unescaped: values in string literals with quotes
+  doubled, at most 50 values of 100 printable characters, numbers checked):
+  - values of a column on a pair (no left/right, so "both", "at least one", "neither"): `both_in` / `either_in` / `neither_in` (typed
+    values cleaned like the column: a GSTIN typed with spaces and dashes is found), `both_contain` / `either_contains`, `within` (amount),
+    `within_pct`, `within_days`, `either_empty` / `both_empty` / `both_filled`;
+  - rule-only columns on every pair: `source_id` (which data source), `state`, `record_date` (`comparisons.RULE_ONLY_COLUMNS`,
+    `rule_columns()`, carried by `pairs_view_sql`);
+  - one record's column against ANOTHER column of the other record, either way round: `{"cross": [a, b], "op": "same" | "similar"}`.
+    A cross "same" that must hold (not under a "not") in an enabled merge or ask rule also FINDS such pairs: the run adds a blocking rule
+    keyed on both columns' values (`blocking.cross_rules`, `conditions.cross_pairs`, pipeline blocking stage; only columns the run has).
+- **API:** `POST /projects/{p}/config/decision/test-rule {when}` (config.propose): how many pairs of the latest run the condition catches,
+  how that run decided them, five examples (names as work lists show them, source and record id), `not_applied` (a field the run did not
+  have), `finds_more` (a cross rule the run did not search with yet). Condition errors in words, never the typed values.
+- **Portal** (`ui/js/rulebuilder.js`, side panel): every rule card has Edit, built-in rules too (their JSON round-trips unchanged until a
+  person changes something). A rule = name, what happens (merge / ask a person / never merge / neither), and a tree: groups "All / Any /
+  None / Not all of these", up to four deep; a line = how the two records compare on a column (its ways to agree, differs, empty, or chosen
+  results), a column's values, one column against another, the match score, or "any field of your own agrees". Kept columns can be chosen
+  (they become a field of the project's own). While building: what is missing, whether it finds pairs on its own, and the live test on
+  the latest run. "Never merge when X differs" stays one click; the old expert dialog is gone (JSON stays under For experts).
+- **Checked** (synthetic only): unit tests for every new condition and injection attempts; a full pipeline test where a billing file and
+  a GST register with completely different names are merged only by "parent GSTIN of one = GSTIN of the other, from different sources",
+  and "test" rows are vetoed by a value rule; API test of test-rule. Browser (`~/agent-review/builder/`: setup.py + b1.py): both rules
+  built with lines in the portal, tested live (0 caught before the run, 12 after: 10 merged, 2 kept apart by the test-row rule), saved,
+  run: 50 records became 40 people; 0 console or server problems. e1 updated for the builder; e1-e4 pass on a fresh sandbox. Found and
+  fixed on the way: a dialog opened from the side panel showed behind it; the rule test before a project's first run logged a browser error.
+  Suite 592 passed, 4 skipped; ruff clean; customer benchmark unchanged (F1 0.931 / 0.918).
+- **Known gaps:** each live test reads all pairs of the latest run (debounced; seconds on millions of pairs); a two-column "similar" check
+  does not find pairs by itself (only "same" does); value checks on built-in columns compare the cleaned values (a city in lower case,
+  matched in any case); no drag and drop or reordering of lines (order does not change the logic).

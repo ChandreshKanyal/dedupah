@@ -14,7 +14,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from dedupe.governance.impact import dry_run
+from dedupe.decision.conditions import ConditionError, NotInUse, compile_condition
+from dedupe.governance.impact import dry_run, test_rule
 from dedupe.governance.store import MODELS, ConfigError
 from dedupe.review.service import ReviewError, ReviewService
 from dedupe.scoring.comparisons import spec, use
@@ -340,6 +341,37 @@ def try_decision(request: Request, body: TryIn, project_id: str = PID, p: Princi
     except FileNotFoundError:
         raise HTTPException(404, "No finished run was found to compare against.") from None
     return {k: result[k] for k in ("pairs", "zones_before", "zones_after", "moved", "rules_not_applied") if k in result} | {"run_id": run.id}
+
+
+class RuleTestIn(Strict):
+    when: dict
+
+
+@router.post(PROJ + "/config/decision/test-rule")
+def test_rule_on_latest_run(request: Request, body: RuleTestIn, project_id: str = PID, p: Principal = PROPOSE):
+    """How many pairs of the project's latest finished run one rule's condition catches, how that run decided them, and a few of them (the
+    names a work list shows, never an identifier): the rule builder's live answer while a rule is being made. Nothing is saved."""
+    ps, sv = project_scope(request, project_id), _services(request)
+    try:
+        with use(project_spec(ps.configs)):
+            compile_condition(body.when)
+    except NotInUse:
+        pass                          # a field of the project's own not in use yet: the run below says it could not try it
+    except ConditionError as e:
+        text = str(e)
+        raise HTTPException(422, "This condition is not complete: " + (text if "{" not in text and "[" not in text else "check every line of it.")) from None
+    run = sv.jobs.latest_succeeded(project_id)
+    nothing = {"pairs": 0, "caught": 0, "now": {"auto_merge": 0, "review": 0, "reject": 0}, "examples": [], "not_applied": False, "finds_more": False,
+               "no_run": True, "run_id": None}
+    if run is None:
+        return nothing                # a project before its first run: the builder says the test comes after it (not an error)
+    try:
+        result = test_rule(sv.workspace.run_dir(project_id, run.id), body.when)
+    except FileNotFoundError:
+        return nothing
+    except ConditionError:
+        raise HTTPException(422, "This condition is not complete: check every line of it.") from None
+    return {**result, "run_id": run.id}
 
 
 @router.post(PROJ + "/config/{name}/versions/{version}/dry-run")
