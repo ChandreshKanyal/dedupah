@@ -62,7 +62,7 @@ async function rulesPage(p, focus) {
   if (!canEdit) {
     const shownOf = async (n) => (sets[n].live ? api("GET", P(pid) + "/config/" + n + "/versions/" + sets[n].live.version) : api("GET", P(pid) + "/config/" + n + "/default"));
     const [d, g] = await Promise.all([shownOf("decision"), shownOf("survivorship")]);
-    add(wrap, status, result, el("h2", { class: "section" }, "Matching rules"), matchingSummary(d.content, cat),
+    add(wrap, status, result, el("h2", { class: "section" }, "Matching rules"), matchingSummary(d.content, cat), await lessonsSection(pid),
       el("h2", { class: "section", id: "golden-rules" }, "Golden record"), goldenSummary(g.content, guide), history);
     if (focus === "golden") setTimeout(() => { const h = $("golden-rules"); if (h) h.scrollIntoView(); }, 0);
     return wrap;
@@ -134,7 +134,7 @@ async function rulesPage(p, focus) {
   why.placeholder = "For example: stricter merging after the March audit";
   const body = el("div", { class: "rules-body" },
     el("h2", { class: "section" }, "Matching rules"), el("p", { class: "hint" }, "When are two records the same " + wordsOf(pid).one + "?"),
-    matching.node, done ? effect : null,
+    matching.node, done ? effect : null, await lessonsSection(pid),
     el("h2", { class: "section", id: "golden-rules" }, "Golden record"), el("p", { class: "hint" }, "One clean record per " + wordsOf(pid).one +
       ": when the records disagree, which value it keeps."), golden.node,
     advanced, saveBox);
@@ -146,4 +146,24 @@ async function rulesPage(p, focus) {
   if (done) tryIt();
   if (focus === "golden") setTimeout(() => { const h = $("golden-rules"); if (h) h.scrollIntoView(); }, 0);
   return wrap;
+}
+// What the reviewers' decisions teach: counted together by the rule (or score band) that sent the pairs to people, with suggestions a person
+// can act on by editing the rules. Every decision already stays in force for its own records; nothing here changes the rules by itself.
+async function lessonsSection(pid) {
+  let l;
+  try { l = await api("GET", P(pid) + "/review/lessons"); } catch (e) { return null; }
+  if (!l.decisions) return null;
+  const ruleWords = await ruleNamer(pid);
+  const name = (k) => (k === "score" ? "The match score (no rule)" : ruleWords(k));
+  return el("section", { class: "lessons", "aria-label": "What the reviewers' decisions say" },
+    el("h2", { class: "section" }, "What the reviewers' decisions say"),
+    el("p", { class: "hint" }, "People decided " + plural(l.decisions, "pair", "pairs") + ". Each decision stays in force for its records in every later run. Counted together, " +
+      "they show where the rules could decide without asking. Nothing changes until you change the rules above."),
+    l.suggestions.length ? el("ul", { class: "plain" }, l.suggestions.map((t) => el("li", {}, t.rule ? el("strong", {}, ruleWords(t.rule) + ": ") : null, t.text)))
+      : el("p", { class: "muted" }, "No suggestion yet. One needs at least " + l.min_decisions + " decisions on one kind of pair, with people giving the same answer 95 times in 100."),
+    el("details", { class: "advanced" }, el("summary", {}, "The decisions, counted"),
+      table(["Sent to people by", ["Same"], ["Different"]], l.by_rule.map((x) => el("tr", {}, el("td", {}, name(x.rule)), el("td", { class: "num" }, num(x.same)),
+        el("td", { class: "num" }, num(x.different))))),
+      l.by_band.length ? table(["Match score", ["Same"], ["Different"]], l.by_band.map((b) => el("tr", {}, el("td", {}, Math.round(b.from * 100) + "% to " + Math.round(b.to * 100) + "%"),
+        el("td", { class: "num" }, num(b.same)), el("td", { class: "num" }, num(b.different))))) : null));
 }

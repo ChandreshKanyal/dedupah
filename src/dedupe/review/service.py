@@ -29,6 +29,7 @@ from dedupe.survivorship.config import GOLDEN_FIELDS
 
 SENSITIVE = ("customer_number", "pan", "mobile", "mobile_alt", "email", "passport_no", "dl_no", "voter_id", "aadhaar_token", "aadhaar_last4")
 MAX_PAIRS_PER_ACTION = 500
+MAX_LINKS = 200                   # links shown for one person (a very large person is split, not read link by link)
 # own fields of these kinds are masked like the built-in identifiers; the others (a company name, an amount, a date) are shown like names and
 # birth dates are: a person deciding a pair has to read them
 MASKED_KINDS = ("code", "phone", "email")
@@ -150,10 +151,11 @@ class ReviewService:
 
     # ---- reading -------------------------------------------------------------------------------------------------
     def queue(self, limit: int = 50, offset: int = 0, status: str = "open", min_probability: float = 0.0, max_probability: float = 1.0,
-              forced: bool | None = None, text: str | None = None) -> list[dict]:
+              forced: bool | None = None, text: str | None = None, keep=None) -> list[dict]:
         """Ranked person pairs. status: 'open' (nothing decided yet), 'unsure' (snoozed), 'all'. A pair is hidden once a steward decided any of its
         record pairs, even before the next pipeline run (the next run applies the decision and rebuilds the queue). forced: only pairs a rule
-        sent here (True) or only pairs their score sent here (False). text: part of either person's name or id, or the first one's city."""
+        sent here (True) or only pairs their score sent here (False). text: part of either person's name or id, or the first one's city.
+        keep: a test (person_l, person_r) -> bool, e.g. only the pairs assigned to one reviewer."""
         if status not in ("open", "unsure", "all"):
             raise ReviewError("status is 'open', 'unsure' or 'all'")
         needle = " ".join((text or "").lower().split())
@@ -182,6 +184,8 @@ class ReviewService:
                 kinds = kinds_by_item.get((item["cluster_l"], item["cluster_r"]), set())
                 state = "open" if not kinds else ("unsure" if kinds == {"unsure"} else "decided")
                 if status != "all" and state != status:
+                    continue
+                if keep is not None and not keep(item["cluster_l"], item["cluster_r"]):
                     continue
                 if skipped < offset:
                     skipped += 1
@@ -258,6 +262,41 @@ class ReviewService:
         return {"person_id": person_id, "golden": golden, "record_count": meta.get("record_count", len(records)), "sources": meta.get("sources"),
                 "conflict_fields": meta.get("conflict_fields", []), "records": records, "extra": extra, "own": own}
 
+    def links(self, person_id: str, limit: int = MAX_LINKS) -> dict:
+        """Why the records of one person are together: every link that joined two of its records in this run, strongest first. A link is
+        a matching rule (with every other rule that also held for that pair: a pair is decided once, by the strongest rule type, and the
+        others change neither the decision nor the score), the match score alone, or a person's decision. No personal data: record ids only."""
+        con = self._con()
+        members = con.execute(f"SELECT rid, source_id, source_record_id FROM {crypto.rp(self.f['cl'])} WHERE cluster_id = ?", [person_id]).fetchall()
+        if not members:
+            raise ReviewError(f"unknown person {person_id!r}")
+        key = {rid: (s, r) for rid, s, r in members}
+        out: list[dict] = []
+        if len(members) > 1 and self.f["decisions"].exists():
+            rids = list(key)
+            rows = con.execute(f"""SELECT l_rid, r_rid, probability, decided_by, reason, fired FROM {crypto.rp(self.f['decisions'])}
+                WHERE decision = 'auto_merge' AND l_rid IN (SELECT unnest(?)) AND r_rid IN (SELECT unnest(?))
+                ORDER BY decided_by = 'score', probability DESC, l_rid, r_rid LIMIT ?""", [rids, rids, limit]).fetchall()
+            for lr, rr, prob, by, reason, fired in rows:
+                out.append({"a": list(key[lr]), "b": list(key[rr]), "how": "score" if by == "score" else "rule", "rule": None if by == "score" else by,
+                            "reason": reason, "probability": None if prob is None else round(float(prob), 4),
+                            "also": [f for f in (fired or []) if f != by]})
+        steward = []
+        if len(members) > 1:
+            mine = set(key.values())
+            for j in self.store.active(("same_person",)):
+                a, b = tuple(j.subject["a"]), tuple(j.subject["b"])
+                if a in mine and b in mine:
+                    steward.append({"a": list(a), "b": list(b), "how": "person", "rule": None, "reason": j.reason, "probability": None, "also": [],
+                                    "actor": j.actor, "decided_at": j.created_at})
+        links = steward + out
+        by_rule: dict = {}
+        for x in links:
+            k = x["rule"] or x["how"]
+            by_rule[k] = by_rule.get(k, 0) + 1
+        return {"person_id": person_id, "records": len(members), "links": links[:limit], "by": by_rule, "more": len(links) > limit,
+                "kept": self.f["decisions"].exists()}
+
     def explain(self, person_l: str, person_r: str, reveal: bool = False) -> dict:
         """Side-by-side view for deciding a pair: both people, the strongest record pair's evidence ('for' and 'against'), hard conflicts."""
         con = self._con()
@@ -280,12 +319,31 @@ class ReviewService:
         return {"action_id": extra["action_id"], "persons": extra["persons"], "probability": ev["probability"], "run_id": self.work.name,
                 "top_evidence": ev["contributions"][:4], "decided_by": ev["decided_by"], "pipeline": self._run_info()}
 
+    def decided_by_others(self, pairs: list[dict], kind: str, actor: str) -> list:
+        """Decisions in force (or waiting for approval) on these record pairs by SOMEONE ELSE that say the opposite of `kind`. 'Not sure' is
+        never protected: it asks another person to look."""
+        keys = [frozenset((p["a"], p["b"])) for p in pairs]
+        return [j for j in self.store.history(("same_person", "different_person"))
+                if j.status in ("active", "pending_approval") and j.kind != kind and j.actor != actor
+                and frozenset((tuple(j.subject["a"]), tuple(j.subject["b"]))) in keys]
+
+    def _guard(self, pairs: list[dict], kind: str, actor: str, replace_others: bool) -> None:
+        if replace_others:
+            return
+        others = self.decided_by_others(pairs, kind, actor)
+        if others:
+            j = others[0]
+            said = "the same" if j.kind == "same_person" else "different"
+            raise ReviewError(f"{j.actor} already decided this pair: {said} ({j.created_at[:10]}). Your decision would replace theirs, so it was not saved. "
+                              "Talk to them, or ask a lead to change it.")
+
     def approve_match(self, person_l: str, person_r: str, actor: str, reason: str = "", confirm_id_conflict: bool = False,
-                      action_id: str | None = None) -> dict:
+                      action_id: str | None = None, replace_others: bool = False) -> dict:
         con = self._con()
         pairs = self._pairs_between(con, person_l, person_r)
         if not pairs:
             raise ReviewError("no record pair links these two people in the queue; they may already be merged or never were candidates")
+        self._guard(pairs, "same_person", actor, replace_others)
         conflicts = self._hard_conflicts(con, person_l, person_r)
         if conflicts and not confirm_id_conflict:
             raise ReviewError(f"These two people have conflicting identifiers ({', '.join(c.replace('_', ' ') for c in conflicts)}). "
@@ -300,11 +358,18 @@ class ReviewService:
                                    protect_approved=self.policy.four_eyes_change_approved)
         return {"action_id": action_id, "judgment_ids": [j], "pending_approval": self.store.status(j) == "pending_approval"}
 
-    def _decide_all_pairs(self, kind: str, person_l: str, person_r: str, actor: str, reason: str, action_id: str | None) -> dict:
+    def _decide_all_pairs(self, kind: str, person_l: str, person_r: str, actor: str, reason: str, action_id: str | None,
+                          replace_others: bool = False) -> dict:
         con = self._con()
         pairs = self._pairs_between(con, person_l, person_r)[:MAX_PAIRS_PER_ACTION]
         if not pairs:
             raise ReviewError("no record pair links these two people in the queue")
+        store_kind = {"different_person": "different_person", "unsure": "unsure"}[kind]
+        if store_kind == "different_person":
+            self._guard(pairs, store_kind, actor, replace_others)
+        elif not replace_others and self.decided_by_others(pairs, "unsure", actor):
+            j = self.decided_by_others(pairs, "unsure", actor)[0]
+            raise ReviewError(f"{j.actor} already decided this pair ({j.created_at[:10]}), so it cannot be marked Not sure. Talk to them, or ask a lead.")
         action_id = action_id or uuid.uuid4().hex[:12]
         ids = []
         for p in pairs:   # every review pair between the two people, so the item does not come back after the next run
@@ -312,11 +377,11 @@ class ReviewService:
             ids.append(getattr(self.store, kind)(p["a"], p["b"], actor, reason, ev, protect_approved=self.policy.four_eyes_change_approved))
         return {"action_id": action_id, "judgment_ids": ids, "pending_approval": any(self.store.status(i) == "pending_approval" for i in ids)}
 
-    def reject_match(self, person_l: str, person_r: str, actor: str, reason: str = "", action_id: str | None = None) -> dict:
-        return self._decide_all_pairs("different_person", person_l, person_r, actor, reason, action_id)
+    def reject_match(self, person_l: str, person_r: str, actor: str, reason: str = "", action_id: str | None = None, replace_others: bool = False) -> dict:
+        return self._decide_all_pairs("different_person", person_l, person_r, actor, reason, action_id, replace_others)
 
-    def mark_unsure(self, person_l: str, person_r: str, actor: str, reason: str = "", action_id: str | None = None) -> dict:
-        return self._decide_all_pairs("unsure", person_l, person_r, actor, reason, action_id)
+    def mark_unsure(self, person_l: str, person_r: str, actor: str, reason: str = "", action_id: str | None = None, replace_others: bool = False) -> dict:
+        return self._decide_all_pairs("unsure", person_l, person_r, actor, reason, action_id, replace_others)
 
     def split_person(self, person_id: str, parts: list[list[tuple]], actor: str, reason: str, action_id: str | None = None) -> dict:
         """Undo a wrong merge: `parts` are lists of (source_id, source_record_id) of this person that must become separate people."""

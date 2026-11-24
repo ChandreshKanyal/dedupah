@@ -16,6 +16,9 @@ function homeTodo(p) {
     review: can("queue.read", p.id) ? ["inbox", plural(pr.open_review, "pair", "pairs") + " in " + p.name + " need your decision", "The same " + wordsOf(p.id).one + " or not: the matching rules sent them to a person.",
       "Review", () => go(() => viewInbox(p.id))] : null,
   }[pr.step];
+  // pairs a lead gave to this person come first: nobody else works on them
+  if (pr.assigned_to_me && can("judgment.write", p.id)) todo.push(["inbox", plural(pr.assigned_to_me, "pair", "pairs") + " in " + p.name + (pr.assigned_to_me === 1 ? " is" : " are") + " given to you",
+    "A lead gave " + (pr.assigned_to_me === 1 ? "it" : "them") + " to you to decide. Nobody else works on them while you have them.", "Open my pairs", () => go(() => viewInbox(p.id)), true]);
   if (step) todo.push(step);
   if (pr.pending_approvals) todo.push(["check", plural(pr.pending_approvals, "change", "changes") + " in " + p.name + " wait for your approval", "Another person proposed them.",
     "Open approvals", link("/approvals")]);

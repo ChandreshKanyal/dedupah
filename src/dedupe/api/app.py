@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from dedupe import crypto
+from dedupe.review.assign import Assignments
 from dedupe.workspace import ConnectionHealth, RunJobs, Uploads, Workspace
 from dedupe.workspace.schedules import SchedulerThread, Schedules
 
@@ -24,12 +25,14 @@ from .accounts import AccountStore
 from .auth import Principal, TokenVerifier
 from .guards import authenticated, in_project, public, require
 from .middleware import BodyLimitMiddleware, ContextMiddleware, HeadersMiddleware, SlidingWindow
+from .notify import Notifier
 from .roles import PERMISSIONS
 from .routes_admin import router as admin_router
 from .routes_connections import router as connections_router
 from .routes_projects import router as projects_router
 from .routes_read import router as read_router
 from .routes_results import router as results_router
+from .routes_review import notify_run_finished
 from .routes_review import router as review_router
 from .routes_schedules import router as schedules_router
 from .routes_ui import router as ui_router
@@ -54,6 +57,8 @@ class Services:
     accounts: AccountStore                         # local users and custom roles (main database)
     health: ConnectionHealth                       # connection checks (main database)
     schedules: Schedules                           # scheduled runs (main database)
+    assignments: Assignments                       # who works on which review pair (main database)
+    notifier: Notifier                             # emails to reviewers (off unless the server sets an SMTP server)
     reviews: dict = field(default_factory=dict)    # (project, run, reveal) -> ReviewService, built on first use
 
 
@@ -123,7 +128,7 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
 
     schedules = Schedules(jobs, may_run, on_started=scheduled_start)
     sv = Services(settings, verifier or TokenVerifier(settings, accounts=accounts), seclog or SecurityLog.open(ws.url), SlidingWindow(), ws,
-                  Uploads(ws.engine, ws.upload_dir), jobs, accounts, health, schedules)
+                  Uploads(ws.engine, ws.upload_dir), jobs, accounts, health, schedules, Assignments(ws.engine), Notifier.from_env())
 
     def run_finished(run):
         sv.seclog.record("run_finished", status=None, object_ref=f"{run.project_id}/{run.id}", project_id=run.project_id,
@@ -135,6 +140,10 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
                                  error=None if run.status == "succeeded" else "the run did not finish", actor=run.requested_by)
 
         sv.schedules.on_run_finished(run)
+        try:
+            notify_run_finished(sv, run)
+        except Exception as e:   # noqa: BLE001  a notice must never break the end of a run
+            log.error("review notice failed (%s)", type(e).__name__)
 
     jobs.on_finish = run_finished
 

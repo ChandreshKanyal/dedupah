@@ -1,14 +1,19 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-11-24 (session 6, EC2 server)
+> Last updated: 2026-11-24 (session 6, EC2 server, section 106)
 
-## >>> RESUME HERE (latest state: 2026-11-19, session 6: Data and Rules redesign (section 104) and the no-code rule builder (section 105)) <<<
+## >>> RESUME HERE (latest state: 2026-11-24, session 6: handover questions answered in the product (section 106)) <<<
 
-**Next (asked 2026-11-19, no answer yet):** (1) should new projects start on "Balanced" instead of "Careful" (see below)? (2) push the four
-unpushed commits? Not swept yet: second-approval flows end to end, schedules, database destinations; the run dialog still names rule
-versions in a one-person project. Earlier unanswered: learning from steward decisions, a match-one-record API, scale, moving the live
-portal port, auto-start after reboot. Confirm with the user before starting a new phase.
+**Done (2026-11-24): the colleague's handover questions (section 106, answers in docs/HANDOVER_QUESTIONS.md):** one combined starter
+rule; run page split into matched / unmatched customers with a Customers filter; "Why these records were joined" on the customer page;
+review pairs given to one reviewer (Take / Give back / a lead's Give to, Given to me filter, Home count); no silent overwriting of another
+reviewer's decision; optional email notices (`DEDUPE_SMTP_*`); suggestions from reviewers' decisions on the Rules page. Pushed to GitHub
+on 2026-11-24 at the user's request.
+
+**Still open (ask the user):** should new projects start on "Balanced" instead of "Careful" (the colleague's question 5 points the same
+way)? Not swept yet: second-approval flows end to end, schedules, database destinations; the run dialog still names rule versions in a
+one-person project. Earlier unanswered: a match-one-record API, scale, moving the live portal port, auto-start after reboot.
 
 **Done (2026-11-19): the rule builder (section 105):** every matching rule opens in a side-panel builder (groups All / Any / None / Not
 all, lines for how two records compare, a column's values, one column against another column of the other record, which data source,
@@ -29,13 +34,13 @@ save-time checks, starter rules, Review / results / search / corrections with ow
 One step bar on every project page (`journeyBar` in `projects.js`; Rules was three tabs then, one page since section 104). The run
 page lists what it could not use. Mapping joins two columns or uses one as a fallback. All on synthetic data only.
 
-**State of the code:** suite 592 passed, 4 skipped (about 10 minutes; run it on a snapshot copy of src/tests/configs to keep editing
-meanwhile), ruff clean, customer benchmark unchanged (F1 0.931 / 0.918). GitHub: pushed up to `11e2fe1`; `7b7431c`, `36a90ab` and the
-section 104 (`4b52a87`) and 105 (`28bbcab`) commits are not pushed (push only when the user asks). Browser checks of the redesign:
-`~/agent-review/redesign/` (d1, d2, r1-r3, w1 walk-through); of the rule builder: `~/agent-review/builder/` (setup.py then b1.py).
+**State of the code:** suite 601 passed, 4 skipped (about 10 minutes; run it on a snapshot copy of src/tests/configs to keep editing
+meanwhile), ruff clean, customer benchmark and presets unchanged (F1 0.931 / 0.918). GitHub: everything up to section 106 pushed on
+2026-11-24 (push only when the user asks). Browser checks of the redesign:
+`~/agent-review/redesign/` (d1, d2, r1-r3, w1 walk-through); of the rule builder: `~/agent-review/builder/` (setup.py then b1.py); of the
+handover questions: `~/agent-review/questions/` (q0.py then q1.py, q2.py).
 UI files: `ui/js/rulespage.js` (the Rules page), `ui/js/rulebuilder.js` (the builder), `rules.js` (cards, presets, golden form, Fields and
-search panel). After a server reboot: `docker compose up -d postgres`, then the preview `docker run` (memory `ec2-server-constraints`). Images `dedupah-api` and
-`dedupe-test` rebuilt 2026-11-17 (before section 101-102; the preview mounts src and configs, so it runs the newest code).
+search panel). After a server reboot: `docker compose up -d postgres`, then the preview `docker run` (memory `ec2-server-constraints`).
 
 **Checks to reuse:** `~/agent-review/e2e/` (lib.py helpers; e1 kept column in a rule, e2 own-fields-only file, e3 corrections/search/
 remove guard, e4 split names; files leads.csv, parts.csv, split_names.csv), `~/agent-review/own/` (vendor projects: a1-a8, b0-b2, j1-j2),
@@ -2563,3 +2568,43 @@ no coding ("drag and drop conditional"). Agreed: a click-based builder (Add cond
 - **Known gaps:** each live test reads all pairs of the latest run (debounced; seconds on millions of pairs); a two-column "similar" check
   does not find pairs by itself (only "same" does); value checks on built-in columns compare the cleaned values (a city in lower case,
   matched in any case); no drag and drop or reordering of lines (order does not change the logic).
+
+## 106. Handover questions: answered in the product (2026-11-24, session 6)
+
+**The ask:** the user hands the project to a colleague, who asked eight questions against an older version (Rules, Results, Review,
+Matching). Check each against the current version; build what is missing, test it, explain what exists, push. Answers for the colleague:
+[docs/HANDOVER_QUESTIONS.md](docs/HANDOVER_QUESTIONS.md).
+- **Already there, explained:** missing or invalid identifiers (a missing value counts neither way; invalid Aadhaar is set aside; the
+  score decides with Balanced); a pair matching several rules (decided once by precedence never > ask > merge > not enough; rules never
+  change the score; every rule that held is in `fired`); reviewer decisions applied in every later run (not used to retrain the score, on
+  purpose).
+- **Built:**
+  - **One starter rule** instead of three: `match_name_dob_contact` = similar name AND same birth date AND any of (phone, email, same
+    house). Identical decisions (presets benchmark unchanged: Careful R 0.386, Balanced F1 0.931 / 0.918). Projects that saved the three
+    keep them.
+  - **Results split:** `headline()` adds `single_people` (matched nothing) and `merged_people` (built from 2+ records); the run overview
+    shows them (clickable), and Customers has a filter (`built=several|single` on the golden-records rows).
+  - **Why joined:** `ReviewService.links` + `GET .../people/{id}/links`: each auto-merge link inside a person (rule, score alone, or a
+    person's decision) with the other rules that held; shown on the customer page.
+  - **Assignment:** `review/assign.py` (table `review_assignments`, keyed by the stable person-id pair, survives runs);
+    `POST /projects/{p}/review/assign` (take or give back: judgment.write; give to others or move others' pairs: judgment.approve = a
+    lead); `GET /projects/{p}/reviewers` (who decides there, lead or not, has an email: never the address); queue `assigned=me|free|others`
+    and `assigned_to` on items; a pair given to someone else cannot be decided by others (409, also in bulk) and shows no decision buttons;
+    inbox and Home count "given to you".
+  - **No silent overwriting:** deciding a pair someone else decided the other way is refused with who and when
+    (`ReviewService._guard`); a lead may replace it with `replace: true` after a confirm dialog. Before, the second decision silently
+    revoked the first.
+  - **Email notices (optional):** `api/notify.py` (SMTP from `DEDUPE_SMTP_*` env, STARTTLS by default, sent in the background, no customer
+    data); users get an optional `email` (accounts column added by `create_and_upgrade`, Admin user dialog); after a successful run with
+    review pairs, each reviewer of the project with an address is told; a reviewer given pairs is told.
+  - **Lessons from decisions:** `review/lessons.py` + `GET /projects/{p}/review/lessons` (config.read): decisions counted once per action,
+    by the rule or score band that sent the pair to people; suggestions (a review rule people always merge or always split; lower the
+    auto-merge level or raise the review level for a band) from 20 decisions agreeing 95 in 100. Shown on the Rules page; nothing changes
+    by itself.
+- **Checked** (synthetic only): `tests/test_review_questions.py` (9 tests: starter rule, split counts and filter, links, assignment rules
+  incl. bulk and inbox, overwrite guard, email off by default and sent through a stand-in SMTP server, email validation, lessons);
+  allow-lists in `test_api_reads.py` updated. Browser (`~/agent-review/questions/`: q0.py sets up project q-check with bank CRM + loans and
+  users asha (steward) and lead, q1.py as the admin, q2.py as asha): all checks OK, 0 console or server problems. Found and fixed on the
+  way: the Give controls squeezed the list toolbar (own row now); "1 pair are given"; decision buttons on a pair given to someone else.
+- **Known gaps:** email was not tried against a real mail server; OIDC users have no address in the portal (Home and Review still show
+  their work); assignments are per pair of people with no due dates or workload view; lessons suggest, they do not apply a change.

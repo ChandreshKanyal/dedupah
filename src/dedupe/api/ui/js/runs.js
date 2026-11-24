@@ -137,7 +137,7 @@ function runUsed(r) {
 }
 // One run. Finished: Overview (what came out, in one sentence; the engine's details folded away), Results (the files) and Customers (find a
 // customer by name, id, phone or email). The review queue is the Review screen, opened at this run.
-async function viewRun(pid, rid, tab) {
+async function viewRun(pid, rid, tab, built) {
   stopTimer();                                                 // never two polls: a leftover one would put this run back on screen after the person has left
   if (tab === "review") { await viewInbox(pid, "open", rid); return; }          // older links
   if (tab === "people") tab = "customers";
@@ -183,7 +183,7 @@ async function viewRun(pid, rid, tab) {
   if (tab === "overview") body = el("div", {}, runOverview(r, pid), el("details", { class: "advanced" }, el("summary", {}, "Details: what it read, data quality, timings"),
     el("p", { class: "muted" }, "Run id " + rid + "."), used, runDetails(r)), can("runs.start") ? runLogDetails(pid, rid) : null);
   else if (tab === "results") body = await runResults(pid, rid);
-  else body = await customersPanel(pid, rid);
+  else body = await customersPanel(pid, rid, { offset: 0, q: "", built: built || "" });
   show(top, stale, tabs(tabList, tab, (t) => go(() => viewRun(pid, rid, t))), tabPanel(tab, body));
 }
 // The results of one finished run, right on the run page: each file with one Download menu (formats, or into a database).
@@ -199,9 +199,10 @@ async function runResults(pid, rid) {
 // Customers: find one by name, person id, a whole mobile number or email; open them to see their records, split a wrong merge or correct a value.
 const CUSTOMER_COLUMNS = ["person_id", "full_name", "dob", "mobile", "email", "city", "record_count", "sources"];
 async function customersPanel(pid, rid, st) {
-  st = st || { offset: 0, q: "" };
+  st = st || { offset: 0, q: "", built: "" };
   const size = 25;
-  const r = await api("GET", R(pid, rid) + "/datasets/golden_records/rows?limit=" + size + "&offset=" + st.offset + "&q=" + encodeURIComponent(st.q));
+  const r = await api("GET", R(pid, rid) + "/datasets/golden_records/rows?limit=" + size + "&offset=" + st.offset + "&q=" + encodeURIComponent(st.q) +
+    (st.built ? "&built=" + st.built : ""));
   const wrap = el("div");
   const again = (patch) => run(async () => wrap.replaceWith(await customersPanel(pid, rid, { ...st, ...patch })));
   const q = el("input", { type: "search", value: st.q, maxlength: "60", placeholder: wordsOf(pid).own ? "Name, ID, a whole code, mobile number or email" : "Name, person ID, whole mobile number or email", class: "wide-search" });
@@ -212,13 +213,18 @@ async function customersPanel(pid, rid, st) {
   const TITLES = { person_id: wordsOf(pid).own ? "ID" : "Person ID", record_count: "Records", sources: "Sources", ...Object.fromEntries(extras.map((c) => [c, cap(label(c.slice(6)))])) };
   const cell = (c, v) => (v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v));
   const last = Math.min(st.offset + size, r.total);
+  // which of them: all, the ones built from several records (each opens with its records and why they were joined), the ones that matched nothing
+  const built = el("select", { "aria-label": "Show" }, [["", "All " + wordsOf(pid).many], ["several", "Built from several records"], ["single", "No match (one record)"]]
+    .map(([v, t]) => el("option", { value: v, selected: v === (st.built || "") }, t)));
+  built.addEventListener("change", () => again({ built: built.value, offset: 0 }));
   add(wrap, el("div", { class: "row", role: "search" }, q, btn("Search", () => again({ q: q.value.trim(), offset: 0 }), "", "search"),
-    st.q ? btn("Clear", () => again({ q: "", offset: 0 }), "ghost") : null),
+    st.q ? btn("Clear", () => again({ q: "", offset: 0 }), "ghost") : null, built),
   r.masked.length ? el("p", { class: "hint" }, "Phone numbers, emails and identifiers are masked here; open a " + wordsOf(pid).one + " to see more. A search by mobile or email needs the whole value.") : null,
   r.rows.length ? table(cols.map(([c]) => (c === "record_count" ? [TITLES[c]] : TITLES[c] || fieldTitle(c))), r.rows.map((row) => {
     const id = row[r.columns.indexOf("person_id")];
     return linkRow(id, () => viewPerson(pid, rid, id), cols.slice(1).map(([c, i]) => el("td", { class: c === "record_count" ? "num" : null }, cell(c, row[i]))));
-  })) : empty(st.q ? "No " + wordsOf(pid).one + " matches " + st.q + "." : "No " + wordsOf(pid).many + "."),
+  })) : empty(st.q ? "No " + wordsOf(pid).one + " matches " + st.q + "." : st.built === "several" ? "No " + wordsOf(pid).one + " was built from several records."
+    : st.built === "single" ? "Every " + wordsOf(pid).one + " matched at least one other record." : "No " + wordsOf(pid).many + "."),
   r.total ? el("div", { class: "pager" }, el("span", { class: "muted" }, num(st.offset + 1) + " to " + num(last) + " of " + plural(r.total, wordsOf(pid).one, wordsOf(pid).many)),
     st.offset > 0 ? btn("Previous", () => again({ offset: Math.max(0, st.offset - size) }), "small", "prev") : null,
     last < r.total ? btn("Next", () => again({ offset: st.offset + size }), "small", "next") : null) : null);
@@ -287,8 +293,14 @@ function runOverview(r, pid) {
       ". Add them to the mapping of " + src + " if they matter."),
   ].filter(Boolean);
   const notice = notUsed.length ? el("div", { class: "notice warn", role: "note" }, el("strong", {}, "Not used in this run. "), el("ul", { class: "plain" }, notUsed.map((t) => el("li", {}, t)))) : null;
+  // the people split in two: built from two or more records (the duplicates found, each with the records behind it) and matched nothing
+  const open = (built) => (can("person.read") ? () => go(() => viewRun(pid, r.id, "customers", built)) : null);
+  const split = s.merged_people == null ? null : el("div", { class: "stats" },
+    stat("Built from several records", num(s.merged_people), open("several")),
+    stat("Records behind them", num(s.records - s.single_people)),
+    stat("No match (one record each)", num(s.single_people), open("single")));
   const parts = [el("p", { class: "lead" }, sentence), notice, scoringNotice(s, pid), big, el("div", { class: "stats" }, stat("Records read", num(s.records)), stat(wordsOf(pid).Many, num(s.people)),
-    stat("Merged automatically", num(s.auto_merged_pairs)), stat("Sent to a person", num(s.review_items), can("queue.read") ? link("/review/" + pid) : null))];
+    stat("Merged automatically", num(s.auto_merged_pairs)), stat("Sent to a person", num(s.review_items), can("queue.read") ? link("/review/" + pid) : null)), split];
   const corrected = (s.golden || {}).steward_overrides_applied || 0;
   if (corrected) parts.push(el("p", {}, plural(corrected, "value corrected by a person was", "values corrected by people were") + " applied to the golden records."));
   if (j && j.judgments_applied_to_run) {

@@ -85,10 +85,12 @@ def describe(run_dir: Path) -> list[dict]:
     return out
 
 
-def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str = "", readable: tuple = (), exact: tuple = ()) -> dict:
+def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str = "", readable: tuple = (), exact: tuple = (), built: str = "") -> dict:
     """A page of the dataset as people see it on screen (same columns and order as the files), optionally filtered by a name or id.
     The caller masks what must be masked. `readable`: more columns a search finds by any part (a project's own company or text fields);
-    `exact`: more columns it finds by the whole value only (its own codes, phones, emails, which are masked on screen)."""
+    `exact`: more columns it finds by the whole value only (its own codes, phones, emails, which are masked on screen).
+    `built` (golden records): 'several' only the records built from two or more source records (the duplicates found), 'single' only the
+    records that matched nothing."""
     p = _path(run_dir, name)
     con = crypto.connect()
     try:
@@ -113,7 +115,9 @@ def preview(run_dir: Path, name: str, limit: int = 25, offset: int = 0, q: str =
                 if c in cols and plain:
                     conds.append(f'regexp_replace(upper(CAST("{c}" AS VARCHAR)), \'[^A-Z0-9]\', \'\', \'g\') = ?')
                     args.append(plain)
-            where = "WHERE " + " OR ".join(conds) if conds else ""
+            where = "WHERE (" + " OR ".join(conds) + ")" if conds else ""
+        if built in ("several", "single") and "record_count" in cols:
+            where += (" AND " if where else "WHERE ") + ("record_count > 1" if built == "several" else "record_count = 1")
         total = con.execute(f"SELECT count(*) FROM ({sql}) {where}", args).fetchone()[0]
         # columns that are empty in the whole table (fields no source filled) only clutter a screen; the files keep them
         quoted = ['"' + c.replace('"', '""') + '"' for c in cols]

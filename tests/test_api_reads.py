@@ -37,7 +37,7 @@ def test_a_run_shows_its_headline_numbers_and_configuration_but_no_evaluation_da
     body = r.json()
     assert body["status"] == "succeeded" and body["project_id"] == PROJECT
     assert body["summary"]["records"] > 100 and body["summary"]["people"] > 50 and body["summary"]["review_items"] > 0
-    assert set(body["summary"]) <= {"records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "oversize_people", "largest_person", "fields_not_read", "review_items", "households", "seconds", "records_by_source",
+    assert set(body["summary"]) <= {"records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "single_people", "merged_people", "oversize_people", "largest_person", "fields_not_read", "review_items", "households", "seconds", "records_by_source",
                                     "scoring", "judgments", "golden", "source_quality", "incremental", "duplicate_record_ids",
                                     "rules_not_applied", "extra_columns_skipped", "own_fields_empty"}   # how scores were learned; decisions applied; how golden values were chosen; what could not be used (names only, no personal data)
     assert body["configs"]["decision"]["source"] == "file" and "eval" not in r.text and "truth" not in r.text
@@ -49,7 +49,7 @@ def test_queue_is_paged_capped_and_allow_listed(api):
     page = c.get(run + "/queue?limit=1000", headers=h).json()
     assert 0 < len(page) <= 5                                                       # max_page_size is enforced by the server
     assert set(page[0]) == {"person_l", "person_r", "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state",
-                            "name_l", "name_r", "city_l"}                    # names and a city for the work list; no identifiers
+                            "name_l", "name_r", "city_l", "assigned_to"}     # names and a city for the work list, who has it; no identifiers
     assert all(i["name_l"] and i["name_r"] for i in page)
     assert page[0]["state"] == "open" and page[0]["person_l"].startswith("P")
     assert page == sorted(page, key=lambda i: -i["priority"])

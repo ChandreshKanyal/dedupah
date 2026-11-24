@@ -52,6 +52,7 @@ users = Table(
     Column("created_by", String(200), nullable=False),
     Column("created_at", String(40), nullable=False),
     Column("last_login_at", String(40)),
+    Column("email", String(200)),                                       # where review notices go (optional; added after the first release)
 )
 user_roles = Table(
     "user_roles", _meta,
@@ -86,6 +87,20 @@ class User:
     created_by: str
     created_at: str
     last_login_at: str | None = None
+    email: str | None = None
+
+
+EMAIL = re.compile(r"^[^@\s]{1,64}@[A-Za-z0-9.-]{1,180}\.[A-Za-z]{2,24}$")
+
+
+def clean_email(v) -> str | None:
+    """An address for notices, or None to have none. Refuses anything that is not one plain address (no names, no lists, no line breaks)."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    if not EMAIL.match(v) or len(v) > 200:
+        raise AccountError("That is not an email address (one address like name@company.com).")
+    return v.lower()
 
 
 @dataclass(frozen=True)
@@ -143,7 +158,7 @@ class AccountStore:
     # -- users --
     def _user(self, r, roles: tuple) -> User:
         return User(r.username, r.display_name, roles, bool(r.disabled), bool(r.must_change), r.locked_until, r.epoch, r.created_by, r.created_at,
-                    r.last_login_at)
+                    r.last_login_at, r.email)
 
     def get(self, username: str) -> User | None:
         if not _USER.match(username or ""):
@@ -166,10 +181,12 @@ class AccountStore:
     def count(self) -> int:
         return len(self.list_users())
 
-    def create_user(self, username: str, display_name: str, password: str, roles: list[str], actor: str, must_change: bool = True) -> User:
+    def create_user(self, username: str, display_name: str, password: str, roles: list[str], actor: str, must_change: bool = True,
+                    email: str | None = None) -> User:
         if not _USER.match(username or ""):
             raise AccountError("A username is 3-64 characters: lower-case letters, digits, dot, dash or underscore, starting with a letter or digit.")
         display_name = (display_name or "").strip()[:100]
+        email = clean_email(email)
         check_password_policy(password, username)
         roles = sorted(set(roles))
         self._check_roles_exist(roles)
@@ -178,7 +195,7 @@ class AccountStore:
                 raise AccountError("A user with this username already exists.")
             c.execute(insert(users).values(username=username, display_name=display_name, password_hash=hash_password(password), disabled=0,
                                            must_change=int(must_change), failed_count=0, locked_until=0.0, epoch=1,
-                                           created_by=actor, created_at=_now()))
+                                           created_by=actor, created_at=_now(), email=email))
             for r in roles:
                 c.execute(insert(user_roles).values(username=username, role=r))
         return self.get(username)
@@ -193,7 +210,9 @@ class AccountStore:
         return self.get(username)
 
     def update(self, username: str, **fields) -> User:
-        allowed = {k: v for k, v in fields.items() if k in ("display_name", "disabled")}
+        allowed = {k: v for k, v in fields.items() if k in ("display_name", "disabled", "email")}
+        if "email" in allowed:
+            allowed["email"] = clean_email(allowed["email"])
         if "display_name" in allowed:
             allowed["display_name"] = (allowed["display_name"] or "").strip()[:100]
         if "disabled" in allowed:

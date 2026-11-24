@@ -141,23 +141,25 @@ async function userDialog(u, catalogue) {
   const self = !!u && u.username === me.sub;
   const name = el("input", { type: "text", maxlength: "64", value: u ? u.username : "", disabled: !!u });
   const full = el("input", { type: "text", maxlength: "100", value: u ? u.display_name : "" });
+  const mail = el("input", { type: "email", maxlength: "200", value: u ? u.email || "" : "", autocomplete: "off" });
   const pass = el("input", { type: "password", autocomplete: "new-password" });
   const off = el("input", { type: "checkbox", checked: !!(u && u.disabled), disabled: self });
   const picks = checkList(roles.map((r) => ({ name: r.name, description: r.description })), new Set(u ? u.roles : []),
     (it) => heldBy(roles.find((r) => r.name === it.name).permissions), self);
   const err = errBox();
   const body = el("div", {}, field("Username (lower-case letters, digits, . - _)", name), field("Name (optional)", full),
+    field("Email (optional): review pairs waiting for this person and pairs given to them are sent here, when the server sends email", mail),
     u ? null : field("Temporary password (12 to 128 characters; the person must change it at first sign-in)", pass),
     el("h3", { class: "section" }, "Roles"), self ? el("p", { class: "hint" }, "You cannot change your own roles.") : null, picks.node,
     u ? el("label", { class: "check" }, off, el("span", {}, "Disabled: this person cannot sign in")) : null, err);
   const done = await dialog(u ? "Edit " + u.username : "New user", body, u ? "Save user" : "Create user", async () => {
     try {
       if (u) {
-        const patch = { display_name: full.value.trim() };
+        const patch = { display_name: full.value.trim(), email: mail.value.trim() };
         if (!self) { patch.roles = picks.values(); patch.disabled = off.checked; }
         await api("PATCH", "/users/" + u.username, patch);
       } else {
-        await api("POST", "/users", { username: name.value.trim().toLowerCase(), display_name: full.value.trim(), password: pass.value, roles: picks.values() });
+        await api("POST", "/users", { username: name.value.trim().toLowerCase(), display_name: full.value.trim(), password: pass.value, roles: picks.values(), email: mail.value.trim() });
       }
       return true;
     } catch (e) { fail(err, e.message); return undefined; }

@@ -50,6 +50,7 @@ class Pair(Strict):
 
 class DecideIn(Pair):
     reason: str = Field("", max_length=300)
+    replace: bool = False          # replace another reviewer's decision on this pair (a lead only)
 
 
 class ApproveIn(DecideIn):
@@ -190,8 +191,21 @@ def _invalid_config(name: str, content: dict, store=None) -> HTTPException:
     return HTTPException(422, "The configuration is not valid.")
 
 
+def _may_decide(request: Request, p: Principal, project_id: str, person_l: str, person_r: str, replace: bool = False) -> None:
+    """A pair given to another reviewer is theirs: others leave it (a lead may still decide it). Replacing another reviewer's decision is for a
+    lead too; anyone else is told who decided it (the service refuses to overwrite it silently)."""
+    lead = "judgment.approve" in p.permissions
+    if replace and not lead:
+        raise HTTPException(403, "Only a lead (who can approve decisions) can replace another reviewer's decision.")
+    a = _services(request).assignments.get(project_id, person_l, person_r)
+    if a is not None and a.assignee != p.actor and not lead:
+        raise HTTPException(409, f"This pair is given to {a.assignee}. Pick another pair, or ask a lead to give it to you.")
+
+
 def _do(request: Request, p: Principal, project_id: str, run_id: str, route: str, key: str | None, body: BaseModel, ref: str, kind: str, run) -> dict:
     rs = run_scope(request, project_id, run_id)
+    if isinstance(body, DecideIn):
+        _may_decide(request, p, project_id, body.person_l, body.person_r, body.replace)
     action_id = _action_id(p, f"{project_id}:{route}", key, body)
     if (again := _seen(rs.judgments, action_id)) is not None:
         return again
@@ -207,19 +221,19 @@ def _do(request: Request, p: Principal, project_id: str, run_id: str, route: str
 @router.post(RUN + "/decisions/approve", response_model=ActionOut)
 def approve(request: Request, body: ApproveIn, project_id: str = PID, run_id: str = RID, key: str | None = Depends(_key), p: Principal = WRITE):
     return _do(request, p, project_id, run_id, "approve", key, body, f"{body.person_l},{body.person_r}", "approve_match",
-               lambda r, a: r.approve_match(body.person_l, body.person_r, p.actor, body.reason, body.confirm_id_conflict, a))
+               lambda r, a: r.approve_match(body.person_l, body.person_r, p.actor, body.reason, body.confirm_id_conflict, a, body.replace))
 
 
 @router.post(RUN + "/decisions/reject", response_model=ActionOut)
 def reject(request: Request, body: DecideIn, project_id: str = PID, run_id: str = RID, key: str | None = Depends(_key), p: Principal = WRITE):
     return _do(request, p, project_id, run_id, "reject", key, body, f"{body.person_l},{body.person_r}", "reject_match",
-               lambda r, a: r.reject_match(body.person_l, body.person_r, p.actor, body.reason, a))
+               lambda r, a: r.reject_match(body.person_l, body.person_r, p.actor, body.reason, a, body.replace))
 
 
 @router.post(RUN + "/decisions/unsure", response_model=ActionOut)
 def unsure(request: Request, body: DecideIn, project_id: str = PID, run_id: str = RID, key: str | None = Depends(_key), p: Principal = WRITE):
     return _do(request, p, project_id, run_id, "unsure", key, body, f"{body.person_l},{body.person_r}", "mark_unsure",
-               lambda r, a: r.mark_unsure(body.person_l, body.person_r, p.actor, body.reason, a))
+               lambda r, a: r.mark_unsure(body.person_l, body.person_r, p.actor, body.reason, a, body.replace))
 
 
 @router.post(RUN + "/people/{person_id}/split", response_model=ActionOut)
@@ -250,6 +264,7 @@ def bulk(request: Request, body: BulkIn, project_id: str = PID, run_id: str = RI
             done.append({"pair": pair, **again})
             continue
         try:
+            _may_decide(request, p, project_id, item.person_l, item.person_r)
             if body.decision == "approve":
                 out = rs.review.approve_match(item.person_l, item.person_r, p.actor, body.reason, False, action_id)
             else:
@@ -257,6 +272,8 @@ def bulk(request: Request, body: BulkIn, project_id: str = PID, run_id: str = RI
             done.append({"pair": pair, **out})
         except (ReviewError, JudgmentError) as e:
             failed.append({"pair": pair, "error": str(e)[:300]})
+        except HTTPException as e:
+            failed.append({"pair": pair, "error": str(e.detail)[:300]})
     _log(request, p, "judgment_change", "bulk_" + body.decision, f"{project_id}/bulk", done=len(done), failed=len(failed))
     return {"done": done, "failed": failed}
 

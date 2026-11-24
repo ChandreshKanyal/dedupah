@@ -51,6 +51,7 @@ class QueueItem(BaseModel):
     name_l: str | None = None          # the golden names of both people and the first one's city, for work lists
     name_r: str | None = None
     city_l: str | None = None
+    assigned_to: str | None = None      # the reviewer this pair is given to (None: anyone may take it)
 
 
 class RecordView(BaseModel):
@@ -184,11 +185,17 @@ def _log_unmask(request: Request, p: Principal, object_ref: str, reason: str | N
 def queue(request: Request, project_id: str = PID, run_id: str = RID, limit: int = Query(50, ge=1), offset: int = Query(0, ge=0, le=100_000),
           status: Literal["open", "unsure", "all"] = "open", min_probability: float = Query(0.0, ge=0.0, le=1.0),
           max_probability: float = Query(1.0, ge=0.0, le=1.0), forced: bool | None = None, q: str | None = Query(None, max_length=64),
-          p: Principal = READ_QUEUE):
+          assigned: Literal["", "me", "free", "others"] = "", p: Principal = READ_QUEUE):
+    """`assigned`: only the pairs given to you ('me'), the ones nobody has ('free'), or the ones other reviewers have ('others')."""
+    from dedupe.review.assign import pair_key
     rs = run_scope(request, project_id, run_id)
-    rows = rs.review.queue(limit=min(limit, _services(request).settings.max_page_size), offset=offset, status=status, min_probability=min_probability,
-                           max_probability=max_probability, forced=forced, text=q)
-    return [QueueItem(person_l=r["cluster_l"], person_r=r["cluster_r"], **{k: r[k] for k in (
+    sv = _services(request)
+    given = {k: a.assignee for k, a in sv.assignments.of_project(project_id).items()}
+    test = {"me": lambda a, b: given.get(pair_key(a, b)) == p.actor, "free": lambda a, b: pair_key(a, b) not in given,
+            "others": lambda a, b: given.get(pair_key(a, b)) not in (None, p.actor)}.get(assigned)
+    rows = rs.review.queue(limit=min(limit, sv.settings.max_page_size), offset=offset, status=status, min_probability=min_probability,
+                           max_probability=max_probability, forced=forced, text=q, keep=test)
+    return [QueueItem(person_l=r["cluster_l"], person_r=r["cluster_r"], assigned_to=given.get(pair_key(r["cluster_l"], r["cluster_r"])), **{k: r[k] for k in (
         "record_pairs", "top_probability", "mean_probability", "forced", "size_l", "size_r", "priority", "state", "name_l", "name_r", "city_l") if k in r}) for r in rows]
 
 
@@ -213,6 +220,16 @@ def person(request: Request, project_id: str = PID, run_id: str = RID, person_id
     if reveal:
         _log_unmask(request, p, ref, reason, "person")
     return out
+
+
+@router.get(RUN + "/people/{person_id}/links")
+def person_links(request: Request, project_id: str = PID, run_id: str = RID, person_id: str = Path(pattern=PERSON_ID), p: Principal = READ_PERSON):
+    """Why this person's records were joined: each link (a rule, the score, or a person's decision) between two of its records."""
+    rs = run_scope(request, project_id, run_id)
+    try:
+        return rs.review.links(person_id)
+    except ReviewError:
+        raise _not_found() from None
 
 
 @router.get(RUN + "/people/{person_l}/compare/{person_r}", response_model=Comparison)
@@ -255,13 +272,14 @@ DEFAULT_FILES = {"decision": "decision_default.json", "survivorship": "survivors
 _SIMILAR_NAME = {"comparison": "name", "in": ["identical cleaned name", "same name sounds (any order)", "first+last sound equal", "initial + same surname",
                                               "one side first-name only, first names agree", "fuzzy full-name match (JW>=0.90)"]}
 _SAME_BIRTH_DATE = {"comparison": "dob", "in": ["exact date", "exact date, but a 1-Jan default", "day and month swapped"]}
+# One rule, not three: the name and the birth date are the core, and any one contact or the same house confirms it (asked by a new user who
+# saw Name and Date of birth written out again and again). The engine evaluates it exactly as the three separate rules did.
 PROJECT_MATCHES = [
-    {"id": "match_name_dob_phone", "type": "auto_merge", "reason": "Name is similar, and date of birth is the same, and phone shares any number",
-     "when": {"all": [_SIMILAR_NAME, _SAME_BIRTH_DATE, {"comparison": "phone", "in": ["same primary number", "number matches an alternate number"]}]}},
-    {"id": "match_name_dob_email", "type": "auto_merge", "reason": "Name is similar, and date of birth is the same, and email is the same",
-     "when": {"all": [_SIMILAR_NAME, _SAME_BIRTH_DATE, {"comparison": "email", "is": "same email"}]}},
-    {"id": "match_name_dob_house", "type": "auto_merge", "reason": "Name is similar, and date of birth is the same, and address is the same house",
-     "when": {"all": [_SIMILAR_NAME, _SAME_BIRTH_DATE, {"comparison": "address", "is": "same PIN + house number + similar text"}]}},
+    {"id": "match_name_dob_contact", "type": "auto_merge",
+     "reason": "Name is similar, and date of birth is the same, and phone, email or the house address agrees",
+     "when": {"all": [_SIMILAR_NAME, _SAME_BIRTH_DATE, {"any": [{"comparison": "phone", "in": ["same primary number", "number matches an alternate number"]},
+                                                                {"comparison": "email", "is": "same email"},
+                                                                {"comparison": "address", "is": "same PIN + house number + similar text"}]}]}},
 ]
 
 

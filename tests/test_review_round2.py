@@ -111,7 +111,7 @@ def test_the_rule_builder_catalogue_and_a_custom_rule_built_like_the_form_does(a
     base = f"/projects/{PROJECT}/config/decision"
     content = c.get(base + "/default", headers=hdr(s, "analyst")).json()["content"]
     # a project starts from rules only (the score off) with column matches for records without an identifier; proposing it below checks they compile
-    assert content["use_score"] is False and {"match_name_dob_phone", "match_name_dob_email", "match_name_dob_house"} <= {r["id"] for r in content["rules"]}
+    assert content["use_score"] is False and "match_name_dob_contact" in {r["id"] for r in content["rules"]}
     content["rules"].append({"id": "custom_different_employer_city", "type": "force_review", "reason": "Ask when the cities differ and only a phone agrees",
                              "when": {"all": [{"comparison": "phone", "is": "same primary number"}, {"comparison": "address", "is_not": "same PIN"},
                                               {"score": "probability", "op": ">=", "value": 0.9}, {"field": "dob_year", "op": "abs_diff_gt", "value": 5}]}})

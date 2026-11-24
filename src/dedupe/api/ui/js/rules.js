@@ -191,6 +191,7 @@ const RULE_TITLE = {
   review_identifiers_contradict: "One identifier agrees while another conflicts", review_possible_twins: "Possible twins: minors with the same birth date and PIN",
   review_possible_namesake: "Only a similar name and a birth date agree", review_age_only_evidence: "Only an age, a name and a place agree",
   not_enough_evidence: "Too little evidence to merge or even ask",
+  match_name_dob_contact: "Similar name, same birth date, and a phone, email or house agrees",
 };
 const ruleTitle = (r) => RULE_TITLE[r.id] || r.reason || label(r.id);
 // A rule's condition in words, from the same building blocks the engine runs.

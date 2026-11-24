@@ -85,6 +85,11 @@ PREVIOUS_RUN = "previous_run.txt"     # written at launch: the project's latest 
 CONFIG_VERSIONS = "config_versions.json"   # written at start when the run was started with chosen rule versions
 
 
+def _merged(s: dict) -> int | None:
+    c = s.get("clustering") or {}
+    return c["clusters"] - c["singletons"] if isinstance(c.get("clusters"), int) and isinstance(c.get("singletons"), int) else None
+
+
 def headline(work: Path) -> dict:
     """The numbers a person wants first, read from a finished run's summary (no personal data)."""
     p = Path(work) / "pipeline_summary.json"
@@ -95,6 +100,9 @@ def headline(work: Path) -> dict:
     return {"records": (s.get("ingest") or {}).get("total"), "sources": sorted(((s.get("ingest") or {}).get("records") or {}).keys()),
             "candidate_pairs": (s.get("blocking") or {}).get("candidate_pairs"), "auto_merged_pairs": dec.get("auto_merge"),
             "review_pairs": dec.get("review"), "people": (s.get("clustering") or {}).get("clusters"),
+            # of the people: how many matched nothing (one source record) and how many were built from two or more records
+            "single_people": (s.get("clustering") or {}).get("singletons"),
+            "merged_people": _merged(s),
             "oversize_people": (s.get("clustering") or {}).get("oversize_clusters"), "largest_person": (s.get("clustering") or {}).get("largest_cluster"),
             "review_items": (s.get("review_queue") or {}).get("queue_items"), "households": (s.get("households") or {}).get("households"),
             "seconds": s.get("total_seconds"), "records_by_source": (s.get("ingest") or {}).get("records") or {},

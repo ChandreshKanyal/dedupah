@@ -60,10 +60,12 @@ class UserIn(Strict):
     display_name: str = Field("", max_length=100)
     password: str = Field(min_length=1, max_length=256)                  # a temporary password; the user must change it at first sign-in
     roles: list[str] = Field(min_length=1, max_length=10)
+    email: str = Field("", max_length=200)                               # optional: where review notices go
 
 
 class UserPatch(Strict):
     display_name: str | None = Field(None, max_length=100)
+    email: str | None = Field(None, max_length=200)                      # "" removes it
     roles: list[str] | None = Field(None, min_length=1, max_length=10)
     disabled: bool | None = None
 
@@ -93,11 +95,12 @@ class UserView(BaseModel):
     last_login_at: str | None
     created_by: str
     created_at: str
+    email: str | None = None
 
 
 def _view(u) -> UserView:
     return UserView(username=u.username, display_name=u.display_name, roles=list(u.roles), disabled=u.disabled, must_change_password=u.must_change,
-                    locked=u.locked_until > time.time(), last_login_at=u.last_login_at, created_by=u.created_by, created_at=u.created_at)
+                    locked=u.locked_until > time.time(), last_login_at=u.last_login_at, created_by=u.created_by, created_at=u.created_at, email=u.email)
 
 
 def _local(request: Request):
@@ -246,7 +249,7 @@ def create_user(request: Request, body: UserIn, p: Principal = MANAGE_USERS):
     sv = _services(request)
     _may_assign(sv, p, body.roles)
     try:
-        u = sv.accounts.create_user(body.username, body.display_name, body.password, body.roles, p.actor, must_change=True)
+        u = sv.accounts.create_user(body.username, body.display_name, body.password, body.roles, p.actor, must_change=True, email=body.email)
     except AccountError as e:
         raise HTTPException(409 if "exists" in str(e) else 422, str(e)) from None
     _audit(request, p, 201, u.username, action="create_user", roles=list(u.roles))
@@ -272,8 +275,11 @@ def patch_user(request: Request, body: UserPatch, username: str = Path(pattern=U
             _refuse(409, "That change would leave nobody able to manage users.")
     if body.roles is not None:
         sv.accounts.set_roles(username, body.roles)
-    fields = {k: v for k, v in (("display_name", body.display_name), ("disabled", body.disabled)) if v is not None}
-    u = sv.accounts.update(username, **fields)
+    fields = {k: v for k, v in (("display_name", body.display_name), ("disabled", body.disabled), ("email", body.email)) if v is not None}
+    try:
+        u = sv.accounts.update(username, **fields)
+    except AccountError as e:
+        raise HTTPException(422, str(e)) from None
     _audit(request, p, 200, username, action="update_user", roles=list(u.roles), disabled=u.disabled)
     return _view(u)
 

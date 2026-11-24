@@ -7,7 +7,10 @@ const BANDS = [["all", "Any score"], ["high", "90% and above"], ["mid", "50% to 
 const bandQuery = (b) => ({ all: "", high: "&min_probability=0.9", mid: "&min_probability=0.5&max_probability=0.9", low: "&max_probability=0.5" })[b] || "";
 const QUEUE_PAGE = 25;
 let reviewCtx = null;              // where the compare page sits in its queue: {pid, rid, status, band, index, l, r}
-const queueUrl = (ctx, limit, offset) => R(ctx.pid, ctx.rid) + "/queue?limit=" + limit + "&offset=" + offset + "&status=" + ctx.status + bandQuery(ctx.band);
+const queueUrl = (ctx, limit, offset) => R(ctx.pid, ctx.rid) + "/queue?limit=" + limit + "&offset=" + offset + "&status=" + ctx.status + bandQuery(ctx.band) +
+  (ctx.assigned ? "&assigned=" + ctx.assigned : "");
+// Who has a pair: given to one reviewer so two people never work on the same pair (a lead shares the work out; anyone takes free pairs).
+const GIVEN = [["", "Everyone's pairs"], ["me", "Given to me"], ["free", "Not given to anyone"], ["others", "Given to others"]];
 
 async function openQueueItem(ctx, index, doneText) {
   const items = index >= 0 ? await api("GET", queueUrl(ctx, 1, index)) : [];
@@ -30,6 +33,30 @@ const WHY_FILTER = [["any", "Any reason"], ["rule", "Sent by a rule"], ["score",
 // How strongly a piece of evidence counts, in a word instead of the engine's bits
 const strength = (bits) => (Math.abs(bits) >= 6 ? "strong" : Math.abs(bits) >= 2 ? "some weight" : "weak");
 const comparisonTitle = (c) => (MATCH_COLUMNS[c] || [label(c)])[0];
+// A rule's name in words: the built-in rules have short titles, the project's own rules carry the name people gave them.
+async function ruleNamer(pid) {
+  const live = can("config.read") ? (await api("GET", P(pid) + "/config/decision")).find((v) => v.status === "active") : null;
+  const projectRules = live ? (await api("GET", P(pid) + "/config/decision/versions/" + live.version)).content.rules || [] : [];
+  return (id) => { const r = projectRules.find((x) => x.id === id); return r ? ruleTitle(r) : RULE_TITLE[id] || label(id); };
+}
+// Why the records of one person are together: each link between two of its records, by a rule, the score alone or a person's decision.
+async function linksSection(pid, rid, person, count) {
+  if (count < 2) return null;
+  const [lk, ruleWords] = await Promise.all([api("GET", R(pid, rid) + "/people/" + encodeURIComponent(person) + "/links"), ruleNamer(pid)]);
+  const rec = (k) => k[0] + " " + k[1];
+  const how = (x) => (x.how === "person" ? "Decided by " + x.actor + (x.reason ? ": " + x.reason : "")
+    : x.how === "score" ? "The match score alone (" + pct(x.probability) + ")" : "Rule: " + ruleWords(x.rule));
+  const byWords = Object.entries(lk.by).map(([k, n]) => plural(n, "link", "links") + " by " + (k === "person" ? "people's decisions" : k === "score" ? "the match score" : ruleWords(k)));
+  return [el("h2", { class: "section", id: "why-joined" }, "Why these records were joined"),
+    el("p", { class: "hint" }, "Each line joined two of these records in this run. A pair is decided once, by its strongest rule (a never-merge rule first, then ask a person, then merge); " +
+      "other rules that also held are listed but change neither the decision nor the match score."),
+    lk.links.length ? [el("p", {}, byWords.join("; ") + "."),
+      table(["Record", "Record", "Joined by", "Score", "Also true"], lk.links.map((x) => el("tr", {}, el("td", { class: "mono" }, rec(x.a)), el("td", { class: "mono" }, rec(x.b)),
+        el("td", {}, how(x)), el("td", { class: "num" }, x.probability == null ? "" : pct(x.probability)), el("td", {}, x.also.map(ruleWords).join("; "))))),
+      lk.more ? el("p", { class: "muted" }, "Only the first " + num(lk.links.length) + " links are listed.") : null]
+      : el("p", { class: "muted" }, lk.kept ? "No direct link is recorded for this run (the records may have been joined by an earlier decision on records that changed since)."
+        : "This run did not keep its decisions; run the project again to see why these records were joined.")];
+}
 async function viewInbox(pidArg, statusArg, ridArg) {
   const status = REVIEW_STATUS.includes(statusArg) ? statusArg : "open";
   const [rows] = await Promise.all([api("GET", "/review/inbox"), refreshCache()]);
@@ -48,12 +75,12 @@ async function viewInbox(pidArg, statusArg, ridArg) {
   const pid = cur.project_id;
   const rid = chosenRun;
   const older = rid !== newest;
-  const ctx = { pid, rid, status, band: "all", why: "any", q: "", offset: 0 };
+  const ctx = { pid, rid, status, band: "all", why: "any", q: "", offset: 0, assigned: cur.assigned_to_me && !older ? "me" : "" };
+  const lead = can("judgment.approve");
+  const people = can("judgment.write") ? await api("GET", P(pid) + "/reviewers") : [];
   // why a rule sent a pair here, in words: the built-in rules have short titles, the project's own rules carry the name people gave them
-  const live = can("config.read") ? (await api("GET", P(pid) + "/config/decision")).find((v) => v.status === "active") : null;
-  const projectRules = live ? (await api("GET", P(pid) + "/config/decision/versions/" + live.version)).content.rules || [] : [];
-  const ruleWords = (id) => { const r = projectRules.find((x) => x.id === id); return r ? ruleTitle(r) : RULE_TITLE[id] || label(id); };
-  const filtered = () => ctx.band !== "all" || ctx.why !== "any" || !!ctx.q;
+  const ruleWords = await ruleNamer(pid);
+  const filtered = () => ctx.band !== "all" || ctx.why !== "any" || !!ctx.q || !!ctx.assigned;
   // the filter bar: where the pairs come from (project, run) and which of them to list (score, why it is here, a name, id or city)
   const picker = el("select", {}, usable.map((x) => el("option", { value: x.project_id, selected: x.project_id === pid },
     x.project_name + (x.open == null ? "" : " (" + num(x.open) + ")"))));
@@ -63,15 +90,17 @@ async function viewInbox(pidArg, statusArg, ridArg) {
   const band = el("select", {}, BANDS.map(([v, t]) => el("option", { value: v }, t)));
   const why = el("select", {}, WHY_FILTER.map(([v, t]) => el("option", { value: v }, t)));
   const text = el("input", { type: "search", maxlength: "64", placeholder: "for example Sharma or P000001411" });
-  const apply = () => { ctx.band = band.value; ctx.why = why.value; ctx.q = text.value.trim(); return loadList(0, 0); };
-  for (const x of [band, why]) x.addEventListener("change", () => run(apply));
+  const given = el("select", { "aria-label": "Whose pairs" }, GIVEN.map(([v, t]) => el("option", { value: v, selected: v === ctx.assigned },
+    t + (v === "me" && cur.assigned_to_me && !older ? " (" + num(cur.assigned_to_me) + ")" : ""))));
+  const apply = () => { ctx.band = band.value; ctx.why = why.value; ctx.q = text.value.trim(); ctx.assigned = given.value; return loadList(0, 0); };
+  for (const x of [band, why, given]) x.addEventListener("change", () => run(apply));
   text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); run(apply); } });
   text.setAttribute("aria-label", "Find a pair by name, ID or city");
   text.placeholder = "Find a pair: name, ID or city";
   text.classList.add("wide-search");
   const filters = el("div", { role: "search", "aria-label": "Filter the pairs" },
-    el("div", { class: "row" }, usable.length > 1 ? picker : null, text, btn("Search", apply, "", "search"),
-      btn("Clear", () => { band.value = "all"; why.value = "any"; text.value = ""; return apply(); }, "ghost")),
+    el("div", { class: "row" }, usable.length > 1 ? picker : null, text, btn("Search", apply, "", "search"), people.length > 1 || cur.assigned_to_me ? given : null,
+      btn("Clear", () => { band.value = "all"; why.value = "any"; text.value = ""; given.value = ""; return apply(); }, "ghost")),
     el("details", { class: "advanced" }, el("summary", {}, "More filters: run, match score, why it is here"),
       el("div", { class: "filters" }, field("Run", runPick), field("Match score", band), field("Why it is here", why))));
   picker.setAttribute("aria-label", "Project");
@@ -121,6 +150,15 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       await Promise.all([loadList(ctx.offset, at), recount()]);
       say(plural(out.done.length, "pair", "pairs") + " decided." + (out.failed.length ? " Not done: " + out.failed.map((f) => f.pair + " (" + f.error + ")").join("; ") : ""), out.failed.length ? "bad" : "good");
     };
+    // give the ticked pairs to someone (a lead), take them yourself, or give them back
+    const giveTo = lead && people.length ? el("select", { "aria-label": "Give the ticked pairs to" }, people.map((x) => el("option", { value: x.username, selected: x.username === me.sub },
+      x.name + (x.username === me.sub ? " (you)" : "")))) : null;
+    const give = async (to) => {
+      if (!chosen.size) { say("Tick the pairs first.", "bad"); return; }
+      const out = await api("POST", P(pid) + "/review/assign", { to, items: [...chosen].map((it) => ({ person_l: it.person_l, person_r: it.person_r })) });
+      await Promise.all([loadList(ctx.offset, at), recount()]);
+      say(plural(out.pairs, "pair", "pairs") + (to ? " given to " + (to === me.sub ? "you" : to) : " given back: anyone can take them now") + ".", "good");
+    };
     const rowsEl = items.map((it, i) => {
       const cb = writer && it.state !== "decided" ? el("input", { type: "checkbox", "aria-label": "Select " + pairName(it), checked: chosen.has(it) }) : null;
       if (cb) cb.addEventListener("change", () => { if (cb.checked) chosen.add(it); else chosen.delete(it); selCount.textContent = num(chosen.size) + " selected"; });
@@ -128,6 +166,7 @@ async function viewInbox(pidArg, statusArg, ridArg) {
         el("button", { type: "button", class: "wl-open", "aria-current": i === at ? "true" : null, onclick: () => run(() => openPair(i)) },
           el("span", { class: "wl-title" }, pairName(it)), el("span", { class: "wl-score" }, it.forced ? "Rule" : pct(it.top_probability)),
           el("span", { class: "wl-meta" }, it.size_l + " + " + it.size_r + " records", it.city_l ? " · " + it.city_l : "", it.forced ? " · sent by a rule" : "",
+            it.assigned_to ? " · " + (it.assigned_to === me.sub ? "given to you" : "with " + it.assigned_to) : "",
             it.state !== "open" ? [" · ", statusTag(it.state)] : null)));
     });
     const last = ctx.offset + items.length;
@@ -137,6 +176,10 @@ async function viewInbox(pidArg, statusArg, ridArg) {
         writer ? btn(W().same, () => bulk("approve"), "small", null, { title: W().same + " for the ticked pairs" }) : null,
         writer ? btn(W().diff, () => bulk("reject"), "small", null, { title: W().diff + " for the ticked pairs" }) : null,
         el("span", { class: "grow" })) : null,
+      some && writer ? el("div", { class: "pane-tool" }, el("span", { class: "muted" }, "Ticked pairs:"),
+        giveTo ? [giveTo, btn("Give", () => give(giveTo.value), "small", null, { title: "Give the ticked pairs to this person" })]
+          : btn("Take", () => give(me.sub), "small", null, { title: "Give the ticked pairs to you, so nobody else works on them" }),
+        btn("Give back", () => give(null), "small ghost", null, { title: "Nobody has the ticked pairs any more" })) : null,
       items.length ? el("div", { class: "wl" }, rowsEl) : el("div", { class: "pane-empty" }, filtered() ? "No pairs match these filters."
         : status === "open" ? "Nothing to review here: every pair of this run is decided." : status === "unsure" ? "No pair is marked Not sure." : "No pairs in this view."),
       some || ctx.offset ? el("div", { class: "pane-foot" },
@@ -144,6 +187,22 @@ async function viewInbox(pidArg, statusArg, ridArg) {
         btn("", () => loadList(ctx.offset + QUEUE_PAGE, 0), "small icon", "next", { "aria-label": "Next page", disabled: items.length < QUEUE_PAGE }),
         el("span", { class: "grow" }),
         items.length ? (ctx.offset + 1) + " - " + last + (count != null && !filtered() ? " of " + num(count) : "") : "") : null);
+  }
+
+  // who has this pair, with Take / Give back (and a lead's Give to)
+  function holder(it) {
+    const one = async (to) => {
+      await api("POST", P(pid) + "/review/assign", { to, items: [{ person_l: it.person_l, person_r: it.person_r }] });
+      await Promise.all([loadList(ctx.offset, at), recount()]);
+      say(to ? "Given to " + (to === me.sub ? "you" : to) + "." : "Given back: anyone can take it now.", "good");
+    };
+    const mine = it.assigned_to === me.sub;
+    const pick = lead && people.length > 1 ? el("select", { "aria-label": "Give this pair to" }, people.filter((x) => x.username !== it.assigned_to)
+      .map((x) => el("option", { value: x.username }, x.name + (x.username === me.sub ? " (you)" : "")))) : null;
+    return el("div", { class: "row tight holder" }, el("span", { class: "muted" }, !it.assigned_to ? "Not given to anyone." : mine ? "Given to you." : "Given to " + it.assigned_to + "."),
+      !it.assigned_to ? btn("Take this pair", () => one(me.sub), "small", null, { title: "Nobody else works on it while you have it" }) : null,
+      it.assigned_to && (mine || lead) ? btn("Give back", () => one(null), "small ghost") : null,
+      pick ? [pick, btn("Give", () => one(pick.value), "small")] : null);
   }
 
   async function openPair(i, reveal) {
@@ -166,7 +225,15 @@ async function viewInbox(pidArg, statusArg, ridArg) {
       keys[kind] = keys[kind] || uuid();
       const body = { person_l: it.person_l, person_r: it.person_r, reason: note.value.trim() };
       if (kind === "approve" && conflict) body.confirm_id_conflict = true;
-      const out = await api("POST", base + "/decisions/" + kind, body, { "Idempotency-Key": keys[kind] });
+      let out;
+      try { out = await api("POST", base + "/decisions/" + kind, body, { "Idempotency-Key": keys[kind] }); }
+      catch (e) {
+        // another reviewer decided it meanwhile: never replaced silently; a lead may replace it after saying so
+        if (!/already decided this pair/.test(e.message) || !lead) throw e;
+        if (!(await confirmDialog("Replace another reviewer's decision?", e.message.split(". Your decision")[0] + ". Replace it with yours? Both stay in the history.", "Replace their decision"))) return;
+        keys[kind] = uuid();
+        out = await api("POST", base + "/decisions/" + kind, { ...body, replace: true }, { "Idempotency-Key": keys[kind] });
+      }
       const words = { approve: W().same, reject: W().diff, unsure: "Not sure" }[kind];
       const msg = words + " recorded for " + pairName(it) + (out.pending_approval ? ". It waits for a second person." : ". It applies at the project's next run.");
       const stays = status === "all" || (status === "unsure" && kind === "unsure");
@@ -177,10 +244,11 @@ async function viewInbox(pidArg, statusArg, ridArg) {
         say("The decision on " + pairName(it) + " was undone.", "good");
       } });
     };
+    const theirs = writer && it.assigned_to && it.assigned_to !== me.sub && !lead;     // another reviewer's pair: look, do not decide
     const B = {
-      same: writer ? btn(W().same, () => decide("approve"), "primary", "check", { "aria-keyshortcuts": "S", title: "S" }) : null,
-      diff: writer ? btn(W().diff, () => decide("reject"), "", "x", { "aria-keyshortcuts": "D", title: "D" }) : null,
-      unsure: writer ? btn("Not sure", () => decide("unsure"), "", null, { "aria-keyshortcuts": "U", title: "U" }) : null,
+      same: writer && !theirs ? btn(W().same, () => decide("approve"), "primary", "check", { "aria-keyshortcuts": "S", title: "S" }) : null,
+      diff: writer && !theirs ? btn(W().diff, () => decide("reject"), "", "x", { "aria-keyshortcuts": "D", title: "D" }) : null,
+      unsure: writer && !theirs ? btn("Not sure", () => decide("unsure"), "", null, { "aria-keyshortcuts": "U", title: "U" }) : null,
       prev: btn("Previous", () => (i > 0 ? openPair(i - 1) : ctx.offset ? loadList(ctx.offset - QUEUE_PAGE, QUEUE_PAGE - 1) : null), "", "prev",
         { "aria-keyshortcuts": "P", title: "P", disabled: i === 0 && ctx.offset === 0 }),
       next: btn("Next", () => (i + 1 < items.length ? openPair(i + 1) : loadList(ctx.offset + QUEUE_PAGE, 0)), "", "next",
@@ -228,7 +296,9 @@ async function viewInbox(pidArg, statusArg, ridArg) {
           c.unmasked ? " · Identifiers shown in full; this view is logged." : " · Identifiers masked.")),
       c.hard_conflicts.length ? el("div", { class: "notice bad", role: "note" }, el("strong", {}, "Conflicting identifiers: "), c.hard_conflicts.map(fieldTitle).join(", ") + ". These are probably two different people.",
         writer ? el("label", { class: "check" }, conflict, el("span", {}, "I confirm they are one person despite the conflicting identifiers (a note is required)")) : null) : null,
-      el("div", { class: "pane-actions" }, writer ? [B.same, B.diff, B.unsure, note] : el("span", { class: "muted" }, "Your role can look but not decide."), el("span", { class: "grow" }), more),
+      writer ? holder(it) : null,
+      el("div", { class: "pane-actions" }, theirs ? el("span", { class: "muted" }, "Given to " + it.assigned_to + ": only they or a lead decide it.")
+        : writer ? [B.same, B.diff, B.unsure, note] : el("span", { class: "muted" }, "Your role can look but not decide."), el("span", { class: "grow" }), more),
       subBar, subBody].filter(Boolean));
     pick("compare");
   }
@@ -407,6 +477,7 @@ async function viewPerson(pid, rid, person, reveal) {
     const why = await revealIdentifiers("Show identifiers");
     if (why) await go(() => viewPerson(pid, rid, person, why));
   })] : [];
+  const joined = await linksSection(pid, rid, person, v.records.length);
   show(page(W().One + " " + person, plural(v.record_count, "record", "records") + " from " + (v.sources || []).join(", ") + ".", actions,
     crumbs(crumb("Projects", "/projects"), crumb(projectName(pid), P(pid)), crumb("Run", R(pid, rid)), crumb(W().Many, R(pid, rid) + "/customers"), person)),
   v.conflict_fields && v.conflict_fields.length ? el("div", { class: "notice warn", role: "note" }, "The sources disagree on: " + v.conflict_fields.map((f) => ((v.own || []).find((o) => "extra_" + o.name === f) || { title: fieldTitle(f) }).title).join(", ") + ". The golden record shows the best-supported value.") : null,
@@ -418,7 +489,8 @@ async function viewPerson(pid, rid, person, reveal) {
   el("h2", { class: "section" }, "Source records"),
   table([...(writer && v.records.length > 1 ? [""] : []), "Source", "Record", ...recTitles], rows),
   writer && v.records.length > 1 ? el("div", { class: "row" }, btn("Split the ticked records into a new " + W().person, split, "", "split"),
-    el("span", { class: "muted" }, "Use this when records of two " + W().diff.toLowerCase() + " were merged.")) : null);
+    el("span", { class: "muted" }, "Use this when records of two " + W().diff.toLowerCase() + " were merged.")) : null,
+  joined);
 }
 
 // ---- decisions: what was decided, what became of it, and undo -------------------------------------------------------------------

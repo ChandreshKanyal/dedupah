@@ -118,7 +118,7 @@ def _hide(col: str, v):
 @router.get(RUN + "/datasets/{name}/rows")
 def dataset_rows(request: Request, name: DatasetName, project_id: str = PID, run_id: str = RID, limit: int = Query(25, ge=1, le=100),
                  offset: int = Query(0, ge=0, le=10_000_000), q: str = Query("", max_length=60), unmask: bool = False,
-                 reason: str | None = Query(None, max_length=300), p: Principal = READ_PERSON):
+                 built: Literal["", "several", "single"] = "", reason: str | None = Query(None, max_length=300), p: Principal = READ_PERSON):
     """A page of a result table to look at on screen. Identifiers, contact details and the sources' own extra columns are masked unless
     the person holds `pii.unmask` and gives a reason (logged, rate limited). Paging through a whole table unmasked is an export in all but name,
     so it also needs `results.export`; stewards see people one at a time (Review, Customers)."""
@@ -137,7 +137,7 @@ def dataset_rows(request: Request, name: DatasetName, project_id: str = PID, run
     readable = tuple(f.golden_col for f in own if f.kind not in MASKED_KINDS)
     exact = tuple(f.golden_col for f in own if f.kind in MASKED_KINDS)
     try:
-        page = preview(run_dir, name, limit, offset, q, readable, exact)
+        page = preview(run_dir, name, limit, offset, q, readable, exact, built)
     except ExportError as e:
         raise HTTPException(404, str(e)) from None
     hide = [i for i, c in enumerate(page["columns"]) if c in SENSITIVE or (c.startswith("extra_") and c not in readable)]

@@ -28,7 +28,7 @@ MANAGE_ACCESS = Depends(require_or_owner("project.access"))      # a project's o
 CREATE = Depends(require("projects.create"))
 DELETE_DATA = Depends(require("data.delete"))
 CONNECTION_ID = r"^[A-Za-z0-9_-]{1,40}$"
-SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "oversize_people", "largest_person", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden", "source_quality", "incremental", "duplicate_record_ids", "fields_not_read", "rules_not_applied",
+SUMMARY_KEYS = ("records", "sources", "candidate_pairs", "auto_merged_pairs", "review_pairs", "people", "single_people", "merged_people", "oversize_people", "largest_person", "review_items", "households", "seconds", "records_by_source", "scoring", "judgments", "golden", "source_quality", "incremental", "duplicate_record_ids", "fields_not_read", "rules_not_applied",
                 "extra_columns_skipped", "own_fields_empty")
 
 
@@ -160,7 +160,20 @@ def _progress(request: Request, sv, project_id: str, p: Principal, latest) -> di
         step = "review"
     else:
         step = "done"
-    return {"step": step, "open_review": review, "pending_approvals": waiting}
+    return {"step": step, "open_review": review, "pending_approvals": waiting, "assigned_to_me": assigned_open(request, sv, project_id, p) if review else 0}
+
+
+def assigned_open(request: Request, sv, project_id: str, p: Principal) -> int:
+    """Open pairs of the latest run that were given to this person."""
+    from dedupe.review.assign import pair_key
+    mine = {k for k, a in sv.assignments.of_project(project_id).items() if a.assignee == p.actor}
+    run = sv.jobs.latest_succeeded(project_id) if mine else None
+    if run is None:
+        return 0
+    try:
+        return len(run_scope(request, project_id, run.id).review.queue(limit=10_000, keep=lambda a, b: pair_key(a, b) in mine))
+    except HTTPException:
+        return 0
 
 
 # ---- home ----------------------------------------------------------------------------------------------------------------
@@ -448,6 +461,7 @@ def delete_project(request: Request, body: DeleteProjectIn, project_id: str = PI
     files = sv.uploads.delete_for_project(project_id)
     sv.schedules.delete_for_project(project_id)
     sv.health.delete_for_project(project_id)
+    sv.assignments.delete_for_project(project_id)
     _forget_cached(sv, project_id)
     try:
         sv.workspace.delete(project_id)
