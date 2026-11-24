@@ -360,7 +360,7 @@ function matchingSummary(content, cat) {
     step(4, "Everything else", null, el("p", {}, leftoverWords(content))));
 }
 // Ready-made settings for the pairs no rule catches. Careful is how a project starts (its rules alone decide); Balanced and Catch more let
-// the match score decide the rest. Measured on synthetic data (1,200 households, PROGRESS section 104): Careful found about 4 in 10
+// the match score decide the rest. Measured on synthetic data (1,200 households, docs/DEVELOPMENT_LOG.md section 104): Careful found about 4 in 10
 // duplicates, Balanced and Catch more about 9 in 10, all three with almost no wrong merges; hence Balanced is the one recommended.
 const PRESETS = [
   ["careful", "Careful", "Only your rules merge; a pair no rule catches stays apart. On test data: about 4 in 10 duplicates found, almost never a wrong merge.", { use_score: false }],

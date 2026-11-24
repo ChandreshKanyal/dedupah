@@ -1,5 +1,5 @@
 """The shipped starting points: the standard matching rules, the golden-record rules, the starter rule for records without identifiers, and
-the three ready-made settings the portal offers (measured on synthetic data, PROGRESS section 104).
+the three ready-made settings the portal offers (measured on synthetic data, docs/DEVELOPMENT_LOG.md section 104).
 
 The JSON files here are the packaged copies of configs/decision_default.json and configs/survivorship_default.json (a test keeps them equal),
 so an installed package (pip install) works without the repository's configs folder.

@@ -1,6 +1,6 @@
 """The judgment log: every human decision about who is (not) the same person, kept forever and replayed on every run.
 
-Design rules (see PROGRESS.md section 25):
+Design rules (see docs/DEVELOPMENT_LOG.md section 25):
   * APPEND-ONLY. Rows are never updated or deleted (database triggers refuse it). Undo, supersede, approve and decline are
     new rows that point at an earlier one. The current state is computed by replaying the log.
   * KEYED BY SOURCE RECORDS, never by group labels or person IDs: those change between runs, a (source_id, source_record_id)

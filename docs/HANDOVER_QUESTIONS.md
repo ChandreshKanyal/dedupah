@@ -1,8 +1,8 @@
 # Answers to the handover questions (2026-11-24)
 
 These questions were asked against an older version. Each answer says what the **current** version does: what already existed, and what was
-added for the question. Everything was tested on synthetic data only (`tests/test_review_questions.py`, browser checks in
-`~/agent-review/questions/`). PROGRESS.md section 106 has the engineering details.
+added for the question. Everything was tested on synthetic data only (`tests/test_review_questions.py` and browser checks).
+docs/DEVELOPMENT_LOG.md section 106 has the engineering details.
 
 | # | Section | Question (short) | Status |
 |---|---|---|---|
@@ -23,7 +23,7 @@ added for the question. Everything was tested on synthetic data only (`tests/tes
 + same house". Name and birth date were written out three times.
 
 **Now:** one rule, **"Similar name, same birth date, and a phone, email or house agrees"**. It is a group: *all of* (name, birth date,
-*any of* (phone, email, house)). It decides exactly as the three did: the benchmark is unchanged (`~/agent-review/scoring/presets.py`:
+*any of* (phone, email, house)). It decides exactly as the three did: the benchmark is unchanged (the ready-made settings benchmark:
 Balanced F1 0.931 with identifiers, 0.918 without). The rule builder (Rules, Edit on any rule) makes such groups for any rule.
 
 Other rules still name some of these columns again, on purpose. Each rule is a separate business decision that can be switched off on

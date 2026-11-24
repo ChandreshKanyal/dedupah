@@ -6,7 +6,7 @@ A finished pipeline run is loaded once. For a review ORDER (strategy), a reviewe
 the clustering step is re-run (seconds, no full pipeline), and the result is scored against the truth. That gives accuracy
 versus number of reviews for each strategy and noise level.
 
-    python -m dedupe.review.simulate --work data/staging --truth data/synthetic --out docs/REVIEW_SIMULATION.md
+    python -m dedupe.review.simulate --work data/staging --truth data/synthetic --out data/review_simulation.md
 """
 import argparse
 import math
@@ -202,7 +202,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--work", type=Path, default=Path("data/staging"))
     ap.add_argument("--truth", type=Path, default=Path("data/synthetic"))
-    ap.add_argument("--out", type=Path, default=Path("docs/REVIEW_SIMULATION.md"))
+    ap.add_argument("--out", type=Path, default=Path("data/review_simulation.md"))
     ap.add_argument("--seeds", type=int, default=3)
     a = ap.parse_args()
     run = load_run(a.work, a.truth)

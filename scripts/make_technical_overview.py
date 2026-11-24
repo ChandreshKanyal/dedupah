@@ -1,5 +1,5 @@
 """Builds docs/Technical_Overview.docx: a short technical overview with step-by-step use of the portal, the command line and the service.
-Edit the text here and run `python docs/tools/make_technical_overview.py` (needs python-docx). The detailed reference is README.md."""
+Edit the text here and run `python scripts/make_technical_overview.py` (needs python-docx). The detailed reference is README.md."""
 from pathlib import Path
 
 from docx import Document
@@ -9,7 +9,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-OUT = Path(__file__).resolve().parents[1] / "Technical_Overview.docx"
+OUT = Path(__file__).resolve().parents[1] / "docs" / "Technical_Overview.docx"
 doc = Document()
 sec = doc.sections[0]
 sec.page_width, sec.page_height = Cm(21.0), Cm(29.7)
@@ -163,7 +163,7 @@ para("Technical overview: what it does, how it works, and how to use it from the
 para("Version of 24 November 2026", italic=True, size=9, after=10)
 note(" This is a short overview for readers who need the big picture and the main steps. The complete reference is README.md in the "
      "repository: every command and option, every setting, the rule language, the REST endpoints, the output files and troubleshooting. "
-     "The design record with every decision and its reasons is PROGRESS.md.", "Overview only.")
+     "The design record with every decision and its reasons is docs/DEVELOPMENT_LOG.md.", "Overview only.")
 note(" Everything described here is tested on synthetic (generated) data only. It has not run on real customer data, has had no "
      "independent security test, and the legal points (DPDP Act 2023, RBI KYC, IRDAI, UIDAI rules on Aadhaar) have not been reviewed.",
      "Status.")
@@ -376,7 +376,8 @@ step(5, " Face images and embeddings are biometric data: consent and purpose lim
 
 doc.add_heading("Where to find more", level=1)
 bullet("every command, option, setting, rule condition, REST endpoint, output file and troubleshooting step.", "README.md: ")
-bullet("the design record: what was built, why, how it was tested, and the known gaps.", "PROGRESS.md: ")
+bullet("where the work stands now, open decisions and how to continue.", "PROGRESS.md: ")
+bullet("the design record: what was built, why, how it was tested, and the known gaps.", "docs/DEVELOPMENT_LOG.md: ")
 bullet("the security design and threat model.", "docs/SECURITY.md: ")
 bullet("answers to the questions raised at handover.", "docs/HANDOVER_QUESTIONS.md: ")
 

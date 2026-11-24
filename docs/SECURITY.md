@@ -1,6 +1,6 @@
 # Security: threat model, controls, and what is NOT done
 
-Status: design and automated tests only. **No independent penetration test, no certification, no legal review has happened.** Nothing here may be presented as "secure" or "compliant" to a customer; it describes what the software does and what must still be done around it. Regulation facts come from secondary sources (see PROGRESS.md section 35) and must be checked against the primary texts by the customer's compliance team.
+Status: design and automated tests only. **No independent penetration test, no certification, no legal review has happened.** Nothing here may be presented as "secure" or "compliant" to a customer; it describes what the software does and what must still be done around it. Regulation facts come from secondary sources (see docs/DEVELOPMENT_LOG.md section 35) and must be checked against the primary texts by the customer's compliance team.
 
 ## 1. What we protect and from whom
 
@@ -48,7 +48,7 @@ Out of scope for the software (the deployment must cover them): network perimete
 
 ## 3. Known gaps (do not claim otherwise)
 
-1. **Encryption at rest**: pipeline files and spill files are encrypted with a key from `DEDUPE_DATA_KEY` (section 41 of PROGRESS.md, `dedupe.crypto`). NOT covered: customer input files, the logs database (use an encrypted database volume), job logs, swap, backups, the key itself (use a KMS/HSM). Volume encryption stays the baseline underneath.
+1. **Encryption at rest**: pipeline files and spill files are encrypted with a key from `DEDUPE_DATA_KEY` (section 41 of docs/DEVELOPMENT_LOG.md, `dedupe.crypto`). NOT covered: customer input files, the logs database (use an encrypted database volume), job logs, swap, backups, the key itself (use a KMS/HSM). Volume encryption stays the baseline underneath.
 2. **Business-unit scoping** inside a customer is not built; read endpoints expose names, dates of birth and addresses to every `person.read` holder (identifiers are masked and unmasking is controlled and logged). Write endpoints (2.6c, built) use strict bodies, the verified identity as actor, an optional idempotency key, bulk caps, four-eyes by identity, and log every change (without values) to the security log.
 3. **No revocation list** for tokens: rely on short lifetimes and the identity provider's session control.
 4. **Rate limits are in memory, per process**: behind several workers or nodes they must also be applied at the gateway/WAF. Every denial writes one log row, so a flood can grow the log: the limits sit before logging, but a gateway limit is still required.

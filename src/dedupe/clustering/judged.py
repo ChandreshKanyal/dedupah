@@ -1,6 +1,6 @@
 """Steward judgments -> clustering constraints, and an audit of whether each one held.
 
-Policy (PROGRESS.md section 25):
+Policy (docs/DEVELOPMENT_LOG.md section 25):
   * a steward decision beats automation: 'same person' is an edge heavier than any automatic one, 'different person' and
     'split' are hard separations (the records inside each split part are glued together so the cut falls between the parts); a never-merge veto on exactly the same pair is dropped when a steward says same person;
   * 'same person' joins the two PEOPLE the steward compared, not only the record pair it was stored on: a rule veto between any record of

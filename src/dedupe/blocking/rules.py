@@ -57,7 +57,7 @@ DEFAULT_RULES = [
 ]
 
 # Off by default. name_city produced ~47% of all candidate pairs at 138k records and grows faster than the data, yet almost
-# none of its pairs carry enough evidence to merge or review (see PROGRESS.md section 20); removing it raised F1 slightly.
+# none of its pairs carry enough evidence to merge or review (see docs/DEVELOPMENT_LOG.md section 20); removing it raised F1 slightly.
 OPTIONAL_RULES = [
     # Measured 2026-10-07 (section 53, step 4): finds more true pairs (no IDs: 0.888 -> 0.931 of them) but they carry no evidence besides the
     # name, so scoring rejects them (recall unchanged), and with IDs the extra pairs lowered recall 0.857 -> 0.763. Off by default.

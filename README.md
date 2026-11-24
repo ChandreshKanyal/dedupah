@@ -18,8 +18,16 @@ There are three ways to use the same engine:
 > on Aadhaar) have not been reviewed by counsel. Read [Security and privacy](#13-security-and-privacy) before using real data.
 
 Other documents:
-- [docs/Technical_Overview.docx](docs/Technical_Overview.docx): a short overview (Word) for readers who do not need every detail.
-- [PROGRESS.md](PROGRESS.md): the full design record, with every decision and its reasons.
+
+| Document | What it is |
+|---|---|
+| [docs/Technical_Overview.docx](docs/Technical_Overview.docx) | a short overview (Word) for readers who do not need every detail |
+| [PROGRESS.md](PROGRESS.md) | where the work stands, the open decisions, how to continue |
+| [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md) | the full design record, with every decision and its reasons |
+| [docs/SECURITY.md](docs/SECURITY.md) | the security design and threat model |
+| [docs/BENCHMARK.md](docs/BENCHMARK.md) | measured accuracy and speed on synthetic data |
+| [docs/HANDOVER_QUESTIONS.md](docs/HANDOVER_QUESTIONS.md) | answers to the questions raised at handover |
+| [docs/RESEARCH_MULTIMODAL.md](docs/RESEARCH_MULTIMODAL.md) | research for the next phase (ID-card images, face matching) |
 
 ## Contents
 
@@ -842,9 +850,11 @@ Layout:
 | `src/dedupe/sdk.py`, `cli.py`, `defaults/` | the library, the `dedupe` command, the shipped rules |
 | `configs/` | the shipped rule files and the synthetic sources' mapping |
 | `tests/` | the test suite |
-| `docs/` | security, benchmark, technical overview, handover answers |
+| `docs/` | the documents listed at the top of this file |
+| `scripts/` | `security_scan.py` (lint, bandit, dependency audit, SBOM), `make_technical_overview.py` (rebuilds the Word overview) |
 
-`PROGRESS.md` is the living design record: read its first section before changing anything.
+Before changing anything, read `PROGRESS.md` (current state and working agreements). Record each piece of work as a numbered section in
+`docs/DEVELOPMENT_LOG.md`.
 
 ---
 
