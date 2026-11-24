@@ -7,12 +7,12 @@ fields, and the reason when given) and is rate limited.
 Names, dates of birth and addresses are shown to everyone who may read people: that is a policy choice stewards need, not a masking guarantee.
 """
 import json
-from pathlib import Path as Path_
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 
+import dedupe.defaults as defaults
 from dedupe.governance.diff import describe_changes
 from dedupe.governance.store import ConfigError
 from dedupe.identity import successor
@@ -267,37 +267,17 @@ def config_version(request: Request, name: ConfigName, project_id: str = PID, ve
 
 
 DEFAULT_FILES = {"decision": "decision_default.json", "survivorship": "survivorship_default.json"}
-
-
-_SIMILAR_NAME = {"comparison": "name", "in": ["identical cleaned name", "same name sounds (any order)", "first+last sound equal", "initial + same surname",
-                                              "one side first-name only, first names agree", "fuzzy full-name match (JW>=0.90)"]}
-_SAME_BIRTH_DATE = {"comparison": "dob", "in": ["exact date", "exact date, but a 1-Jan default", "day and month swapped"]}
-# One rule, not three: the name and the birth date are the core, and any one contact or the same house confirms it (asked by a new user who
-# saw Name and Date of birth written out again and again). The engine evaluates it exactly as the three separate rules did.
-PROJECT_MATCHES = [
-    {"id": "match_name_dob_contact", "type": "auto_merge",
-     "reason": "Name is similar, and date of birth is the same, and phone, email or the house address agrees",
-     "when": {"all": [_SIMILAR_NAME, _SAME_BIRTH_DATE, {"any": [{"comparison": "phone", "in": ["same primary number", "number matches an alternate number"]},
-                                                                {"comparison": "email", "is": "same email"},
-                                                                {"comparison": "address", "is": "same PIN + house number + similar text"}]}]}},
-]
+PROJECT_MATCHES = defaults.STARTER_RULES
 
 
 def _default_content(name: str) -> dict:
-    """What a run uses when the project has no live version: the shipped file (decision, survivorship) or the settings' own defaults."""
+    """What a run uses when the project has no live version: the shipped file (decision, survivorship) or the settings' own defaults.
+    A project starts from rules only ("careful"): a pair no rule catches stays apart until the project lets the score decide; the starter rule
+    lets records without a PAN or Aadhaar match on name, birth date and one contact."""
     if name == "settings":
         from dedupe.governance.settings import MatchingSettings
         return MatchingSettings().model_dump(mode="json")
-    for base in (Path_.cwd(), Path_(__file__).resolve().parents[3]):
-        f = base / "configs" / DEFAULT_FILES[name]
-        if f.exists():
-            content = json.loads(f.read_text(encoding="utf-8"))
-            if name != "decision":
-                return content
-            # A project starts from rules only: a pair no rule catches stays apart until the project lets the score decide. So that
-            # records without a PAN or Aadhaar can still match, the start adds three column matches (name, birth date and one contact).
-            return {**content, "use_score": False, "rules": content["rules"] + PROJECT_MATCHES}
-    raise _not_found()
+    return defaults.decision("careful") if name == "decision" else defaults.survivorship()
 
 
 @router.get(PROJ + "/config/{name}/default")

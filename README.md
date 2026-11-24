@@ -6,6 +6,18 @@ into households, and explains every decision. Built for insurance and banking da
 **Status:** Phase 1 (core engine) complete and measured on synthetic data. Not yet validated on real data.
 See [PROGRESS.md](PROGRESS.md) for the full design record, decisions and caveats, and [docs/BENCHMARK.md](docs/BENCHMARK.md) for results.
 
+## Use it from a terminal or Python (no screen)
+
+```
+pip install .                                   # the library and the `dedupe` command (add ".[api]" for the REST service)
+dedupe inspect crm.csv loans.xlsx               # what each column holds and which field it fills
+dedupe run crm.csv loans.xlsx -o out --format xlsx --outputs golden,map,review,clean,links
+dedupe explain out P000000010                   # why that person's records were joined
+dedupe serve --no-ui                            # the REST API as a headless service
+```
+In Python: `from dedupe import sdk; sdk.run(["crm.csv"], out="out")`. Short technical summary of the whole platform (algorithms, stack,
+scheduling, the next phase): [docs/TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md).
+
 ## Run it (development, local Python)
 
 ```

@@ -228,5 +228,6 @@ def create_app(settings: ApiSettings | None = None, *, verifier: TokenVerifier |
     app.include_router(results_router)
     app.include_router(review_router)
     app.include_router(schedules_router)
-    app.include_router(ui_router)
+    if settings.ui_enabled:                       # headless (DEDUPE_UI=0): the REST API only, no screens
+        app.include_router(ui_router)
     return app

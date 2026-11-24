@@ -3,7 +3,11 @@
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
 > Last updated: 2026-11-24 (session 6, EC2 server, section 106)
 
-## >>> RESUME HERE (latest state: 2026-11-24, session 6: handover questions answered in the product (section 106)) <<<
+## >>> RESUME HERE (latest state: 2026-11-24, session 6: library / terminal / headless service (section 107)) <<<
+
+**Done (2026-11-24): the engine without a screen (section 107):** `pip install .` gives the `dedupe` command (inspect, init, run, explain,
+serve) and `from dedupe import sdk`; `dedupe serve --no-ui` is the REST API headless. Short technical summary for others:
+docs/TECHNICAL_OVERVIEW.md (its section 8 proposes the integration with Shankar's image engine: not agreed with him yet).
 
 **Done (2026-11-24): the colleague's handover questions (section 106, answers in docs/HANDOVER_QUESTIONS.md):** one combined starter
 rule; run page split into matched / unmatched customers with a Customers filter; "Why these records were joined" on the customer page;
@@ -2608,3 +2612,25 @@ Matching). Check each against the current version; build what is missing, test i
   way: the Give controls squeezed the list toolbar (own row now); "1 pair are given"; decision buttons on a pair given to someone else.
 - **Known gaps:** email was not tried against a real mail server; OIDC users have no address in the portal (Home and Review still show
   their work); assignments are per pair of people with no due dates or workload view; lessons suggest, they do not apply a change.
+
+## 107. The engine as a library, a terminal command and a headless service; technical overview (2026-11-24, session 6)
+
+**The ask:** a very short technical document (what the portal does, algorithms, ML, stack, scheduling, matching), and the product usable
+without a screen: install on any Linux machine, point it at files, get matching, extraction and outputs as required; next phase:
+integration with Shankar's image engine. Document: [docs/TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md).
+- **`dedupe.defaults`:** the shipped matching and golden-record rules packaged with the code (copies of `configs/*_default.json`, a test
+  keeps them equal), the starter rule and the three presets (careful / balanced / catch_more). `routes_read._default_content` uses it.
+- **`dedupe.sdk`:** `inspect(file)` (columns, detected types, automatic mapping with confidence, row-id column; no values),
+  `job_for(files)` (an editable job), `run(files | job, out, preset, fmt, outputs, rules, golden_rules)` -> `Result` (summary, files,
+  `table(name)`, `explain(person)`), `explain(out, person)`. Outputs: golden, map, review, clean, links; formats csv, xlsx, parquet, json;
+  `summary.json` always. Runs fully local; the review queue uses an in-memory decision store.
+- **`dedupe` command** (`dedupe.cli`, `[project.scripts]`): inspect, init, run, explain, serve. Exit 0 on success, 2 on a problem the person
+  can fix (message on stderr).
+- **Headless service:** `ui_enabled` / `DEDUPE_UI=0` (or `dedupe serve --no-ui`): the REST API without the portal's screens.
+- **Checked:** `tests/test_sdk_cli.py` (packaged rules equal the shipped ones; inspect; run with all outputs and explain; job file, bad
+  mapping and unknown output refused; headless API). A clean `python:3.12-slim` container: `pip install .` then inspect, run (2,404 records
+  -> 1,997 people, as in the portal), explain, a bad file, init + edited job, JSON output, the Python SDK, and `dedupe serve --no-ui`
+  (health 200, /ui 404, /projects 401).
+- **Known gaps:** the distribution name `dedupe` clashes with an unrelated PyPI package (install in a virtual environment; rename before
+  publishing); no PyPI release; one machine only; no match-one-record call yet; Shankar's image engine not looked at (the overview's
+  section 8 is a proposal to agree with him).
