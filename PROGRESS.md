@@ -1,9 +1,14 @@
 # PROGRESS.md — Customer Data Deduplication Platform
 
 > **Living document. Read this first at the start of every session, update it at the end of every step.**
-> Last updated: 2026-11-19 (session 6, EC2 server)
+> Last updated: 2026-11-24 (session 6, EC2 server)
 
 ## >>> RESUME HERE (latest state: 2026-11-19, session 6: Data and Rules redesign (section 104) and the no-code rule builder (section 105)) <<<
+
+**Next (asked 2026-11-19, no answer yet):** (1) should new projects start on "Balanced" instead of "Careful" (see below)? (2) push the four
+unpushed commits? Not swept yet: second-approval flows end to end, schedules, database destinations; the run dialog still names rule
+versions in a one-person project. Earlier unanswered: learning from steward decisions, a match-one-record API, scale, moving the live
+portal port, auto-start after reboot. Confirm with the user before starting a new phase.
 
 **Done (2026-11-19): the rule builder (section 105):** every matching rule opens in a side-panel builder (groups All / Any / None / Not
 all, lines for how two records compare, a column's values, one column against another column of the other record, which data source,
@@ -21,12 +26,15 @@ production software: every choice must show up and work on every later screen (m
 `fixed_weights`, `compare_within_source`, `record_name`, `record_name_plural`, `build_households`; mapping `custom`; `CustomField.column`
 reads a kept column) and in the portal (mapping, "Fields and search" = `ui/js/fields.js`, own fields and kept columns in matching rules,
 save-time checks, starter rules, Review / results / search / corrections with own fields, words per project via `wordsOf`/`kindLabel`).
-One step bar on every project page (`journeyBar` in `projects.js`; Rules = tabs Matching rules / Golden record / Fields and search). The run
+One step bar on every project page (`journeyBar` in `projects.js`; Rules was three tabs then, one page since section 104). The run
 page lists what it could not use. Mapping joins two columns or uses one as a fallback. All on synthetic data only.
 
 **State of the code:** suite 592 passed, 4 skipped (about 10 minutes; run it on a snapshot copy of src/tests/configs to keep editing
 meanwhile), ruff clean, customer benchmark unchanged (F1 0.931 / 0.918). GitHub: pushed up to `11e2fe1`; `7b7431c`, `36a90ab` and the
-section 104 and 105 commits are not pushed (push only when the user asks). Browser checks of the redesign: `~/agent-review/redesign/`. Images `dedupah-api` and
+section 104 (`4b52a87`) and 105 (`28bbcab`) commits are not pushed (push only when the user asks). Browser checks of the redesign:
+`~/agent-review/redesign/` (d1, d2, r1-r3, w1 walk-through); of the rule builder: `~/agent-review/builder/` (setup.py then b1.py).
+UI files: `ui/js/rulespage.js` (the Rules page), `ui/js/rulebuilder.js` (the builder), `rules.js` (cards, presets, golden form, Fields and
+search panel). After a server reboot: `docker compose up -d postgres`, then the preview `docker run` (memory `ec2-server-constraints`). Images `dedupah-api` and
 `dedupe-test` rebuilt 2026-11-17 (before section 101-102; the preview mounts src and configs, so it runs the newest code).
 
 **Checks to reuse:** `~/agent-review/e2e/` (lib.py helpers; e1 kept column in a rule, e2 own-fields-only file, e3 corrections/search/

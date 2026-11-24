@@ -215,3 +215,9 @@ Order of value: phases 1, 2 and 4 change the feel the most. Phase 0 makes the re
 3. **Hide versions, approvals and reasons** when second approval is off?
 4. **Rename "connection" to "data source"** and the other words in the glossary?
 5. **Start with phase 0** (splitting the code, invisible to you), or go straight to phase 1 so you see a change sooner?
+
+
+**Update 2026-11-19 (PROGRESS sections 104-105):** the Data and Rules redesign is built: the Data page as a summary plus one card per
+source, mapping in three groups with a side panel, Rules as one page (ready-made settings, rule cards, golden record as a default plus
+exceptions, one save) and a no-code rule builder in a side panel (groups of plain lines, value checks, one column against another, live
+test on the latest run). "Fields and search" is the Rules page's Advanced part.
