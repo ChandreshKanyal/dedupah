@@ -7,7 +7,8 @@
 
 **Done (2026-11-24): the engine without a screen (section 107):** `pip install .` gives the `dedupe` command (inspect, init, run, explain,
 serve) and `from dedupe import sdk`; `dedupe serve --no-ui` is the REST API headless. Short technical summary for others:
-docs/TECHNICAL_OVERVIEW.md (its section 8 proposes the integration with Shankar's image engine: not agreed with him yet).
+docs/Technical_Overview.docx (Word; its last section proposes the integration with Shankar's image engine: not agreed with him yet);
+README.md is the detailed reference (rewritten 2026-11-24, section 108).
 
 **Done (2026-11-24): the colleague's handover questions (section 106, answers in docs/HANDOVER_QUESTIONS.md):** one combined starter
 rule; run page split into matched / unmatched customers with a Customers filter; "Why these records were joined" on the customer page;
@@ -2617,7 +2618,7 @@ Matching). Check each against the current version; build what is missing, test i
 
 **The ask:** a very short technical document (what the portal does, algorithms, ML, stack, scheduling, matching), and the product usable
 without a screen: install on any Linux machine, point it at files, get matching, extraction and outputs as required; next phase:
-integration with Shankar's image engine. Document: [docs/TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md).
+integration with Shankar's image engine. Document: first written as docs/TECHNICAL_OVERVIEW.md, replaced by the Word file (section 108).
 - **`dedupe.defaults`:** the shipped matching and golden-record rules packaged with the code (copies of `configs/*_default.json`, a test
   keeps them equal), the starter rule and the three presets (careful / balanced / catch_more). `routes_read._default_content` uses it.
 - **`dedupe.sdk`:** `inspect(file)` (columns, detected types, automatic mapping with confidence, row-id column; no values),
@@ -2634,3 +2635,17 @@ integration with Shankar's image engine. Document: [docs/TECHNICAL_OVERVIEW.md](
 - **Known gaps:** the distribution name `dedupe` clashes with an unrelated PyPI package (install in a virtual environment; rename before
   publishing); no PyPI release; one machine only; no match-one-record call yet; Shankar's image engine not looked at (the overview's
   section 8 is a proposal to agree with him).
+
+## 108. Technical overview as a Word file; README rewritten as the detailed reference (2026-11-24, session 6)
+
+**The ask:** the overview as a Word file, saying it is an overview and that a detailed README exists, with step-by-step use of the web
+portal, the command line on Linux and the headless service, with requirements; and a super detailed README.
+- **docs/Technical_Overview.docx** (6 pages): what it does, the stages, text processing, ML and matching, scheduling, stack, requirements,
+  the portal in 9 steps, the command line in 6 steps, the headless service in 5 steps, limits, the proposed image-engine integration.
+  Built by `docs/tools/make_technical_overview.py` (python-docx); rendered and checked page by page. Replaces docs/TECHNICAL_OVERVIEW.md.
+- **README.md** rewritten (18 sections): requirements, installation (library, server, Docker), quick start, command-line reference with job
+  files and exit codes, Python library, running the server (modes, PostgreSQL, production checklist, headless), the portal step by step,
+  the REST API step by step (a curl walk-through run end to end on a clean python:3.12-slim container: sign in, project, upload, automatic
+  mapping, source, rules, run, golden rows, export, queue) and the endpoint reference (from the OpenAPI spec), how matching works, the rule
+  language with every comparison level, golden-record strategies, review and governance with roles, security, every environment
+  variable, output files, development, troubleshooting, known limits.
